@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ticketera-borcam
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: COOKIE_SECRET
+        generateValue: true
