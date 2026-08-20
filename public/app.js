@@ -65,7 +65,7 @@ async function loadStaffData() {
   cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, tienePortal: c.tiene_portal }));
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado })) }));
-  cache.configuracion = { casillaEmail: configuracion.casilla_email, casillaNombre: configuracion.casilla_nombre };
+  cache.configuracion = configuracion;
   CAT = catalogos;
 }
 
@@ -389,11 +389,27 @@ async function submitConfiguracion(ev) {
   const fd = new FormData(ev.target);
   const casillaEmail = fd.get('casillaEmail').trim();
   if (!casillaEmail) { showToast('Ingresá un correo electrónico válido.'); return false; }
-  await api('PUT', '/api/configuracion', { casillaEmail, casillaNombre: fd.get('casillaNombre').trim() });
-  cache.configuracion = { casillaEmail, casillaNombre: fd.get('casillaNombre').trim() };
+  const payload = {
+    casillaEmail, casillaNombre: fd.get('casillaNombre').trim(), correoActivo: fd.get('correoActivo') === 'on',
+    imapHost: fd.get('imapHost').trim(), imapPort: Number(fd.get('imapPort')) || 993, imapUsuario: fd.get('imapUsuario').trim(), imapPassword: fd.get('imapPassword').trim(),
+    smtpHost: fd.get('smtpHost').trim(), smtpPort: Number(fd.get('smtpPort')) || 465, smtpUsuario: fd.get('smtpUsuario').trim(), smtpPassword: fd.get('smtpPassword').trim()
+  };
+  await api('PUT', '/api/configuracion', payload);
+  cache.configuracion = await api('GET', '/api/configuracion');
   showToast('Configuración guardada.');
   render();
   return false;
+}
+
+async function probarConexionCorreo() {
+  const el = document.getElementById('resultado-prueba');
+  if (el) el.innerHTML = '<span class="hint-text">Probando conexión…</span>';
+  try {
+    const r = await api('POST', '/api/configuracion/probar');
+    if (el) el.innerHTML = `
+      <div class="hint-text">IMAP (recibir): ${r.imap.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.imap.error || '')}`}</div>
+      <div class="hint-text">SMTP (enviar): ${r.smtp.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.smtp.error || '')}`}</div>`;
+  } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
 }
 
 /* ---------------- Portal de cliente ---------------- */
@@ -700,14 +716,39 @@ function renderPerfil() {
 function renderConfiguracion() {
   const c = cache.configuracion;
   return `<div class="page-head"><div><h1>Configuración</h1><div class="sub">Ajustes generales del sistema</div></div></div>
-    <div class="card card-narrow">
+    <div class="card card-narrow" style="max-width:560px;">
       <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Casilla de correo de soporte</div>
-      <div class="hint-text" style="margin-bottom:16px;">El correo desde donde llegan todas las solicitudes que se convierten en tickets. Se puede cambiar cuando quieras.</div>
+      <div class="hint-text" style="margin-bottom:16px;">Conectá tu casilla real para que reciba correos y cree tickets solos, y para que las respuestas le lleguen de verdad al cliente.</div>
       <form onsubmit="return submitConfiguracion(event)">
-        <div class="field"><label>Correo electrónico de la casilla</label><input name="casillaEmail" type="email" value="${escapeHtml(c.casillaEmail || '')}" placeholder="soporte@tuempresa.com" required></div>
+        <div class="field"><label>Correo electrónico de la casilla</label><input name="casillaEmail" type="email" value="${escapeHtml(c.casillaEmail || '')}" placeholder="tickets@borcam.com.uy" required></div>
         <div class="field"><label>Nombre para mostrar</label><input name="casillaNombre" value="${escapeHtml(c.casillaNombre || '')}" placeholder="Ej: Mesa de Soporte"></div>
+
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:6px 0 16px;padding-top:12px;border-top:1px dashed var(--line-strong);">
+          <input type="checkbox" name="correoActivo" ${c.correoActivo ? 'checked' : ''}> Activar recepción y envío real (si está apagado, todo sigue funcionando como demo)
+        </label>
+
+        <div style="font-weight:600;font-size:13.5px;margin-bottom:8px;">Recibir correo (IMAP)</div>
+        <div class="field-row">
+          <div class="field"><label>Servidor IMAP</label><input name="imapHost" value="${escapeHtml(c.imapHost || '')}" placeholder="mail.borcam.com.uy"></div>
+          <div class="field"><label>Puerto</label><input name="imapPort" type="number" value="${c.imapPort || 993}"></div>
+        </div>
+        <div class="field"><label>Usuario (normalmente el correo completo)</label><input name="imapUsuario" value="${escapeHtml(c.imapUsuario || '')}" placeholder="tickets@borcam.com.uy"></div>
+        <div class="field"><label>Contraseña</label><input name="imapPassword" type="password" placeholder="${c.tieneImapPassword ? 'Dejar en blanco para no cambiarla' : 'Contraseña del correo'}"></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Enviar correo (SMTP)</div>
+        <div class="field-row">
+          <div class="field"><label>Servidor SMTP</label><input name="smtpHost" value="${escapeHtml(c.smtpHost || '')}" placeholder="mail.borcam.com.uy"></div>
+          <div class="field"><label>Puerto</label><input name="smtpPort" type="number" value="${c.smtpPort || 465}"></div>
+        </div>
+        <div class="field"><label>Usuario</label><input name="smtpUsuario" value="${escapeHtml(c.smtpUsuario || '')}" placeholder="tickets@borcam.com.uy"></div>
+        <div class="field"><label>Contraseña</label><input name="smtpPassword" type="password" placeholder="${c.tieneSmtpPassword ? 'Dejar en blanco para no cambiarla' : 'Contraseña del correo'}"></div>
+
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
       </form>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión</button>
+        <div id="resultado-prueba" style="margin-top:8px;"></div>
+      </div>
     </div>`;
 }
 
