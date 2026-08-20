@@ -3,6 +3,31 @@ const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
+
+const ENC_KEY = crypto.createHash('sha256').update(process.env.COOKIE_SECRET || 'cambia-este-secreto').digest();
+
+function encrypt(text) {
+  if (!text) return '';
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv);
+  const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, enc]).toString('base64');
+}
+function decrypt(payload) {
+  if (!payload) return '';
+  try {
+    const raw = Buffer.from(payload, 'base64');
+    const iv = raw.subarray(0, 12), tag = raw.subarray(12, 28), enc = raw.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', ENC_KEY, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+  } catch (e) { return ''; }
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -75,6 +100,46 @@ async function collectTicketCCs(ticketId) {
   return r.rows.map(row => row.email);
 }
 
+async function getConfig() {
+  return (await pool.query('select * from configuracion where id=1')).rows[0];
+}
+
+let smtpTransportCache = null;
+async function getSmtpTransport(cfg) {
+  cfg = cfg || await getConfig();
+  if (!cfg.correo_activo || !cfg.smtp_host || !cfg.smtp_usuario || !cfg.smtp_pass_enc) return null;
+  const pass = decrypt(cfg.smtp_pass_enc);
+  if (!pass) return null;
+  return nodemailer.createTransport({
+    host: cfg.smtp_host, port: cfg.smtp_port || 465, secure: (cfg.smtp_port || 465) == 465,
+    auth: { user: cfg.smtp_usuario, pass }
+  });
+}
+
+// Envía un correo real (si la casilla está activa y configurada); si no, no hace nada.
+async function enviarEmailReal({ to, cc, subject, text, html, attachments }) {
+  try {
+    const cfg = await getConfig();
+    const transport = await getSmtpTransport(cfg);
+    if (!transport || !to) return false;
+    await transport.sendMail({
+      from: `"${cfg.casilla_nombre || 'Soporte'}" <${cfg.smtp_usuario}>`,
+      to, cc: (cc && cc.length) ? cc.join(',') : undefined,
+      subject, text, html: html || undefined,
+      attachments: attachments && attachments.length ? attachments : undefined
+    });
+    return true;
+  } catch (e) {
+    console.error('Error enviando correo real:', e.message);
+    return false;
+  }
+}
+async function contextoTicket(ticketId) {
+  const t = (await pool.query('select numero, asunto, remitente_email from tickets where id=$1', [ticketId])).rows[0];
+  const ccs = await collectTicketCCs(ticketId);
+  return { ...t, ccs };
+}
+
 // Aplica un cambio de estado y, si corresponde, dispara el correo automático de "Esperando al Cliente"
 async function aplicarCambioEstado(ticketId, nuevoEstado) {
   const t = (await pool.query('select estado, remitente_email from tickets where id=$1', [ticketId])).rows[0];
@@ -83,11 +148,14 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
   if (nuevoEstado === 'Esperando al Cliente' && t.estado !== 'Esperando al Cliente') {
     const ccs = await collectTicketCCs(ticketId);
     const destinatarios = [t.remitente_email, ...ccs];
+    const cuerpo = 'El técnico ha respondido su consulta, estamos aguardando su respuesta para seguir con la gestión.';
     await pool.query(
       `insert into mensajes (ticket_id, tipo, autor, cuerpo, destinatarios)
        values ($1,'sistema','Notificación automática',$2,$3)`,
-      [ticketId, 'El técnico ha respondido su consulta, estamos aguardando su respuesta para seguir con la gestión.', destinatarios]
+      [ticketId, cuerpo, destinatarios]
     );
+    const ctx = await contextoTicket(ticketId);
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo });
   }
 }
 
@@ -105,6 +173,8 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
      values ($1,'saliente',$2,$3,true)`,
     [ticketId, `Automatización · ${automatizacion.nombre} (paso ${index + 1}/${totalPasos})`, resp.cuerpo]
   );
+  const ctx = await contextoTicket(ticketId);
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: resp.cuerpo });
   if (paso.accion_estado && paso.accion_estado !== 'Sin cambio') {
     await aplicarCambioEstado(ticketId, paso.accion_estado);
   } else {
@@ -278,6 +348,16 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
       [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntos || []), firmaHtml]
     );
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
+
+    const attachmentsForMail = (adjuntos || []).map(a => {
+      const base64 = (a.dataUrl || '').split(',')[1] || '';
+      return { filename: a.nombre, content: base64, encoding: 'base64' };
+    });
+    const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
+    await enviarEmailReal({
+      to: t.remitente_email, cc: cc || [], subject: `[${t.numero}] ${t.asunto}`,
+      text: cuerpo, html: htmlBody, attachments: attachmentsForMail
+    });
   }
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
@@ -431,12 +511,59 @@ app.delete('/api/automatizaciones/:id', requireStaff, async (req, res) => {
 /* ---------------- Configuración ---------------- */
 
 app.get('/api/configuracion', requireStaff, async (req, res) => {
-  ok(res, (await pool.query('select * from configuracion where id=1')).rows[0]);
+  const c = await getConfig();
+  ok(res, {
+    casillaEmail: c.casilla_email, casillaNombre: c.casilla_nombre, correoActivo: c.correo_activo,
+    imapHost: c.imap_host, imapPort: c.imap_port, imapUsuario: c.imap_usuario, tieneImapPassword: !!c.imap_pass_enc,
+    smtpHost: c.smtp_host, smtpPort: c.smtp_port, smtpUsuario: c.smtp_usuario, tieneSmtpPassword: !!c.smtp_pass_enc
+  });
 });
+
 app.put('/api/configuracion', requireStaff, async (req, res) => {
-  const { casillaEmail, casillaNombre } = req.body;
-  await pool.query('update configuracion set casilla_email=$1, casilla_nombre=$2 where id=1', [casillaEmail || '', casillaNombre || '']);
+  const b = req.body;
+  const c = await getConfig();
+  await pool.query(
+    `update configuracion set casilla_email=$1, casilla_nombre=$2, correo_activo=$3,
+       imap_host=$4, imap_port=$5, imap_usuario=$6,
+       imap_pass_enc = case when $7 <> '' then $8 else imap_pass_enc end,
+       smtp_host=$9, smtp_port=$10, smtp_usuario=$11,
+       smtp_pass_enc = case when $12 <> '' then $13 else smtp_pass_enc end
+     where id=1`,
+    [
+      b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
+      b.imapHost || '', b.imapPort || 993, b.imapUsuario || '',
+      b.imapPassword || '', encrypt(b.imapPassword || ''),
+      b.smtpHost || '', b.smtpPort || 465, b.smtpUsuario || '',
+      b.smtpPassword || '', encrypt(b.smtpPassword || '')
+    ]
+  );
   ok(res, { ok: true });
+});
+
+// Prueba las credenciales guardadas sin activar el polling — para verificar antes de confiar en la conexión
+app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
+  const c = await getConfig();
+  const resultado = { imap: { ok: false, error: null }, smtp: { ok: false, error: null } };
+
+  try {
+    if (!c.imap_host || !c.imap_usuario || !c.imap_pass_enc) throw new Error('Faltan datos de IMAP.');
+    const client = new ImapFlow({
+      host: c.imap_host, port: c.imap_port || 993, secure: true,
+      auth: { user: c.imap_usuario, pass: decrypt(c.imap_pass_enc) }, logger: false
+    });
+    await client.connect();
+    await client.logout();
+    resultado.imap.ok = true;
+  } catch (e) { resultado.imap.error = e.message; }
+
+  try {
+    const transport = await getSmtpTransport(c);
+    if (!transport) throw new Error('Faltan datos de SMTP.');
+    await transport.verify();
+    resultado.smtp.ok = true;
+  } catch (e) { resultado.smtp.error = e.message; }
+
+  ok(res, resultado);
 });
 
 /* ---------------- Portal de cliente ---------------- */
@@ -467,6 +594,105 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
 });
+
+/* ---------------- Recepción real de correo (IMAP) ---------------- */
+
+function extraerNumeroTicket(asunto) {
+  const m = (asunto || '').match(/\[?(T-\d{4}-\d{4})\]?/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+async function procesarCorreoEntrante(parsed) {
+  const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0] : null;
+  if (!fromAddr) return;
+  const remitenteEmail = fromAddr.address;
+  const remitenteNombre = fromAddr.name || remitenteEmail;
+  const asunto = parsed.subject || '(sin asunto)';
+  const cuerpo = (parsed.text || '').trim() || '(mensaje sin texto)';
+  const numeroDetectado = extraerNumeroTicket(asunto);
+
+  const adjuntos = [];
+  for (const a of (parsed.attachments || [])) {
+    if (a.size > 3 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
+    const tipo = a.contentType.startsWith('image/') ? 'imagen' : a.contentType.startsWith('video/') ? 'video' : a.contentType === 'application/pdf' ? 'pdf' : 'archivo';
+    adjuntos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, size: a.size, dataUrl: `data:${a.contentType};base64,${a.content.toString('base64')}` });
+  }
+
+  let ticket = null;
+  if (numeroDetectado) {
+    ticket = (await pool.query('select * from tickets where numero=$1', [numeroDetectado])).rows[0];
+  }
+
+  if (ticket) {
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
+      [ticket.id, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
+    );
+    if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(ticket.estado)) {
+      await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
+    }
+    await aplicarAutomatizacionSiCorresponde(ticket.id, cuerpo);
+    await pool.query('update tickets set actualizado=now() where id=$1', [ticket.id]);
+  } else {
+    const numero = await nextTicketNumero();
+    const r = await pool.query(
+      `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email)
+       values ($1,$2,'Otro','Media','Abierto',$3,$4) returning id`,
+      [numero, asunto, remitenteNombre, remitenteEmail]
+    );
+    const ticketId = r.rows[0].id;
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
+      [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
+    );
+    await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo);
+  }
+}
+
+let pollingEnCurso = false;
+async function revisarCasillaReal() {
+  if (pollingEnCurso) return;
+  pollingEnCurso = true;
+  try {
+    const cfg = await getConfig();
+    if (!cfg.correo_activo || !cfg.imap_host || !cfg.imap_usuario || !cfg.imap_pass_enc) return;
+    const pass = decrypt(cfg.imap_pass_enc);
+    if (!pass) return;
+
+    const client = new ImapFlow({
+      host: cfg.imap_host, port: cfg.imap_port || 993, secure: true,
+      auth: { user: cfg.imap_usuario, pass }, logger: false
+    });
+    await client.connect();
+    const lock = await client.getMailboxLock('INBOX');
+    let maxUid = cfg.imap_ultimo_uid || 0;
+    try {
+      const desde = maxUid + 1;
+      for await (const msg of client.fetch(`${desde}:*`, { source: true, uid: true }, { uid: true })) {
+        if (msg.uid <= maxUid) continue;
+        try {
+          const parsed = await simpleParser(msg.source);
+          await procesarCorreoEntrante(parsed);
+        } catch (e) { console.error('Error procesando un correo:', e.message); }
+        if (msg.uid > maxUid) maxUid = msg.uid;
+      }
+    } finally {
+      lock.release();
+    }
+    await client.logout();
+    if (maxUid > (cfg.imap_ultimo_uid || 0)) {
+      await pool.query('update configuracion set imap_ultimo_uid=$1 where id=1', [maxUid]);
+    }
+  } catch (e) {
+    console.error('Error revisando la casilla real:', e.message);
+  } finally {
+    pollingEnCurso = false;
+  }
+}
+
+// Revisa la casilla apenas arranca el servidor, y después cada 60 segundos
+setTimeout(revisarCasillaReal, 8000);
+setInterval(revisarCasillaReal, 60 * 1000);
 
 /* ---------------- Fallback ---------------- */
 
