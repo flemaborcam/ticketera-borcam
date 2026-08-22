@@ -398,6 +398,10 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
   await aplicarAvisoFinDeSemana(ticketId);
   await aplicarAvisoFueraHorario(ticketId);
+  await notificarTelegramNuevoTicket(
+    { id: ticketId, numero, asunto, remitenteNombre, remitenteEmail, cuerpoResumen: cuerpo },
+    `${req.protocol}://${req.get('host')}`
+  );
   const ticket = await ticketConMensajes(ticketId);
   ok(res, { ticket, automatizado });
 });
@@ -674,7 +678,9 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     smtpHost: c.smtp_host, smtpPort: c.smtp_port, smtpUsuario: c.smtp_usuario, tieneSmtpPassword: !!c.smtp_pass_enc,
     avisoFindeActivo: c.aviso_finde_activo !== false, avisoFindeMensaje: c.aviso_finde_mensaje,
     avisoFueraHorarioActivo: c.aviso_fuera_horario_activo !== false, avisoFueraHorarioMensaje: c.aviso_fuera_horario_mensaje,
-    avisoFueraHorarioInicio: c.aviso_fuera_horario_inicio || '09:00', avisoFueraHorarioFin: c.aviso_fuera_horario_fin || '18:00'
+    avisoFueraHorarioInicio: c.aviso_fuera_horario_inicio || '09:00', avisoFueraHorarioFin: c.aviso_fuera_horario_fin || '18:00',
+    telegramActivo: !!c.telegram_activo, telegramChatId: c.telegram_chat_id || '',
+    telegramConfiguradoServidor: !!process.env.TELEGRAM_BOT_TOKEN
   });
 });
 
@@ -689,7 +695,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        smtp_pass_enc = case when $12 <> '' then $13 else smtp_pass_enc end,
        aviso_finde_activo=$14, aviso_finde_mensaje=$15,
        aviso_fuera_horario_activo=$16, aviso_fuera_horario_mensaje=$17,
-       aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19
+       aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19,
+       telegram_activo=$20, telegram_chat_id=$21
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -699,13 +706,22 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       b.smtpPassword || '', encrypt(b.smtpPassword || ''),
       !!b.avisoFindeActivo, b.avisoFindeMensaje || '',
       !!b.avisoFueraHorarioActivo, b.avisoFueraHorarioMensaje || '',
-      b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00'
+      b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00',
+      !!b.telegramActivo, b.telegramChatId || ''
     ]
   );
   ok(res, { ok: true });
 });
 
 // Prueba las credenciales guardadas sin activar el polling — para verificar antes de confiar en la conexión
+app.post('/api/configuracion/probar-telegram', requireStaff, async (req, res) => {
+  try {
+    const c = await getConfig();
+    await enviarTelegramForzado(c.telegram_chat_id, '✅ Prueba de conexión desde el sistema de tickets de Borcam. Si ves este mensaje, quedó todo bien configurado.');
+    ok(res, { ok: true });
+  } catch (e) { bad(res, e.message); }
+});
+
 app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
   const c = await getConfig();
   const resultado = { imap: { ok: false, error: null }, smtp: { ok: false, error: null } };
@@ -947,6 +963,48 @@ app.get('/api/citas', requireStaff, async (req, res) => {
   ok(res, citas);
 });
 
+/* ---------------- Notificaciones a Telegram ---------------- */
+
+async function enviarTelegramForzado(chatId, texto) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error('Falta configurar TELEGRAM_BOT_TOKEN en el servidor.');
+  if (!chatId) throw new Error('Falta el Chat ID del grupo de Telegram.');
+  const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true })
+  });
+  const data = await r.json();
+  if (!data.ok) throw new Error(data.description || 'Error desconocido al enviar a Telegram.');
+  return data;
+}
+
+async function enviarTelegram(texto) {
+  try {
+    const c = await getConfig();
+    if (!c.telegram_activo || !c.telegram_chat_id) return false;
+    await enviarTelegramForzado(c.telegram_chat_id, texto);
+    return true;
+  } catch (e) {
+    console.error('Error enviando a Telegram:', e.message);
+    return false;
+  }
+}
+
+async function notificarTelegramNuevoTicket(ticket, baseUrl) {
+  const textoCompleto = `${ticket.asunto} ${ticket.cuerpoResumen || ''}`.toLowerCase();
+  if (textoCompleto.includes('reserva')) return; // los tickets de reserva no se avisan por Telegram
+
+  const link = baseUrl ? `${baseUrl}/?ticket=${ticket.id}` : '';
+  const resumen = (ticket.cuerpoResumen || '').slice(0, 220);
+  const mensaje =
+    `🎫 <b>Nuevo ticket</b> #${escapeHtmlSrv(ticket.numero)}\n` +
+    `<b>Asunto:</b> ${escapeHtmlSrv(ticket.asunto)}\n` +
+    `<b>De:</b> ${escapeHtmlSrv(ticket.remitenteNombre)} (${escapeHtmlSrv(ticket.remitenteEmail)})\n\n` +
+    `${escapeHtmlSrv(resumen)}${(ticket.cuerpoResumen || '').length > 220 ? '…' : ''}` +
+    (link ? `\n\n👉 <a href="${link}">Abrir en el sistema</a>` : '');
+  await enviarTelegram(mensaje);
+}
+
 function escapeHtmlSrv(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -1127,6 +1185,8 @@ async function procesarCorreoEntrante(parsed) {
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
     await aplicarAvisoFueraHorario(ticketId);
+    const baseUrlAuto = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
+    await notificarTelegramNuevoTicket({ id: ticketId, numero, asunto, remitenteNombre, remitenteEmail, cuerpoResumen: cuerpo }, baseUrlAuto);
   }
 }
 
