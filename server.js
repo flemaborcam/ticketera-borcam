@@ -280,7 +280,7 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
 }
 
 // Motor de automatizaciones: continúa una cadena activa o dispara el primer paso que coincida
-async function aplicarAutomatizacionSiCorresponde(ticketId, texto) {
+async function aplicarAutomatizacionSiCorresponde(ticketId, texto, esNuevoTicket = false) {
   const t = (await pool.query('select automatizacion_activa_id, automatizacion_activa_paso from tickets where id=$1', [ticketId])).rows[0];
   if (t && t.automatizacion_activa_id) {
     const auto = (await pool.query('select * from automatizaciones where id=$1 and activo=true', [t.automatizacion_activa_id])).rows[0];
@@ -297,7 +297,7 @@ async function aplicarAutomatizacionSiCorresponde(ticketId, texto) {
   const activas = (await pool.query('select * from automatizaciones where activo=true')).rows;
   for (const auto of activas) {
     const pasos = (await pool.query('select * from automatizacion_pasos where automatizacion_id=$1 order by orden asc', [auto.id])).rows;
-    if (pasos[0] && pasoCoincide(pasos[0], texto)) {
+    if (pasos[0] && (!pasos[0].solo_nuevo_ticket || esNuevoTicket) && pasoCoincide(pasos[0], texto)) {
       await dispararPaso(ticketId, auto, pasos[0], 0, pasos.length);
       return true;
     }
@@ -395,7 +395,7 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`,
     [ticketId, remitenteNombre, cuerpo]
   );
-  const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo);
+  const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
   await aplicarAvisoFinDeSemana(ticketId);
   const ticket = await ticketConMensajes(ticketId);
   ok(res, { ticket, automatizado });
@@ -629,9 +629,9 @@ app.post('/api/automatizaciones', requireStaff, async (req, res) => {
   for (let i = 0; i < pasos.length; i++) {
     const p = pasos[i];
     await pool.query(
-      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado)
-       values ($1,$2,$3,$4,$5,$6)`,
-      [autoId, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio']
+      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket)
+       values ($1,$2,$3,$4,$5,$6,$7)`,
+      [autoId, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket]
     );
   }
   ok(res, { id: autoId });
@@ -644,9 +644,9 @@ app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   for (let i = 0; i < pasos.length; i++) {
     const p = pasos[i];
     await pool.query(
-      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado)
-       values ($1,$2,$3,$4,$5,$6)`,
-      [req.params.id, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio']
+      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket)
+       values ($1,$2,$3,$4,$5,$6,$7)`,
+      [req.params.id, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket]
     );
   }
   ok(res, { ok: true });
@@ -1084,7 +1084,7 @@ async function procesarCorreoEntrante(parsed) {
       `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
       [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
     );
-    await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo);
+    await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
   }
 }
