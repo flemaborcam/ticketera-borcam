@@ -419,6 +419,131 @@ async function saveFirma() {
   render();
 }
 
+/* ---------------- Calendario de instalaciones ---------------- */
+
+const DIAS_SEMANA = [['lunes', 'Lunes'], ['martes', 'Martes'], ['miercoles', 'Miércoles'], ['jueves', 'Jueves'], ['viernes', 'Viernes'], ['sabado', 'Sábado'], ['domingo', 'Domingo']];
+
+async function renderCalendarioAsync() {
+  const [cfgData, citas] = await Promise.all([api('GET', '/api/calendario-config'), api('GET', '/api/citas')]);
+  cache.calendarioConfig = cfgData.config || {};
+  cache.calendarioEdificios = cfgData.edificios || [];
+  cache.googleServiceEmail = cfgData.googleServiceEmail;
+  cache.citas = citas;
+  return renderCalendarioHtml();
+}
+
+async function submitCalendarioConfig(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const diasHorarios = {};
+  DIAS_SEMANA.forEach(([key]) => {
+    diasHorarios[key] = { activo: fd.get('activo_' + key) === 'on', inicio: fd.get('inicio_' + key) || '09:00', fin: fd.get('fin_' + key) || '18:00' };
+  });
+  const config = {
+    activo: fd.get('agendaActiva') === 'on',
+    duracionMinutos: Number(fd.get('duracionMinutos')) || 60,
+    minNoticeDays: Number(fd.get('minNoticeDays')),
+    diasVisibles: Number(fd.get('diasVisibles')) || 21,
+    googleCalendarId: fd.get('googleCalendarId').trim(),
+    diasHorarios
+  };
+  const edificios = fd.get('edificios').split('\n').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('PUT', '/api/calendario-config', { config });
+    await api('PUT', '/api/calendario-edificios', { edificios });
+    showToast('Configuración de agenda guardada.');
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+
+async function probarGoogleCalendar() {
+  const el = document.getElementById('resultado-google');
+  el.innerHTML = 'Probando…';
+  try {
+    const r = await api('POST', '/api/calendario-config/probar');
+    el.innerHTML = `<span style="color:var(--stamp-green);font-weight:600;">Conectado a: ${escapeHtml(r.nombre)} ✓</span>`;
+  } catch (e) { el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
+}
+
+function copiarEnlaceAgenda() {
+  const url = window.location.origin + '/agendar';
+  navigator.clipboard.writeText(url).then(() => showToast('Enlace copiado.'));
+}
+
+function renderCalendarioHtml() {
+  const c = cache.calendarioConfig || {};
+  const horarios = c.diasHorarios || {};
+  const filasDias = DIAS_SEMANA.map(([key, label]) => {
+    const h = horarios[key] || {};
+    return `<div class="field-row" style="align-items:center;margin-bottom:8px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;width:110px;flex:none;text-transform:none;letter-spacing:0;font-weight:500;">
+        <input type="checkbox" name="activo_${key}" ${h.activo ? 'checked' : ''}> ${label}
+      </label>
+      <input type="time" name="inicio_${key}" value="${h.inicio || '09:00'}" style="max-width:110px;">
+      <span style="color:var(--ink-soft);">a</span>
+      <input type="time" name="fin_${key}" value="${h.fin || '18:00'}" style="max-width:110px;">
+    </div>`;
+  }).join('');
+
+  const citasHtml = cache.citas.length ? cache.citas.map(ci => `
+    <div class="user-row">
+      <div class="avatar">📅</div>
+      <div><div class="u-name">${escapeHtml(ci.nombre_cliente)}${ci.estado === 'cancelada' ? ' <span class="tag tag-cerrado" style="margin-left:6px;">Cancelado</span>' : ''}</div>
+      <div class="u-sub">${new Date(ci.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })} · ${escapeHtml(ci.edificio)} UD ${escapeHtml(ci.numero_unidad)} · ${escapeHtml(ci.telefono)}</div></div>
+    </div>`).join('') : `<div class="hint-text">No hay turnos agendados todavía.</div>`;
+
+  return `
+    <div class="page-head"><div><h1>Calendario de instalaciones</h1><div class="sub">Configurá la disponibilidad para que los clientes agenden solos</div></div></div>
+
+    <div class="card card-narrow" style="max-width:640px;margin-bottom:18px;">
+      <div style="font-weight:600;font-size:14.5px;margin-bottom:8px;">Enlace para compartir con clientes</div>
+      <div style="display:flex;gap:8px;">
+        <input readonly value="${window.location.origin}/agendar" style="flex:1;padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);">
+        <button type="button" class="btn btn-ghost" onclick="copiarEnlaceAgenda()">Copiar</button>
+      </div>
+    </div>
+
+    <div class="card card-narrow" style="max-width:640px;">
+      <form onsubmit="return submitCalendarioConfig(event)">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;">
+          <input type="checkbox" name="agendaActiva" ${c.activo ? 'checked' : ''}> Activar la agenda pública (si está apagada, el enlace no deja reservar)
+        </label>
+
+        <div style="font-weight:600;font-size:13.5px;margin-bottom:8px;">Duración y anticipación</div>
+        <div class="field-row">
+          <div class="field"><label>Duración de cada turno (min)</label><input type="number" name="duracionMinutos" value="${c.duracionMinutos || 60}" min="15" step="15"></div>
+          <div class="field"><label>Días mínimos de anticipación</label><input type="number" name="minNoticeDays" value="${c.minNoticeDays ?? 1}" min="0"></div>
+          <div class="field"><label>Días hacia adelante a mostrar</label><input type="number" name="diasVisibles" value="${c.diasVisibles || 21}" min="1"></div>
+        </div>
+        <div class="hint-text" style="margin:-6px 0 16px;">Con 1 día de anticipación, un cliente no puede agendar para hoy, recién desde mañana.</div>
+
+        <div style="font-weight:600;font-size:13.5px;margin-bottom:10px;padding-top:12px;border-top:1px dashed var(--line-strong);">Días y horarios disponibles</div>
+        ${filasDias}
+        <div class="hint-text" style="margin-bottom:16px;">Por ahora, un solo bloque horario por día (sin corte al mediodía).</div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Edificios (uno por línea)</div>
+        <div class="field"><textarea name="edificios" style="min-height:90px;">${escapeHtml((cache.calendarioEdificios || []).join('\n'))}</textarea></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Google Calendar</div>
+        <div class="hint-text" style="margin-bottom:10px;">
+          ${cache.googleServiceEmail ? `Compartí tu calendario de Google con esta cuenta (permiso "Hacer cambios en los eventos"): <strong>${escapeHtml(cache.googleServiceEmail)}</strong>` : 'Todavía no está configurada la cuenta de servicio de Google en el servidor.'}
+        </div>
+        <div class="field"><label>ID del calendario</label><input name="googleCalendarId" value="${escapeHtml(c.googleCalendarId || '')}" placeholder="tuemail@gmail.com o algo@group.calendar.google.com"></div>
+
+        <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
+      </form>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" class="btn btn-ghost btn-block" onclick="probarGoogleCalendar()">Probar conexión con Google Calendar</button>
+        <div id="resultado-google" style="margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <div class="page-head" style="margin-top:26px;"><div><h1 style="font-size:18px;">Próximos turnos</h1><div class="sub">${cache.citas.length} en total</div></div></div>
+    <div class="user-list">${citasHtml}</div>
+  `;
+}
+
 /* ---------------- Configuración ---------------- */
 
 async function submitConfiguracion(ev) {
@@ -485,6 +610,7 @@ function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
   ];
@@ -1116,6 +1242,7 @@ function render() {
   else if (state.view === 'respuestas') inner = renderRespuestas();
   else if (state.view === 'grupos') inner = renderGrupos();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
+  else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
