@@ -47,11 +47,14 @@ async function boot() {
     const r = await api('GET', '/api/auth/me');
     if (r.session && r.session.type === 'staff') {
       session = r.session; state.view = 'dashboard'; await loadStaffData();
+      const idDesdeUrl = new URLSearchParams(window.location.search).get('ticket');
+      if (idDesdeUrl) { state.view = 'ticket'; state.ticketId = idDesdeUrl; }
     } else if (r.session && r.session.type === 'cliente') {
       session = r.session; state.view = 'cliente-dashboard'; await loadClienteTickets();
     }
   } catch (e) {}
   render();
+  if (state.view === 'ticket' && state.ticketId) refreshTicket(state.ticketId).then(render);
 }
 
 async function loadStaffData() {
@@ -620,7 +623,8 @@ async function submitConfiguracion(ev) {
     smtpHost: fd.get('smtpHost').trim(), smtpPort: Number(fd.get('smtpPort')) || 465, smtpUsuario: fd.get('smtpUsuario').trim(), smtpPassword: fd.get('smtpPassword').trim(),
     avisoFindeActivo: fd.get('avisoFindeActivo') === 'on', avisoFindeMensaje: fd.get('avisoFindeMensaje').trim(),
     avisoFueraHorarioActivo: fd.get('avisoFueraHorarioActivo') === 'on', avisoFueraHorarioMensaje: fd.get('avisoFueraHorarioMensaje').trim(),
-    avisoFueraHorarioInicio: fd.get('avisoFueraHorarioInicio'), avisoFueraHorarioFin: fd.get('avisoFueraHorarioFin')
+    avisoFueraHorarioInicio: fd.get('avisoFueraHorarioInicio'), avisoFueraHorarioFin: fd.get('avisoFueraHorarioFin'),
+    telegramActivo: fd.get('telegramActivo') === 'on', telegramChatId: fd.get('telegramChatId').trim()
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -637,6 +641,15 @@ async function probarConexionCorreo() {
     if (el) el.innerHTML = `
       <div class="hint-text">IMAP (recibir): ${r.imap.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.imap.error || '')}`}</div>
       <div class="hint-text">SMTP (enviar): ${r.smtp.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.smtp.error || '')}`}</div>`;
+  } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
+}
+
+async function probarTelegram() {
+  const el = document.getElementById('resultado-telegram');
+  if (el) el.innerHTML = '<span class="hint-text">Enviando mensaje de prueba…</span>';
+  try {
+    await api('POST', '/api/configuracion/probar-telegram');
+    if (el) el.innerHTML = `<span style="color:var(--stamp-green);font-weight:600;">Mensaje enviado, revisá el grupo de Telegram ✓</span>`;
   } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
 }
 
@@ -1154,11 +1167,25 @@ function renderConfiguracion() {
         </div>
         <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFueraHorarioMensaje">${escapeHtml(c.avisoFueraHorarioMensaje || '')}</textarea></div>
 
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Notificaciones en Telegram</div>
+        <div class="hint-text" style="margin-bottom:10px;">
+          Cada vez que llega un ticket nuevo (no en respuestas posteriores), se manda un aviso a un grupo de Telegram con un resumen y un enlace para abrirlo. Los tickets que contengan la palabra "reserva" no se avisan por acá.
+          ${c.telegramConfiguradoServidor ? '' : '<br><strong style="color:var(--stamp-red);">Falta configurar el bot en el servidor (variable TELEGRAM_BOT_TOKEN).</strong>'}
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="telegramActivo" ${c.telegramActivo ? 'checked' : ''}> Activar notificaciones en Telegram
+        </label>
+        <div class="field"><label>Chat ID del grupo</label><input name="telegramChatId" value="${escapeHtml(c.telegramChatId || '')}" placeholder="-1001234567890"></div>
+
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
       </form>
       <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión</button>
+        <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión de correo</button>
         <div id="resultado-prueba" style="margin-top:8px;"></div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
+        <div id="resultado-telegram" style="margin-top:8px;"></div>
       </div>
     </div>`;
 }
