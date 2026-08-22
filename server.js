@@ -613,7 +613,8 @@ async function procesarCorreoEntrante(parsed) {
   const remitenteEmail = fromAddr.address;
   const remitenteNombre = fromAddr.name || remitenteEmail;
   const asunto = parsed.subject || '(sin asunto)';
-  const cuerpo = (parsed.text || '').trim() || '(mensaje sin texto)';
+  const textoLimpio = (parsed.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const cuerpo = textoLimpio || '(mensaje sin texto)';
   const numeroDetectado = extraerNumeroTicket(asunto);
 
   const adjuntos = [];
