@@ -618,7 +618,9 @@ async function submitConfiguracion(ev) {
     casillaEmail, casillaNombre: fd.get('casillaNombre').trim(), correoActivo: fd.get('correoActivo') === 'on',
     imapHost: fd.get('imapHost').trim(), imapPort: Number(fd.get('imapPort')) || 993, imapUsuario: fd.get('imapUsuario').trim(), imapPassword: fd.get('imapPassword').trim(),
     smtpHost: fd.get('smtpHost').trim(), smtpPort: Number(fd.get('smtpPort')) || 465, smtpUsuario: fd.get('smtpUsuario').trim(), smtpPassword: fd.get('smtpPassword').trim(),
-    avisoFindeActivo: fd.get('avisoFindeActivo') === 'on', avisoFindeMensaje: fd.get('avisoFindeMensaje').trim()
+    avisoFindeActivo: fd.get('avisoFindeActivo') === 'on', avisoFindeMensaje: fd.get('avisoFindeMensaje').trim(),
+    avisoFueraHorarioActivo: fd.get('avisoFueraHorarioActivo') === 'on', avisoFueraHorarioMensaje: fd.get('avisoFueraHorarioMensaje').trim(),
+    avisoFueraHorarioInicio: fd.get('avisoFueraHorarioInicio'), avisoFueraHorarioFin: fd.get('avisoFueraHorarioFin')
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -1140,6 +1142,17 @@ function renderConfiguracion() {
           <input type="checkbox" name="avisoFindeActivo" ${c.avisoFindeActivo !== false ? 'checked' : ''}> Activar aviso de fin de semana
         </label>
         <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFindeMensaje">${escapeHtml(c.avisoFindeMensaje || '')}</textarea></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Aviso automático fuera de horario (días hábiles)</div>
+        <div class="hint-text" style="margin-bottom:10px;">De lunes a viernes, fuera del horario que definas acá, el sistema responde solo con este texto (una vez por día por ticket). Los fines de semana los cubre el aviso de arriba, no este.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="avisoFueraHorarioActivo" ${c.avisoFueraHorarioActivo !== false ? 'checked' : ''}> Activar aviso fuera de horario
+        </label>
+        <div class="field-row">
+          <div class="field"><label>Horario de atención desde</label><input type="time" name="avisoFueraHorarioInicio" value="${c.avisoFueraHorarioInicio || '09:00'}"></div>
+          <div class="field"><label>Hasta</label><input type="time" name="avisoFueraHorarioFin" value="${c.avisoFueraHorarioFin || '18:00'}"></div>
+        </div>
+        <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFueraHorarioMensaje">${escapeHtml(c.avisoFueraHorarioMensaje || '')}</textarea></div>
 
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
       </form>
