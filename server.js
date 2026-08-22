@@ -39,7 +39,7 @@ const pool = new Pool({
     : { rejectUnauthorized: false }
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
   secret: process.env.COOKIE_SECRET || 'cambia-este-secreto',
@@ -721,7 +721,7 @@ async function procesarCorreoEntrante(parsed) {
 
   const adjuntos = [];
   for (const a of (parsed.attachments || [])) {
-    if (a.size > 3 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
+    if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
     const tipo = a.contentType.startsWith('image/') ? 'imagen' : a.contentType.startsWith('video/') ? 'video' : a.contentType === 'application/pdf' ? 'pdf' : 'archivo';
     adjuntos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, size: a.size, dataUrl: `data:${a.contentType};base64,${a.content.toString('base64')}` });
   }
