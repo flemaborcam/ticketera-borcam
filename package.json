@@ -11,6 +11,7 @@
     "cookie-session": "^2.1.0",
     "express": "^4.19.2",
     "imapflow": "^1.0.156",
+    "jsonwebtoken": "^9.0.2",
     "mailparser": "^3.7.1",
     "nodemailer": "^6.9.14",
     "pg": "^8.11.5"
