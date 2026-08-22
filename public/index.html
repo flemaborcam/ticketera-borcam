@@ -29,7 +29,9 @@
   .field textarea{resize:vertical;min-height:90px;} .field-row{display:flex;gap:12px;} .field-row .field{flex:1;}
   .error-text{color:var(--stamp-red);font-size:13px;margin:-6px 0 12px;} .hint-text{color:var(--ink-soft);font-size:12.5px;margin-top:4px;}
   .auth-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-  .auth-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:32px 28px;}
+  .auth-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:0;overflow:hidden;}
+  .auth-card-brand{background:var(--ink);padding:22px 28px;display:flex;justify-content:center;align-items:center;}
+  .auth-card-body{padding:32px 28px;}
 
   .auth-card h1{font-family:var(--font-display);font-size:22px;font-weight:600;margin:0 0 4px;} .auth-card .sub{color:var(--ink-soft);font-size:13.5px;margin:0 0 22px;}
   .auth-toggle{text-align:center;margin-top:16px;font-size:13.5px;color:var(--ink-soft);} .auth-toggle button{background:none;border:none;color:var(--brand);font-weight:600;padding:0;font-size:13.5px;}
@@ -117,7 +119,7 @@
     .stub-check{position:absolute;top:8px;right:10px;z-index:2;padding:0;background:rgba(255,255,255,.9);border-radius:4px;}
     .stub-num{width:100%;flex-direction:row;gap:8px;border-right:none;border-bottom:2px dashed rgba(255,255,255,.35);padding:8px 14px;}
     .stub-num::before,.stub-num::after{top:50%;transform:translateY(-50%);} .stub-num::before{left:-7px;right:auto;} .stub-num::after{right:-7px;}
-    .auth-card{padding:26px 20px;}
+    .auth-card-body{padding:26px 20px;}
   }
 </style>
 </head>
