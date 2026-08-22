@@ -10,6 +10,34 @@ const { simpleParser } = require('mailparser');
 
 const ENC_KEY = crypto.createHash('sha256').update(process.env.COOKIE_SECRET || 'cambia-este-secreto').digest();
 
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const BUCKET_ADJUNTOS = 'adjuntos';
+
+async function subirArchivoStorage(path, buffer, contentType) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) throw new Error('Falta configurar SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY.');
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET_ADJUNTOS}/${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      apikey: SUPABASE_SERVICE_KEY,
+      'Content-Type': contentType || 'application/octet-stream',
+      'x-upsert': 'true'
+    },
+    body: buffer
+  });
+  if (!r.ok) throw new Error('No se pudo subir el archivo a Storage (' + (await r.text()) + ')');
+  return path;
+}
+
+async function descargarArchivoStorage(path) {
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET_ADJUNTOS}/${path}`, {
+    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY }
+  });
+  if (!r.ok) throw new Error('No se pudo descargar el archivo.');
+  return r;
+}
+
 function encrypt(text) {
   if (!text) return '';
   const iv = crypto.randomBytes(12);
@@ -349,10 +377,23 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   } else {
     const staff = (await pool.query('select * from usuarios where id=$1', [req.session.userId])).rows[0];
     const firmaHtml = (incluirFirma && staff.firma_html) ? staff.firma_html : '';
+
+    const adjuntosProcesados = [];
+    for (const a of (adjuntos || [])) {
+      try {
+        const base64 = (a.dataUrl || '').split(',')[1] || '';
+        const mime = (a.dataUrl || '').match(/^data:(.*?);base64,/)?.[1] || 'application/octet-stream';
+        const attId = a.id || crypto.randomUUID();
+        const path = `${id}/${attId}-${a.nombre}`;
+        await subirArchivoStorage(path, Buffer.from(base64, 'base64'), mime);
+        adjuntosProcesados.push({ id: attId, nombre: a.nombre, tipo: a.tipo, mime, size: a.size, path });
+      } catch (e) { console.error('Error subiendo adjunto:', e.message); }
+    }
+
     await pool.query(
       `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc, adjuntos, firma_html)
        values ($1,'saliente',$2,$3,$4,$5,$6)`,
-      [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntos || []), firmaHtml]
+      [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntosProcesados), firmaHtml]
     );
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
 
@@ -719,11 +760,22 @@ async function procesarCorreoEntrante(parsed) {
   const cuerpo = textoLimpio || '(mensaje sin texto)';
   const numeroDetectado = extraerNumeroTicket(asunto);
 
-  const adjuntos = [];
+  const adjuntosCrudos = [];
   for (const a of (parsed.attachments || [])) {
     if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
     const tipo = a.contentType.startsWith('image/') ? 'imagen' : a.contentType.startsWith('video/') ? 'video' : a.contentType === 'application/pdf' ? 'pdf' : 'archivo';
-    adjuntos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, size: a.size, dataUrl: `data:${a.contentType};base64,${a.content.toString('base64')}` });
+    adjuntosCrudos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, mime: a.contentType, size: a.size, buffer: a.content });
+  }
+  async function subirAdjuntosCrudos(ticketId) {
+    const resultado = [];
+    for (const a of adjuntosCrudos) {
+      try {
+        const path = `${ticketId}/${a.id}-${a.nombre}`;
+        await subirArchivoStorage(path, a.buffer, a.mime);
+        resultado.push({ id: a.id, nombre: a.nombre, tipo: a.tipo, mime: a.mime, size: a.size, path });
+      } catch (e) { console.error('Error subiendo adjunto de correo real:', e.message); }
+    }
+    return resultado;
   }
 
   let ticket = null;
@@ -732,6 +784,7 @@ async function procesarCorreoEntrante(parsed) {
   }
 
   if (ticket) {
+    const adjuntos = await subirAdjuntosCrudos(ticket.id);
     await pool.query(
       `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
       [ticket.id, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
@@ -750,6 +803,7 @@ async function procesarCorreoEntrante(parsed) {
       [numero, asunto, remitenteNombre, remitenteEmail]
     );
     const ticketId = r.rows[0].id;
+    const adjuntos = await subirAdjuntosCrudos(ticketId);
     await pool.query(
       `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
       [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
@@ -803,6 +857,31 @@ async function revisarCasillaReal() {
 // Revisa la casilla apenas arranca el servidor, y después cada 60 segundos
 setTimeout(revisarCasillaReal, 8000);
 setInterval(revisarCasillaReal, 60 * 1000);
+
+/* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
+
+app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
+  if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
+  const { ticketId, mensajeId, adjuntoId } = req.params;
+  const t = (await pool.query('select cliente_id from tickets where id=$1', [ticketId])).rows[0];
+  if (!t) return res.status(404).json({ error: 'No encontrado' });
+  if (req.session.type === 'cliente' && t.cliente_id !== req.session.clienteId) return res.status(403).json({ error: 'No autorizado' });
+
+  const m = (await pool.query('select adjuntos from mensajes where id=$1 and ticket_id=$2', [mensajeId, ticketId])).rows[0];
+  if (!m) return res.status(404).json({ error: 'No encontrado' });
+  const adj = (m.adjuntos || []).find(a => a.id === adjuntoId);
+  if (!adj || !adj.path) return res.status(404).json({ error: 'Adjunto no encontrado' });
+
+  try {
+    const upstream = await descargarArchivoStorage(adj.path);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', adj.mime || 'application/octet-stream');
+    res.set('Content-Disposition', `inline; filename="${encodeURIComponent(adj.nombre)}"`);
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 /* ---------------- Fallback ---------------- */
 
