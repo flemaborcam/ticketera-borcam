@@ -757,6 +757,57 @@ function renderAutomatizaciones() {
   return `<div class="page-head"><div><h1>Automatizaciones</h1><div class="sub">Cadenas de pasos que responden solas ante ciertas palabras</div></div><button class="btn btn-primary" onclick="openNuevaAutomatizacionModal()">+ Nueva automatización</button></div>${list}`;
 }
 
+function openNuevoUsuarioModal() {
+  state.modal = 'nuevo-usuario';
+  render();
+}
+
+async function submitNuevoUsuario(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const password = fd.get('password'), password2 = fd.get('password2');
+  if (password !== password2) { showToast('Las contraseñas no coinciden.'); return false; }
+  try {
+    await api('POST', '/api/usuarios', {
+      nombre: fd.get('nombre').trim(), apellido: fd.get('apellido').trim(), telefono: fd.get('telefono').trim(),
+      email: fd.get('email').trim(), cargo: fd.get('cargo'), password, esSuperadmin: fd.get('esSuperadmin') === 'on'
+    });
+    cache.usuarios = await api('GET', '/api/usuarios');
+    state.modal = null;
+    showToast('Usuario creado.');
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+
+function renderNuevoUsuarioModal() {
+  const cargoOptions = CAT.CARGOS.map(c => `<option value="${c}">${c}</option>`).join('');
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Nuevo usuario</h2>
+    <p class="sub">Da de alta a alguien del equipo directamente, sin que tenga que registrarse.</p>
+    <form onsubmit="return submitNuevoUsuario(event)">
+      <div class="field-row">
+        <div class="field"><label>Nombre</label><input name="nombre" required></div>
+        <div class="field"><label>Apellido</label><input name="apellido" required></div>
+      </div>
+      <div class="field"><label>Teléfono</label><input name="telefono"></div>
+      <div class="field"><label>Correo electrónico</label><input name="email" type="email" required></div>
+      <div class="field"><label>Cargo</label><select name="cargo" required><option value="" disabled selected>Elegí un cargo</option>${cargoOptions}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Contraseña</label><input name="password" type="password" required></div>
+        <div class="field"><label>Repetir contraseña</label><input name="password2" type="password" required></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;">
+        <input type="checkbox" name="esSuperadmin"> Es Superadmin (puede editar a otros usuarios)
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Crear usuario</button>
+      </div>
+    </form>
+  </div></div>`;
+}
+
 function openEditarUsuarioModal(id) {
   state.modal = 'editar-usuario';
   state.editUsuarioId = id;
@@ -807,13 +858,28 @@ function renderEditarUsuarioModal() {
 
 function renderUsuarios() {
   const soyAdmin = currentUser().es_superadmin;
+  const miId = currentUser().id;
   const rows = cache.usuarios.map(u => `<div class="user-row"><div class="avatar">${initials(u.nombre, u.apellido)}</div>
     <div><div class="u-name">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}${u.es_superadmin ? ' <span class="tag tag-esperando-al-cliente" style="margin-left:4px;">Superadmin</span>' : ''}</div>
     <div class="u-sub">${escapeHtml(u.email)}${u.telefono ? ' · ' + escapeHtml(u.telefono) : ''}</div></div>
     <span class="tag tag-cat cargo-pill">${escapeHtml(u.cargo)}</span>
     ${soyAdmin ? `<button class="btn btn-ghost" style="margin-left:10px;" onclick="openEditarUsuarioModal('${u.id}')">Editar</button>` : ''}
+    ${soyAdmin && u.id !== miId ? `<button class="btn btn-danger" style="margin-left:6px;" onclick="eliminarUsuario('${u.id}')">Eliminar</button>` : ''}
     </div>`).join('');
-  return `<div class="page-head"><div><h1>Usuarios</h1><div class="sub">${cache.usuarios.length} personas con acceso a la plataforma</div></div></div><div class="user-list">${rows}</div>`;
+  return `<div class="page-head"><div><h1>Usuarios</h1><div class="sub">${cache.usuarios.length} personas con acceso a la plataforma</div></div>
+    ${soyAdmin ? `<button class="btn btn-primary" onclick="openNuevoUsuarioModal()">+ Nuevo usuario</button>` : ''}</div>
+    <div class="user-list">${rows}</div>`;
+}
+
+async function eliminarUsuario(id) {
+  const u = cache.usuarios.find(x => x.id === id);
+  if (!confirm(`¿Eliminar a ${u ? u.nombre + ' ' + u.apellido : 'este usuario'}? Los tickets que tenía asignados quedarán sin asignar.`)) return;
+  try {
+    await api('DELETE', '/api/usuarios/' + id);
+    cache.usuarios = cache.usuarios.filter(x => x.id !== id);
+    showToast('Usuario eliminado.');
+    render();
+  } catch (e) { showToast(e.message); }
 }
 
 function renderPerfil() {
@@ -899,6 +965,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
   if (state.modal === 'editar-usuario') return renderEditarUsuarioModal();
+  if (state.modal === 'nuevo-usuario') return renderNuevoUsuarioModal();
   return '';
 }
 function renderNuevoCorreoModal() {
