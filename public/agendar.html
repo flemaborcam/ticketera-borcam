@@ -41,13 +41,10 @@
 </div>
 <script>
 let info = null;
+let edificioSeleccionado = null;
 let diaSeleccionado = null;
 let slotSeleccionado = null;
 
-function fmtDiaCorto(iso) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('es-UY', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'America/Montevideo' });
-}
 function fmtHora(iso) {
   return new Date(iso).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' });
 }
@@ -55,11 +52,29 @@ function fechaKey(iso) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
 }
 
+async function cargarInfo(edificio) {
+  const q = edificio ? `?edificio=${encodeURIComponent(edificio)}` : '';
+  const r = await fetch('/api/agenda/info' + q);
+  return r.json();
+}
+
 async function boot() {
-  try {
-    const r = await fetch('/api/agenda/info');
-    info = await r.json();
-  } catch (e) { info = { activo: false }; }
+  try { info = await cargarInfo(null); } catch (e) { info = { activo: false }; }
+  render();
+}
+
+async function elegirEdificio(valor) {
+  if (!valor) return;
+  edificioSeleccionado = valor;
+  diaSeleccionado = null; slotSeleccionado = null;
+  const app = document.getElementById('app');
+  app.innerHTML = `<h1>Agendar turno de instalación</h1><div class="empty">Buscando horarios para ${valor}…</div>`;
+  info = await cargarInfo(valor);
+  render();
+}
+
+function cambiarEdificio() {
+  edificioSeleccionado = null; diaSeleccionado = null; slotSeleccionado = null;
   render();
 }
 
@@ -69,18 +84,31 @@ function render() {
     app.innerHTML = `<h1>Agendar turno</h1><div class="empty">En este momento no hay turnos disponibles para agendar. Escribinos por correo y coordinamos directamente.</div>`;
     return;
   }
-  if (!info.slots.length) {
-    app.innerHTML = `<h1>Agendar turno de instalación</h1><div class="empty">No quedan horarios libres por ahora. Volvé a intentar más adelante.</div>`;
+
+  if (!edificioSeleccionado) {
+    const opts = `<option value="" disabled selected>Elegí tu edificio</option>` + info.edificios.map(e => `<option value="${e}">${e}</option>`).join('');
+    app.innerHTML = `
+      <h1>Agendar turno de instalación</h1>
+      <p class="sub">Para mostrarte las fechas disponibles, primero decinos en qué edificio vivís.</p>
+      <div class="field"><label>Edificio</label><select onchange="elegirEdificio(this.value)">${opts}</select></div>
+    `;
     return;
   }
+
+  if (!info.slots.length) {
+    app.innerHTML = `<h1>Agendar turno de instalación</h1>
+      <p class="sub">Edificio: <strong>${edificioSeleccionado}</strong> · <a href="#" onclick="cambiarEdificio();return false;">cambiar</a></p>
+      <div class="empty">No quedan horarios libres para tu edificio por ahora. Volvé a intentar más adelante.</div>`;
+    return;
+  }
+
   const porDia = {};
   info.slots.forEach(s => { const k = fechaKey(s); (porDia[k] = porDia[k] || []).push(s); });
   const dias = Object.keys(porDia).sort();
-  if (!diaSeleccionado) diaSeleccionado = dias[0];
+  if (!diaSeleccionado || !porDia[diaSeleccionado]) diaSeleccionado = dias[0];
 
   const diasHtml = dias.map(k => {
-    const ejemplo = porDia[k][0];
-    const d = new Date(ejemplo);
+    const d = new Date(porDia[k][0]);
     const dia = d.toLocaleDateString('es-UY', { day: 'numeric', timeZone: 'America/Montevideo' });
     const mes = d.toLocaleDateString('es-UY', { month: 'short', timeZone: 'America/Montevideo' });
     return `<div class="dia-chip ${k === diaSeleccionado ? 'active' : ''}" onclick="elegirDia('${k}')"><span class="n">${dia}</span>${mes}</div>`;
@@ -90,12 +118,9 @@ function render() {
     <button type="button" class="slot-btn ${s === slotSeleccionado ? 'selected' : ''}" onclick="elegirSlot('${s}')">${fmtHora(s)}</button>
   `).join('');
 
-  const edificiosOpts = `<option value="" disabled ${slotSeleccionado ? '' : 'selected'}>Elegí tu edificio</option>` +
-    info.edificios.map(e => `<option value="${e}">${e}</option>`).join('');
-
   app.innerHTML = `
     <h1>Agendar turno de instalación</h1>
-    <p class="sub">Elegí un día y horario disponible.</p>
+    <p class="sub">Edificio: <strong>${edificioSeleccionado}</strong> · <a href="#" onclick="cambiarEdificio();return false;">cambiar</a></p>
     <div class="dias">${diasHtml}</div>
     <div class="slots">${slotsHtml}</div>
     ${slotSeleccionado ? `
@@ -105,10 +130,7 @@ function render() {
         <div class="field"><label>Correo electrónico</label><input name="correo" type="email" required></div>
         <div class="field"><label>Teléfono</label><input name="telefono" required></div>
       </div>
-      <div class="field-row">
-        <div class="field"><label>Edificio</label><select name="edificio" required>${edificiosOpts}</select></div>
-        <div class="field"><label>N.º de unidad</label><input name="unidad" required></div>
-      </div>
+      <div class="field"><label>N.º de unidad</label><input name="unidad" required></div>
       <div class="field">
         <label>¿Tenés internet instalado?</label>
         <div class="radio-row">
@@ -136,7 +158,7 @@ async function confirmarTurno(ev) {
       body: JSON.stringify({
         fechaHora: slotSeleccionado, nombreCliente: fd.get('nombre'), correoCliente: fd.get('correo'),
         telefono: fd.get('telefono'), tieneInternet: fd.get('internet') === 'si',
-        edificio: fd.get('edificio'), numeroUnidad: fd.get('unidad')
+        edificio: edificioSeleccionado, numeroUnidad: fd.get('unidad')
       })
     });
     const data = await r.json();
@@ -149,7 +171,8 @@ async function confirmarTurno(ev) {
   } catch (e) {
     document.getElementById('form-error').innerHTML = `<div class="error">${e.message}</div>`;
     btn.disabled = false; btn.textContent = 'Confirmar turno';
-    await boot(); // refresca disponibilidad por si el horario ya no está libre
+    info = await cargarInfo(edificioSeleccionado); // refresca disponibilidad por si ya no está libre
+    render();
   }
   return false;
 }
