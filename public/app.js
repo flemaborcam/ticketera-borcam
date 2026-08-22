@@ -64,7 +64,7 @@ async function loadStaffData() {
   cache.usuarios = usuarios;
   cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, tienePortal: c.tiene_portal }));
   cache.respuestas = respuestas;
-  cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado })) }));
+  cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
   CAT = catalogos;
 }
@@ -326,26 +326,27 @@ function insertCanned(selectEl) {
 
 function openNuevaAutomatizacionModal() {
   state.modal = 'nueva-automatizacion'; state.editAutomatizacionId = null;
-  state.editandoPasos = [{ id: uid(), matchAny: false, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio' }];
+  state.editandoPasos = [{ id: uid(), matchAny: false, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', soloNuevoTicket: false }];
   render();
 }
 function openEditarAutomatizacionModal(id) {
   const a = cache.automatizaciones.find(x => x.id === id);
   state.modal = 'editar-automatizacion'; state.editAutomatizacionId = id;
-  state.editandoPasos = a ? a.pasos.map(p => ({ id: p.id, matchAny: !!p.matchAny, palabras: (p.palabras || []).join(', '), respuestaId: p.respuestaId, accionEstado: p.accionEstado || 'Sin cambio' })) : [];
+  state.editandoPasos = a ? a.pasos.map(p => ({ id: p.id, matchAny: !!p.matchAny, palabras: (p.palabras || []).join(', '), respuestaId: p.respuestaId, accionEstado: p.accionEstado || 'Sin cambio', soloNuevoTicket: !!p.soloNuevoTicket })) : [];
   render();
 }
 function leerPasosDesdeDom() {
   return Array.from(document.querySelectorAll('.paso-row')).map(row => ({
     id: row.dataset.pasoId, matchAny: row.querySelector('[data-field="matchAny"]').checked,
     palabras: row.querySelector('[data-field="palabras"]').value, respuestaId: row.querySelector('[data-field="respuestaId"]').value,
-    accionEstado: row.querySelector('[data-field="accionEstado"]').value
+    accionEstado: row.querySelector('[data-field="accionEstado"]').value,
+    soloNuevoTicket: row.querySelector('[data-field="soloNuevoTicket"]') ? row.querySelector('[data-field="soloNuevoTicket"]').checked : false
   }));
 }
 function refreshPasosEditor() { const el = document.getElementById('pasos-container'); if (el) el.innerHTML = renderPasosEditor(); }
 function agregarPasoEditor() {
   state.editandoPasos = leerPasosDesdeDom();
-  state.editandoPasos.push({ id: uid(), matchAny: true, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio' });
+  state.editandoPasos.push({ id: uid(), matchAny: true, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', soloNuevoTicket: false });
   refreshPasosEditor();
 }
 function quitarPasoEditor(id) { state.editandoPasos = leerPasosDesdeDom().filter(p => p.id !== id); refreshPasosEditor(); }
@@ -364,13 +365,13 @@ async function submitAutomatizacion(ev) {
   for (const p of pasosRaw) {
     if (!p.respuestaId) { showToast('Elegí una respuesta predefinida en cada paso.'); return false; }
     if (!p.matchAny && !p.palabras.trim()) { showToast('Completá palabras clave o marcá "cualquier respuesta".'); return false; }
-    pasos.push({ matchAny: p.matchAny, palabras: p.matchAny ? [] : p.palabras.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), respuestaId: p.respuestaId, accionEstado: p.accionEstado });
+    pasos.push({ matchAny: p.matchAny, palabras: p.matchAny ? [] : p.palabras.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), respuestaId: p.respuestaId, accionEstado: p.accionEstado, soloNuevoTicket: p.soloNuevoTicket });
   }
   try {
     if (state.modal === 'editar-automatizacion') await api('PUT', '/api/automatizaciones/' + state.editAutomatizacionId, { nombre, activo, pasos });
     else await api('POST', '/api/automatizaciones', { nombre, activo, pasos });
     const autos = await api('GET', '/api/automatizaciones');
-    cache.automatizaciones = autos.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado })) }));
+    cache.automatizaciones = autos.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
     state.modal = null; state.editandoPasos = [];
     render();
   } catch (e) { showToast(e.message); }
@@ -922,6 +923,9 @@ function renderPasosEditor() {
       </div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;"><input type="checkbox" data-field="matchAny" ${p.matchAny ? 'checked' : ''} onchange="onPasoMatchAnyChange('${p.id}', this.checked)"> Se dispara con cualquier respuesta del cliente</label>
       <div class="field" data-field-wrap="palabras" style="${p.matchAny ? 'display:none;' : ''}"><label>Palabras clave</label><input type="text" data-field="palabras" value="${escapeHtml(p.palabras)}" placeholder="tag, llave, sticker vehicular"></div>
+      ${idx === 0 ? `<label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;background:var(--brand-tint);padding:8px 10px;border-radius:6px;">
+        <input type="checkbox" data-field="soloNuevoTicket" ${p.soloNuevoTicket ? 'checked' : ''}> Disparar solo al crear el ticket (no en respuestas posteriores)
+      </label>` : ''}
       <div class="field"><label>Respuesta a enviar</label><select data-field="respuestaId">${respOpts(p.respuestaId)}</select></div>
       <div class="field" style="margin-bottom:0;"><label>Cambiar estado a</label><select data-field="accionEstado">${estadoOpts(p.accionEstado)}</select></div>
     </div>`).join('');
@@ -931,7 +935,7 @@ function renderAutomatizaciones() {
   const rows = cache.automatizaciones.map(a => {
     const pasosHtml = a.pasos.map((p, idx) => {
       const resp = cache.respuestas.find(r => r.id === p.respuestaId);
-      const disparador = p.matchAny ? 'cualquier respuesta del cliente' : (p.palabras || []).join(', ');
+      const disparador = p.soloNuevoTicket ? 'al crear el ticket (siempre)' : p.matchAny ? 'cualquier respuesta del cliente' : (p.palabras || []).join(', ');
       return `<div class="hint-text" style="margin-top:4px;"><strong>Paso ${idx + 1}:</strong> ${escapeHtml(disparador)} &rarr; ${resp ? escapeHtml(resp.titulo) : 'respuesta eliminada'}${p.accionEstado !== 'Sin cambio' ? ` · estado: <strong>${escapeHtml(p.accionEstado)}</strong>` : ''}</div>`;
     }).join('');
     return `<div class="card" style="margin-bottom:12px;opacity:${a.activo ? '1' : '.55'};"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
