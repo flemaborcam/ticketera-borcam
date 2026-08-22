@@ -397,6 +397,7 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   );
   const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
   await aplicarAvisoFinDeSemana(ticketId);
+  await aplicarAvisoFueraHorario(ticketId);
   const ticket = await ticketConMensajes(ticketId);
   ok(res, { ticket, automatizado });
 });
@@ -430,6 +431,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     if (t.estado === 'Resuelto' || t.estado === 'Cerrado') await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
     await aplicarAutomatizacionSiCorresponde(id, cuerpo);
     await aplicarAvisoFinDeSemana(id);
+    await aplicarAvisoFueraHorario(id);
   } else {
     const staff = (await pool.query('select * from usuarios where id=$1', [req.session.userId])).rows[0];
     const firmaHtml = (incluirFirma && staff.firma_html) ? staff.firma_html : '';
@@ -670,7 +672,9 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     casillaEmail: c.casilla_email, casillaNombre: c.casilla_nombre, correoActivo: c.correo_activo,
     imapHost: c.imap_host, imapPort: c.imap_port, imapUsuario: c.imap_usuario, tieneImapPassword: !!c.imap_pass_enc,
     smtpHost: c.smtp_host, smtpPort: c.smtp_port, smtpUsuario: c.smtp_usuario, tieneSmtpPassword: !!c.smtp_pass_enc,
-    avisoFindeActivo: c.aviso_finde_activo !== false, avisoFindeMensaje: c.aviso_finde_mensaje
+    avisoFindeActivo: c.aviso_finde_activo !== false, avisoFindeMensaje: c.aviso_finde_mensaje,
+    avisoFueraHorarioActivo: c.aviso_fuera_horario_activo !== false, avisoFueraHorarioMensaje: c.aviso_fuera_horario_mensaje,
+    avisoFueraHorarioInicio: c.aviso_fuera_horario_inicio || '09:00', avisoFueraHorarioFin: c.aviso_fuera_horario_fin || '18:00'
   });
 });
 
@@ -683,7 +687,9 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        imap_pass_enc = case when $7 <> '' then $8 else imap_pass_enc end,
        smtp_host=$9, smtp_port=$10, smtp_usuario=$11,
        smtp_pass_enc = case when $12 <> '' then $13 else smtp_pass_enc end,
-       aviso_finde_activo=$14, aviso_finde_mensaje=$15
+       aviso_finde_activo=$14, aviso_finde_mensaje=$15,
+       aviso_fuera_horario_activo=$16, aviso_fuera_horario_mensaje=$17,
+       aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -691,7 +697,9 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       b.imapPassword || '', encrypt(b.imapPassword || ''),
       b.smtpHost || '', b.smtpPort || 465, b.smtpUsuario || '',
       b.smtpPassword || '', encrypt(b.smtpPassword || ''),
-      !!b.avisoFindeActivo, b.avisoFindeMensaje || ''
+      !!b.avisoFindeActivo, b.avisoFindeMensaje || '',
+      !!b.avisoFueraHorarioActivo, b.avisoFueraHorarioMensaje || '',
+      b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00'
     ]
   );
   ok(res, { ok: true });
@@ -969,6 +977,7 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   }
   await aplicarAutomatizacionSiCorresponde(id, cuerpo);
   await aplicarAvisoFinDeSemana(id);
+  await aplicarAvisoFueraHorario(id);
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
 });
@@ -994,6 +1003,36 @@ async function aplicarAvisoFinDeSemana(ticketId) {
   const mensaje = cfg.aviso_finde_mensaje || 'Estamos fuera de horario de atención (fin de semana).';
   await pool.query(
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fin de semana',$2,true)`,
+    [ticketId, mensaje]
+  );
+  const ctx = await contextoTicket(ticketId);
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje });
+}
+
+// Lunes a viernes, fuera del horario laboral configurado (ej: antes de las 09:00 o desde las 18:00)
+function esFueraDeHorarioLaboral(cfg) {
+  const dia = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(new Date());
+  if (dia === 'Sat' || dia === 'Sun') return false; // los fines de semana ya los cubre el otro aviso
+  const horaActual = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+  const apertura = cfg.aviso_fuera_horario_inicio || '09:00';
+  const cierre = cfg.aviso_fuera_horario_fin || '18:00';
+  return horaActual < apertura || horaActual >= cierre;
+}
+
+async function aplicarAvisoFueraHorario(ticketId) {
+  const cfg = await getConfig();
+  if (cfg.aviso_fuera_horario_activo === false) return;
+  if (!esFueraDeHorarioLaboral(cfg)) return;
+  const yaEnviado = await pool.query(
+    `select 1 from mensajes where ticket_id=$1 and autor='Aviso automático · Fuera de horario'
+     and (fecha at time zone 'America/Montevideo')::date = (now() at time zone 'America/Montevideo')::date
+     limit 1`,
+    [ticketId]
+  );
+  if (yaEnviado.rows.length) return;
+  const mensaje = cfg.aviso_fuera_horario_mensaje || 'Estamos fuera de nuestro horario de atención.';
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fuera de horario',$2,true)`,
     [ticketId, mensaje]
   );
   const ctx = await contextoTicket(ticketId);
@@ -1070,6 +1109,7 @@ async function procesarCorreoEntrante(parsed) {
     }
     await aplicarAutomatizacionSiCorresponde(ticket.id, cuerpo);
     await aplicarAvisoFinDeSemana(ticket.id);
+    await aplicarAvisoFueraHorario(ticket.id);
     await pool.query('update tickets set actualizado=now() where id=$1', [ticket.id]);
   } else {
     const numero = await nextTicketNumero();
@@ -1086,6 +1126,7 @@ async function procesarCorreoEntrante(parsed) {
     );
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
+    await aplicarAvisoFueraHorario(ticketId);
   }
 }
 
