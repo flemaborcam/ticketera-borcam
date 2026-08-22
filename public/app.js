@@ -576,17 +576,20 @@ function renderDashboard() {
 
 /* ---------------- Ticket detail ---------------- */
 
+function limpiarCuerpo(texto) {
+  return (texto || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
 function renderThreadHtml(t) {
   return t.mensajes.map(m => {
     if (m.tipo === 'sistema') {
       return `<div class="msg msg-sistema"><div class="msg-head"><span class="msg-autor">&#9993; ${escapeHtml(m.autor)}</span><span>${fmtDateTime(m.fecha)}</span></div>
-        <div class="msg-body">${escapeHtml(m.cuerpo)}</div>${m.destinatarios.length ? `<div class="msg-destinatarios">Enviado a: ${m.destinatarios.map(escapeHtml).join(', ')}</div>` : ''}</div>`;
+        <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>${m.destinatarios.length ? `<div class="msg-destinatarios">Enviado a: ${m.destinatarios.map(escapeHtml).join(', ')}</div>` : ''}</div>`;
     }
     return `<div class="msg msg-${m.tipo}"><div class="msg-head">
         <span class="msg-autor">${escapeHtml(m.autor)}${m.tipo === 'entrante' ? ' · ' + escapeHtml(t.remitenteEmail) : ''}${m.automatico ? ' <span class="auto-badge">&#9889; Automático</span>' : ''}</span>
         <span>${fmtDateTime(m.fecha)}</span></div>
       ${m.cc.length ? `<div class="msg-cc">CC: ${m.cc.map(escapeHtml).join(', ')}</div>` : ''}
-      <div class="msg-body">${escapeHtml(m.cuerpo)}</div>
+      <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>
       ${m.adjuntos.length ? renderAdjuntos(m.adjuntos) : ''}
       ${m.firmaHtml ? `<div class="msg-firma">${m.firmaHtml}</div>` : ''}</div>`;
   }).join('');
