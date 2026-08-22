@@ -611,15 +611,16 @@ function renderThreadHtml(t) {
         <span>${fmtDateTime(m.fecha)}</span></div>
       ${m.cc.length ? `<div class="msg-cc">CC: ${m.cc.map(escapeHtml).join(', ')}</div>` : ''}
       <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>
-      ${m.adjuntos.length ? renderAdjuntos(m.adjuntos) : ''}
+      ${m.adjuntos.length ? renderAdjuntos(t.id, m.id, m.adjuntos) : ''}
       ${m.firmaHtml ? `<div class="msg-firma">${m.firmaHtml}</div>` : ''}</div>`;
   }).join('');
 }
-function renderAdjuntos(adjuntos) {
+function renderAdjuntos(ticketId, mensajeId, adjuntos) {
   return `<div class="msg-attachments">${adjuntos.map(a => {
-    if (a.tipo === 'imagen') return `<a href="${a.dataUrl}" download="${escapeHtml(a.nombre)}"><img src="${a.dataUrl}" alt="${escapeHtml(a.nombre)}"></a>`;
-    if (a.tipo === 'video') return `<video controls src="${a.dataUrl}" class="attach-video"></video>`;
-    return `<a class="attach-file" href="${a.dataUrl}" download="${escapeHtml(a.nombre)}">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span></a>`;
+    const url = `/api/adjuntos/${ticketId}/${mensajeId}/${a.id}`;
+    if (a.tipo === 'imagen') return `<a href="${url}" download="${escapeHtml(a.nombre)}"><img src="${url}" alt="${escapeHtml(a.nombre)}"></a>`;
+    if (a.tipo === 'video') return `<video controls src="${url}" class="attach-video"></video>`;
+    return `<a class="attach-file" href="${url}" download="${escapeHtml(a.nombre)}">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span></a>`;
   }).join('')}</div>`;
 }
 
