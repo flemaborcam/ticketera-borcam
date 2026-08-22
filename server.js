@@ -780,12 +780,10 @@ app.get('/api/agenda/info', async (req, res) => {
     const horario = (cfg.diasHorarios || {})[diaKeyMontevideo(d)];
     if (!horario || !horario.activo) continue;
 
-    // Regla 1: si ese día de la semana rota entre varios edificios, solo entra si le toca a este
-    const rotacion = horario.rotacionEdificios || [];
-    if (rotacion.length) {
-      const asignado = rotacion[(ocurrenciaEnMes(d) - 1) % rotacion.length];
-      if (asignado !== edificioSolicitado) continue;
-    }
+    // Regla 1: asignación explícita por repetición del mes (1er/2do/3er/4to/5to de ese día)
+    const asignacion = horario.asignacionOcurrencias || {};
+    const asignado = asignacion[String(ocurrenciaEnMes(d))];
+    if (asignado && asignado !== edificioSolicitado) continue;
 
     // Regla 2: si esa fecha puntual ya la tomó otro edificio, queda bloqueada para el resto
     const ocupante = edificioPorFecha[dateStr];
