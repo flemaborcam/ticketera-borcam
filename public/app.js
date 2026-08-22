@@ -432,6 +432,47 @@ async function renderCalendarioAsync() {
   return renderCalendarioHtml();
 }
 
+function generarVistaPreviaCalendario() {
+  const form = document.getElementById('form-calendario');
+  const fd = new FormData(form);
+  const mapaIngles = { lunes: 'Mon', martes: 'Tue', miercoles: 'Wed', jueves: 'Thu', viernes: 'Fri', sabado: 'Sat', domingo: 'Sun' };
+  const bloques = [];
+
+  DIAS_SEMANA.forEach(([key, label]) => {
+    if (fd.get('activo_' + key) !== 'on') return;
+    const asign = {};
+    [1, 2, 3, 4, 5].forEach(n => { const v = fd.get(`oc_${key}_${n}`); if (v) asign[n] = v; });
+
+    const filas = [];
+    const hoy = new Date();
+    for (let i = 0; i < 90 && filas.length < 8; i++) {
+      const d = new Date(hoy.getTime() + i * 86400000);
+      const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(d);
+      if (wd !== mapaIngles[key]) continue;
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      const ocurrencia = Math.ceil(Number(dateStr.split('-')[2]) / 7);
+      const fechaLegible = d.toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Montevideo' });
+      filas.push({ fechaLegible, ocurrencia, asignado: asign[ocurrencia] || null });
+    }
+    bloques.push({ label, filas });
+  });
+
+  const el = document.getElementById('vista-previa-calendario');
+  if (!bloques.length) { el.innerHTML = `<div class="hint-text">No hay ningún día activo para mostrar.</div>`; return; }
+
+  el.innerHTML = bloques.map(b => `
+    <div style="margin-bottom:14px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:6px;">${b.label}</div>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        ${b.filas.map(f => `
+          <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 10px;background:var(--paper);border-radius:6px;">
+            <span>${f.fechaLegible} <span style="color:var(--ink-soft);">(${f.ocurrencia}° del mes)</span></span>
+            <strong style="color:${f.asignado ? 'var(--brand)' : 'var(--ink-soft)'};">${f.asignado ? escapeHtml(f.asignado) : 'Sin restricción'}</strong>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
 async function submitCalendarioConfig(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
@@ -523,7 +564,7 @@ function renderCalendarioHtml() {
     </div>
 
     <div class="card card-narrow" style="max-width:640px;">
-      <form onsubmit="return submitCalendarioConfig(event)">
+      <form id="form-calendario" onsubmit="return submitCalendarioConfig(event)">
         <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;">
           <input type="checkbox" name="agendaActiva" ${c.activo ? 'checked' : ''}> Activar la agenda pública (si está apagada, el enlace no deja reservar)
         </label>
@@ -539,6 +580,9 @@ function renderCalendarioHtml() {
         <div style="font-weight:600;font-size:13.5px;margin-bottom:10px;padding-top:12px;border-top:1px dashed var(--line-strong);">Días y horarios disponibles</div>
         ${filasDias}
         <div class="hint-text" style="margin-bottom:16px;">Un solo bloque horario por día. Si un edificio comparte ese día con otro, asignale directamente cada repetición del mes (por ejemplo, en un mes con 4 viernes, podés poner "Edificio A" en 1°, 2° y 3°, y "Edificio B" en el 4°). Dejalo en "Sin restricción" si esa repetición está abierta a cualquiera. Una vez que un edificio toma una fecha puntual, esa fecha queda bloqueada para los demás.</div>
+
+        <button type="button" class="btn btn-ghost btn-block" style="margin-bottom:12px;" onclick="generarVistaPreviaCalendario()">🔍 Ver a qué edificio le toca cada fecha real (próximos meses)</button>
+        <div id="vista-previa-calendario" style="margin-bottom:16px;"></div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Edificios (uno por línea)</div>
         <div class="field"><textarea name="edificios" style="min-height:90px;">${escapeHtml((cache.calendarioEdificios || []).join('\n'))}</textarea></div>
