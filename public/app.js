@@ -439,8 +439,9 @@ async function submitClienteReply(ev, ticketId) {
 
 /* ---------------- Render: piezas comunes ---------------- */
 
-function logoSvg() {
-  return `<img src="/logo.png" alt="Borcam" class="logo-img">`;
+function logoSvg(variant) {
+  const src = variant === 'white' ? '/logo-white.png' : '/logo.png';
+  return `<img src="${src}" alt="Borcam" class="logo-img">`;
 }
 function navItems(activeView) {
   const items = [
@@ -455,13 +456,13 @@ function renderShell(inner) {
   const u = currentUser();
   return `
   <div class="shell">
-    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
+    <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
-      <div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+      <div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItems(state.view)}</div>
     </div>
@@ -820,11 +821,11 @@ function renderAutomatizacionModal() {
 function renderClientShell(inner) {
   const g = currentGrupo();
   return `<div class="shell">
-    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
+    <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav><button class="nav-btn active"><span class="ico">&#9776;</span><span>Mis tickets</span></button></nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
-    <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+    <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav"><button class="nav-btn active"><span class="ico">&#9776;</span><span>Tickets</span></button></div>
     </div></div>
