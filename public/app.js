@@ -218,7 +218,7 @@ async function submitNuevoCorreo(ev) {
   return false;
 }
 
-const ATTACH_MAX_BYTES = 3 * 1024 * 1024;
+const ATTACH_MAX_BYTES = 20 * 1024 * 1024;
 function attachIcon(t) { return t === 'imagen' ? '&#128247;' : t === 'video' ? '&#127909;' : t === 'pdf' ? '&#128196;' : '&#128206;'; }
 function fmtSize(b) { return b < 1024 * 1024 ? Math.max(1, Math.round(b / 1024)) + ' KB' : (b / (1024 * 1024)).toFixed(1) + ' MB'; }
 function tipoAdjunto(mime) { if (mime.startsWith('image/')) return 'imagen'; if (mime.startsWith('video/')) return 'video'; if (mime === 'application/pdf') return 'pdf'; return 'archivo'; }
@@ -231,7 +231,7 @@ function renderPendingChips() {
 function refreshPendingChips() { const el = document.getElementById('pending-attachments'); if (el) el.innerHTML = renderPendingChips(); }
 function addPendingAttachments(input) {
   Array.from(input.files || []).forEach(file => {
-    if (file.size > ATTACH_MAX_BYTES) { showToast(`"${file.name}" pesa demasiado (máx. 3 MB).`); return; }
+    if (file.size > ATTACH_MAX_BYTES) { showToast(`"${file.name}" pesa demasiado (máx. 20 MB).`); return; }
     const reader = new FileReader();
     reader.onload = () => { state.pendingAttachments.push({ id: uid(), nombre: file.name, tipo: tipoAdjunto(file.type || ''), size: file.size, dataUrl: reader.result }); refreshPendingChips(); };
     reader.readAsDataURL(file);
@@ -668,7 +668,7 @@ function renderTicket(id) {
         ${state.replyTab === 'saliente' && u.firma_html ? `<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" name="incluirFirma" checked> Incluir mi firma</label>` : ''}
         ${state.replyTab === 'saliente' ? `
         <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Opcional, separá con coma.</div></div>
-        <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 3 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>` : ''}
+        <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>` : ''}
         <div class="reply-actions"><button type="submit" class="btn btn-primary">${state.replyTab === 'saliente' ? 'Enviar respuesta' : 'Simular correo entrante'}</button></div>
       </form>
     </div>`;
@@ -1066,7 +1066,9 @@ function renderClienteTicket(id) {
 function renderAuth() {
   const mode = state.authView || 'login';
   if (mode === 'login') {
-    return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
+    return `<div class="auth-wrap"><div class="auth-card">
+      <div class="auth-card-brand">${logoSvg('white')}</div>
+      <div class="auth-card-body">
       <h1>Iniciar sesión</h1><p class="sub">Accedé con tu correo y contraseña.</p>
       <form onsubmit="return handleLogin(event)">
         <div class="field"><label>Correo electrónico</label><input name="email" type="email" required></div>
@@ -1075,9 +1077,12 @@ function renderAuth() {
         <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
       </form>
       <div class="auth-toggle">¿No tenés cuenta? <button onclick="goAuth('register')">Registrate</button></div>
+      </div>
     </div></div>`;
   }
-  return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
+  return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-card-brand">${logoSvg('white')}</div>
+    <div class="auth-card-body">
     <h1>Crear cuenta</h1><p class="sub">Registrate para gestionar tickets.</p>
     <form onsubmit="return handleRegister(event)">
       <div class="field-row"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Apellido</label><input name="apellido" required></div></div>
@@ -1089,6 +1094,7 @@ function renderAuth() {
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
     </form>
     <div class="auth-toggle">¿Ya tenés cuenta? <button onclick="goAuth('login')">Iniciar sesión</button></div>
+    </div>
   </div></div>`;
 }
 
