@@ -312,6 +312,7 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
     [ticketId, remitenteNombre, cuerpo]
   );
   const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo);
+  await aplicarAvisoFinDeSemana(ticketId);
   const ticket = await ticketConMensajes(ticketId);
   ok(res, { ticket, automatizado });
 });
@@ -344,6 +345,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, t.remitente_nombre, cuerpo]);
     if (t.estado === 'Resuelto' || t.estado === 'Cerrado') await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
     await aplicarAutomatizacionSiCorresponde(id, cuerpo);
+    await aplicarAvisoFinDeSemana(id);
   } else {
     const staff = (await pool.query('select * from usuarios where id=$1', [req.session.userId])).rows[0];
     const firmaHtml = (incluirFirma && staff.firma_html) ? staff.firma_html : '';
@@ -520,7 +522,8 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
   ok(res, {
     casillaEmail: c.casilla_email, casillaNombre: c.casilla_nombre, correoActivo: c.correo_activo,
     imapHost: c.imap_host, imapPort: c.imap_port, imapUsuario: c.imap_usuario, tieneImapPassword: !!c.imap_pass_enc,
-    smtpHost: c.smtp_host, smtpPort: c.smtp_port, smtpUsuario: c.smtp_usuario, tieneSmtpPassword: !!c.smtp_pass_enc
+    smtpHost: c.smtp_host, smtpPort: c.smtp_port, smtpUsuario: c.smtp_usuario, tieneSmtpPassword: !!c.smtp_pass_enc,
+    avisoFindeActivo: c.aviso_finde_activo !== false, avisoFindeMensaje: c.aviso_finde_mensaje
   });
 });
 
@@ -532,14 +535,16 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        imap_host=$4, imap_port=$5, imap_usuario=$6,
        imap_pass_enc = case when $7 <> '' then $8 else imap_pass_enc end,
        smtp_host=$9, smtp_port=$10, smtp_usuario=$11,
-       smtp_pass_enc = case when $12 <> '' then $13 else smtp_pass_enc end
+       smtp_pass_enc = case when $12 <> '' then $13 else smtp_pass_enc end,
+       aviso_finde_activo=$14, aviso_finde_mensaje=$15
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
       b.imapHost || '', b.imapPort || 993, b.imapUsuario || '',
       b.imapPassword || '', encrypt(b.imapPassword || ''),
       b.smtpHost || '', b.smtpPort || 465, b.smtpUsuario || '',
-      b.smtpPassword || '', encrypt(b.smtpPassword || '')
+      b.smtpPassword || '', encrypt(b.smtpPassword || ''),
+      !!b.avisoFindeActivo, b.avisoFindeMensaje || ''
     ]
   );
   ok(res, { ok: true });
@@ -596,11 +601,37 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
     await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
   }
   await aplicarAutomatizacionSiCorresponde(id, cuerpo);
+  await aplicarAvisoFinDeSemana(id);
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
 });
 
 /* ---------------- Recepción real de correo (IMAP) ---------------- */
+
+function esFinDeSemanaUruguay() {
+  const dia = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(new Date());
+  return dia === 'Sat' || dia === 'Sun';
+}
+
+async function aplicarAvisoFinDeSemana(ticketId) {
+  if (!esFinDeSemanaUruguay()) return;
+  const cfg = await getConfig();
+  if (cfg.aviso_finde_activo === false) return;
+  const yaEnviado = await pool.query(
+    `select 1 from mensajes where ticket_id=$1 and autor='Aviso automático · Fin de semana'
+     and (fecha at time zone 'America/Montevideo')::date = (now() at time zone 'America/Montevideo')::date
+     limit 1`,
+    [ticketId]
+  );
+  if (yaEnviado.rows.length) return;
+  const mensaje = cfg.aviso_finde_mensaje || 'Estamos fuera de horario de atención (fin de semana).';
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fin de semana',$2,true)`,
+    [ticketId, mensaje]
+  );
+  const ctx = await contextoTicket(ticketId);
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje });
+}
 
 function extraerNumeroTicket(asunto) {
   const m = (asunto || '').match(/\[?(T-\d{4}-\d{4})\]?/i);
@@ -659,6 +690,7 @@ async function procesarCorreoEntrante(parsed) {
       await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
     }
     await aplicarAutomatizacionSiCorresponde(ticket.id, cuerpo);
+    await aplicarAvisoFinDeSemana(ticket.id);
     await pool.query('update tickets set actualizado=now() where id=$1', [ticket.id]);
   } else {
     const numero = await nextTicketNumero();
@@ -673,6 +705,7 @@ async function procesarCorreoEntrante(parsed) {
       [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
     );
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo);
+    await aplicarAvisoFinDeSemana(ticketId);
   }
 }
 
