@@ -440,10 +440,7 @@ async function submitClienteReply(ev, ticketId) {
 /* ---------------- Render: piezas comunes ---------------- */
 
 function logoSvg() {
-  return `<svg class="logo" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="2" y="7" width="30" height="20" rx="3" fill="var(--brand)"/>
-    <line x1="2" y1="17" x2="32" y2="17" stroke="#fff" stroke-width="1.6" stroke-dasharray="2 3"/>
-    <circle cx="17" cy="17" r="2.6" fill="#fff"/></svg>`;
+  return `<img src="/logo.png" alt="Borcam" class="logo-img">`;
 }
 function navItems(activeView) {
   const items = [
@@ -458,13 +455,13 @@ function renderShell(inner) {
   const u = currentUser();
   return `
   <div class="shell">
-    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div>
+    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
-      <div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+      <div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItems(state.view)}</div>
     </div>
@@ -823,11 +820,11 @@ function renderAutomatizacionModal() {
 function renderClientShell(inner) {
   const g = currentGrupo();
   return `<div class="shell">
-    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div>
+    <aside class="sidebar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
       <nav><button class="nav-btn active"><span class="ico">&#9776;</span><span>Mis tickets</span></button></nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
-    <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+    <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav"><button class="nav-btn active"><span class="ico">&#9776;</span><span>Tickets</span></button></div>
     </div></div>
@@ -859,7 +856,7 @@ function renderClienteTicket(id) {
 function renderAuth() {
   const mode = state.authView || 'login';
   if (mode === 'login') {
-    return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div>
+    return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
       <h1>Iniciar sesión</h1><p class="sub">Accedé con tu correo y contraseña.</p>
       <form onsubmit="return handleLogin(event)">
         <div class="field"><label>Correo electrónico</label><input name="email" type="email" required></div>
@@ -870,7 +867,7 @@ function renderAuth() {
       <div class="auth-toggle">¿No tenés cuenta? <button onclick="goAuth('register')">Registrate</button></div>
     </div></div>`;
   }
-  return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Ticketera</span></div>
+  return `<div class="auth-wrap"><div class="auth-card"><div class="brand-mark">${logoSvg()}<span class="name">Sistema de Tickets</span></div>
     <h1>Crear cuenta</h1><p class="sub">Registrate para gestionar tickets.</p>
     <form onsubmit="return handleRegister(event)">
       <div class="field-row"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Apellido</label><input name="apellido" required></div></div>
