@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agendar turno — Borcam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --ink:#0F2A4D; --ink-soft:#48607F; --paper:#F3F7FC; --card:#FFFFFF; --line:#DCE7F5; --line-strong:#B7CDE8;
+    --brand:#1E56C7; --brand-2:#3D7EF0; --brand-tint:#E7F0FE; --radius:8px; }
+  *{box-sizing:border-box;} body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans',sans-serif;}
+  .wrap{max-width:640px;margin:0 auto;padding:26px 18px 60px;}
+  .brand{display:flex;justify-content:center;margin-bottom:22px;}
+  .brand img{height:44px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:26px 22px;box-shadow:0 1px 2px rgba(15,42,77,.07),0 2px 6px rgba(15,42,77,.05);}
+  h1{font-family:'Oswald',sans-serif;font-size:22px;margin:0 0 6px;} .sub{color:var(--ink-soft);font-size:13.5px;margin:0 0 20px;}
+  .dias{display:flex;gap:8px;overflow-x:auto;padding-bottom:8px;margin-bottom:16px;}
+  .dia-chip{flex:none;border:1px solid var(--line-strong);background:#fff;border-radius:8px;padding:10px 14px;text-align:center;cursor:pointer;font-size:13px;}
+  .dia-chip.active{background:var(--brand);color:#fff;border-color:var(--brand);}
+  .dia-chip .n{font-weight:700;font-size:16px;display:block;}
+  .slots{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px;}
+  .slot-btn{border:1px solid var(--line-strong);background:#fff;border-radius:6px;padding:9px 14px;font-size:13.5px;cursor:pointer;}
+  .slot-btn:hover{background:var(--brand-tint);} .slot-btn.selected{background:var(--brand);color:#fff;border-color:var(--brand);}
+  .field{margin-bottom:14px;} .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:5px;text-transform:uppercase;letter-spacing:.03em;}
+  .field input,.field select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);font-size:15px;}
+  .field-row{display:flex;gap:12px;} .field-row .field{flex:1;}
+  .radio-row{display:flex;gap:16px;} .radio-row label{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:normal;text-transform:none;letter-spacing:0;}
+  .btn{background:var(--brand);color:#fff;border:none;padding:12px 20px;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
+  .btn:hover{background:#1846a3;} .btn:disabled{opacity:.6;cursor:default;}
+  .empty{color:var(--ink-soft);text-align:center;padding:30px 10px;}
+  .error{color:#C43D3D;font-size:13.5px;margin-top:10px;}
+  .ok-box{text-align:center;padding:20px 10px;}
+  .ok-box h2{font-family:'Oswald',sans-serif;color:var(--ink);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><img src="/logo.png" alt="Borcam"></div>
+  <div class="card" id="app">Cargando…</div>
+</div>
+<script>
+let info = null;
+let diaSeleccionado = null;
+let slotSeleccionado = null;
+
+function fmtDiaCorto(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('es-UY', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'America/Montevideo' });
+}
+function fmtHora(iso) {
+  return new Date(iso).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' });
+}
+function fechaKey(iso) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+}
+
+async function boot() {
+  try {
+    const r = await fetch('/api/agenda/info');
+    info = await r.json();
+  } catch (e) { info = { activo: false }; }
+  render();
+}
+
+function render() {
+  const app = document.getElementById('app');
+  if (!info || !info.activo) {
+    app.innerHTML = `<h1>Agendar turno</h1><div class="empty">En este momento no hay turnos disponibles para agendar. Escribinos por correo y coordinamos directamente.</div>`;
+    return;
+  }
+  if (!info.slots.length) {
+    app.innerHTML = `<h1>Agendar turno de instalación</h1><div class="empty">No quedan horarios libres por ahora. Volvé a intentar más adelante.</div>`;
+    return;
+  }
+  const porDia = {};
+  info.slots.forEach(s => { const k = fechaKey(s); (porDia[k] = porDia[k] || []).push(s); });
+  const dias = Object.keys(porDia).sort();
+  if (!diaSeleccionado) diaSeleccionado = dias[0];
+
+  const diasHtml = dias.map(k => {
+    const ejemplo = porDia[k][0];
+    const d = new Date(ejemplo);
+    const dia = d.toLocaleDateString('es-UY', { day: 'numeric', timeZone: 'America/Montevideo' });
+    const mes = d.toLocaleDateString('es-UY', { month: 'short', timeZone: 'America/Montevideo' });
+    return `<div class="dia-chip ${k === diaSeleccionado ? 'active' : ''}" onclick="elegirDia('${k}')"><span class="n">${dia}</span>${mes}</div>`;
+  }).join('');
+
+  const slotsHtml = (porDia[diaSeleccionado] || []).map(s => `
+    <button type="button" class="slot-btn ${s === slotSeleccionado ? 'selected' : ''}" onclick="elegirSlot('${s}')">${fmtHora(s)}</button>
+  `).join('');
+
+  const edificiosOpts = `<option value="" disabled ${slotSeleccionado ? '' : 'selected'}>Elegí tu edificio</option>` +
+    info.edificios.map(e => `<option value="${e}">${e}</option>`).join('');
+
+  app.innerHTML = `
+    <h1>Agendar turno de instalación</h1>
+    <p class="sub">Elegí un día y horario disponible.</p>
+    <div class="dias">${diasHtml}</div>
+    <div class="slots">${slotsHtml}</div>
+    ${slotSeleccionado ? `
+    <form id="form-turno" onsubmit="return confirmarTurno(event)">
+      <div class="field"><label>Nombre y apellido</label><input name="nombre" required></div>
+      <div class="field-row">
+        <div class="field"><label>Correo electrónico</label><input name="correo" type="email" required></div>
+        <div class="field"><label>Teléfono</label><input name="telefono" required></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Edificio</label><select name="edificio" required>${edificiosOpts}</select></div>
+        <div class="field"><label>N.º de unidad</label><input name="unidad" required></div>
+      </div>
+      <div class="field">
+        <label>¿Tenés internet instalado?</label>
+        <div class="radio-row">
+          <label><input type="radio" name="internet" value="si" required> Sí</label>
+          <label><input type="radio" name="internet" value="no"> No</label>
+        </div>
+      </div>
+      <div id="form-error"></div>
+      <button type="submit" class="btn">Confirmar turno</button>
+    </form>` : ''}
+  `;
+}
+
+function elegirDia(k) { diaSeleccionado = k; slotSeleccionado = null; render(); }
+function elegirSlot(s) { slotSeleccionado = s; render(); }
+
+async function confirmarTurno(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const btn = ev.target.querySelector('button');
+  btn.disabled = true; btn.textContent = 'Confirmando…';
+  try {
+    const r = await fetch('/api/agenda/reservar', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fechaHora: slotSeleccionado, nombreCliente: fd.get('nombre'), correoCliente: fd.get('correo'),
+        telefono: fd.get('telefono'), tieneInternet: fd.get('internet') === 'si',
+        edificio: fd.get('edificio'), numeroUnidad: fd.get('unidad')
+      })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'No se pudo confirmar el turno.');
+    document.getElementById('app').innerHTML = `
+      <div class="ok-box">
+        <h2>¡Turno confirmado!</h2>
+        <p>Te enviamos un correo a <strong>${fd.get('correo')}</strong> con los datos del turno y un botón para cancelarlo si lo necesitás.</p>
+      </div>`;
+  } catch (e) {
+    document.getElementById('form-error').innerHTML = `<div class="error">${e.message}</div>`;
+    btn.disabled = false; btn.textContent = 'Confirmar turno';
+    await boot(); // refresca disponibilidad por si el horario ya no está libre
+  }
+  return false;
+}
+
+boot();
+</script>
+</body>
+</html>
