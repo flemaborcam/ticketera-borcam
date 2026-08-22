@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
@@ -36,6 +37,61 @@ async function descargarArchivoStorage(path) {
   });
   if (!r.ok) throw new Error('No se pudo descargar el archivo.');
   return r;
+}
+
+/* ---------------- Google Calendar (cuenta de servicio) ---------------- */
+
+function credencialesGoogle() {
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+
+async function obtenerTokenGoogle() {
+  const creds = credencialesGoogle();
+  if (!creds || !creds.client_email || !creds.private_key) throw new Error('Falta configurar GOOGLE_SERVICE_ACCOUNT_JSON.');
+  const now = Math.floor(Date.now() / 1000);
+  const assertion = jwt.sign(
+    { iss: creds.client_email, scope: 'https://www.googleapis.com/auth/calendar', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 },
+    creds.private_key, { algorithm: 'RS256' }
+  );
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion })
+  });
+  const data = await r.json();
+  if (!data.access_token) throw new Error('No se pudo autenticar con Google: ' + JSON.stringify(data));
+  return data.access_token;
+}
+
+async function crearEventoGoogle(calendarId, evento) {
+  const token = await obtenerTokenGoogle();
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(evento)
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error('Error creando evento en Google Calendar: ' + JSON.stringify(data));
+  return data;
+}
+
+async function eliminarEventoGoogle(calendarId, eventId) {
+  if (!eventId) return;
+  try {
+    const token = await obtenerTokenGoogle();
+    await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` }
+    });
+  } catch (e) { console.error('Error eliminando evento de Google Calendar:', e.message); }
+}
+
+async function probarCalendarioGoogle(calendarId) {
+  const token = await obtenerTokenGoogle();
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || 'No se pudo acceder al calendario.');
+  return data;
 }
 
 function encrypt(text) {
@@ -666,6 +722,198 @@ app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
 
   ok(res, resultado);
 });
+
+/* ---------------- Agenda de instalaciones (calendario público) ---------------- */
+
+const DIA_MAP = { Sun: 'domingo', Mon: 'lunes', Tue: 'martes', Wed: 'miercoles', Thu: 'jueves', Fri: 'viernes', Sat: 'sabado' };
+function diaKeyMontevideo(date) {
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(date);
+  return DIA_MAP[wd];
+}
+function fechaMontevideoStr(date) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+}
+function generarSlotsDia(dateStr, horario, duracionMinutos) {
+  const slots = [];
+  if (!horario || !horario.activo || !horario.inicio || !horario.fin) return slots;
+  const [hIni, mIni] = horario.inicio.split(':').map(Number);
+  const [hFin, mFin] = horario.fin.split(':').map(Number);
+  let cursor = hIni * 60 + mIni;
+  const finMin = hFin * 60 + mFin;
+  while (cursor + duracionMinutos <= finMin) {
+    const hh = String(Math.floor(cursor / 60)).padStart(2, '0');
+    const mm = String(cursor % 60).padStart(2, '0');
+    slots.push(`${dateStr}T${hh}:${mm}:00-03:00`);
+    cursor += duracionMinutos;
+  }
+  return slots;
+}
+
+app.get('/api/agenda/info', async (req, res) => {
+  const c = await getConfig();
+  const cfg = c.calendario_config || {};
+  if (!cfg.activo) return ok(res, { activo: false });
+
+  const duracion = cfg.duracionMinutos || 60;
+  const diasVisibles = cfg.diasVisibles || 21;
+  const minNotice = cfg.minNoticeDays ?? 1;
+
+  const candidatos = [];
+  const hoy = new Date();
+  for (let i = 0; i < diasVisibles; i++) {
+    if (i < minNotice) continue;
+    const d = new Date(hoy.getTime() + i * 24 * 60 * 60 * 1000);
+    const dateStr = fechaMontevideoStr(d);
+    const horario = (cfg.diasHorarios || {})[diaKeyMontevideo(d)];
+    candidatos.push(...generarSlotsDia(dateStr, horario, duracion));
+  }
+
+  const ocupadas = new Set(
+    (await pool.query(`select fecha_hora from citas where estado='confirmada' and fecha_hora >= now()`)).rows
+      .map(r => new Date(r.fecha_hora).toISOString())
+  );
+  const libres = candidatos.filter(s => !ocupadas.has(new Date(s).toISOString()));
+
+  ok(res, { activo: true, duracionMinutos: duracion, edificios: c.calendario_edificios || [], slots: libres });
+});
+
+app.post('/api/agenda/reservar', async (req, res) => {
+  const { fechaHora, nombreCliente, correoCliente, telefono, tieneInternet, edificio, numeroUnidad } = req.body;
+  if (!fechaHora || !nombreCliente || !correoCliente || !telefono || !edificio || !numeroUnidad || tieneInternet === undefined) {
+    return bad(res, 'Completá todos los campos.');
+  }
+  const c = await getConfig();
+  const cfg = c.calendario_config || {};
+  if (!cfg.activo) return bad(res, 'La agenda no está activa en este momento.');
+
+  const yaOcupado = await pool.query(`select 1 from citas where estado='confirmada' and fecha_hora=$1`, [fechaHora]);
+  if (yaOcupado.rows.length) return bad(res, 'Ese horario ya no está disponible, elegí otro.', 409);
+
+  const token = crypto.randomUUID();
+  const duracion = cfg.duracionMinutos || 60;
+  const r = await pool.query(
+    `insert into citas (nombre_cliente, correo_cliente, telefono, tiene_internet, edificio, numero_unidad, fecha_hora, duracion_minutos, token_cancelacion)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+    [nombreCliente, correoCliente, telefono, !!tieneInternet, edificio, numeroUnidad, fechaHora, duracion, token]
+  );
+  const citaId = r.rows[0].id;
+
+  if (cfg.googleCalendarId) {
+    try {
+      const inicio = new Date(fechaHora);
+      const fin = new Date(inicio.getTime() + duracion * 60000);
+      const evento = await crearEventoGoogle(cfg.googleCalendarId, {
+        summary: `Instalación domótica — ${edificio} UD ${numeroUnidad}`,
+        description: `Cliente: ${nombreCliente}\nTeléfono: ${telefono}\nCorreo: ${correoCliente}\nTiene internet: ${tieneInternet ? 'Sí' : 'No'}\nEdificio: ${edificio}\nUnidad: ${numeroUnidad}`,
+        start: { dateTime: inicio.toISOString(), timeZone: 'America/Montevideo' },
+        end: { dateTime: fin.toISOString(), timeZone: 'America/Montevideo' }
+      });
+      await pool.query('update citas set google_event_id=$1 where id=$2', [evento.id, citaId]);
+    } catch (e) { console.error('Error creando evento de Google Calendar:', e.message); }
+  }
+
+  try {
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const linkCancelar = `${baseUrl}/cancelar-cita/${token}`;
+    const fechaFmt = new Date(fechaHora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+    const html = `<div style="font-family:sans-serif;max-width:480px;">
+      <h2 style="color:#0F2A4D;">Turno confirmado</h2>
+      <p>Hola ${nombreCliente}, tu turno para la instalación de domótica quedó agendado:</p>
+      <p><strong>${fechaFmt}</strong><br>Edificio: ${edificio} · Unidad: ${numeroUnidad}</p>
+      <p>Si necesitás cancelarlo, hacé click abajo:</p>
+      <p><a href="${linkCancelar}" style="background:#1E56C7;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Cancelar turno</a></p>
+    </div>`;
+    await enviarEmailReal({
+      to: correoCliente, subject: 'Confirmación de turno — Instalación de domótica',
+      text: `Tu turno quedó agendado para ${fechaFmt}. Edificio: ${edificio}, Unidad: ${numeroUnidad}. Para cancelar: ${linkCancelar}`,
+      html
+    });
+  } catch (e) { console.error('Error enviando confirmación de turno:', e.message); }
+
+  ok(res, { ok: true });
+});
+
+app.post('/api/agenda/cancelar/:token', async (req, res) => {
+  const cita = (await pool.query('select * from citas where token_cancelacion=$1', [req.params.token])).rows[0];
+  if (!cita) return bad(res, 'Turno no encontrado.', 404);
+  if (cita.estado === 'cancelada') return ok(res, { ok: true, yaCancelada: true });
+  await pool.query('update citas set estado=$1 where id=$2', ['cancelada', cita.id]);
+  const c = await getConfig();
+  const cfg = c.calendario_config || {};
+  if (cfg.googleCalendarId && cita.google_event_id) await eliminarEventoGoogle(cfg.googleCalendarId, cita.google_event_id);
+  ok(res, { ok: true });
+});
+
+app.get('/agendar', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'agendar.html'));
+});
+
+app.get('/cancelar-cita/:token', async (req, res) => {
+  const cita = (await pool.query('select * from citas where token_cancelacion=$1', [req.params.token])).rows[0];
+  if (!cita) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Turno no encontrado</h1>');
+  const fechaFmt = new Date(cita.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cancelar turno</title>
+  <style>
+    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
+    .card{background:#fff;border-radius:10px;padding:32px;max-width:420px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
+    h1{font-size:20px;color:#0F2A4D;margin:0 0 10px;} p{color:#48607F;line-height:1.5;}
+    button{background:#C43D3D;color:#fff;border:none;padding:12px 20px;border-radius:6px;font-size:15px;cursor:pointer;margin-top:14px;}
+    button:hover{background:#a83232;} #msg{margin-top:16px;font-weight:600;color:#0F2A4D;}
+  </style></head>
+  <body><div class="card">
+    ${cita.estado === 'cancelada' ? `<h1>Este turno ya estaba cancelado</h1><p>${fechaFmt}</p>` : `
+    <h1>¿Cancelar tu turno?</h1>
+    <p><strong>${fechaFmt}</strong><br>${escapeHtmlSrv(cita.edificio)} · Unidad ${escapeHtmlSrv(cita.numero_unidad)}</p>
+    <button onclick="cancelar()">Sí, cancelar mi turno</button>
+    <div id="msg"></div>
+    <script>
+      async function cancelar(){
+        document.getElementById('msg').textContent = 'Cancelando…';
+        const r = await fetch('/api/agenda/cancelar/${cita.token_cancelacion}', { method:'POST' });
+        const data = await r.json();
+        document.getElementById('msg').textContent = data.ok ? 'Listo, tu turno fue cancelado.' : (data.error || 'Ocurrió un error.');
+      }
+    </script>`}
+  </div></body></html>`);
+});
+
+/* ---------------- Calendario: configuración (staff) ---------------- */
+
+app.get('/api/calendario-config', requireStaff, async (req, res) => {
+  const c = await getConfig();
+  const creds = credencialesGoogle();
+  ok(res, { config: c.calendario_config || {}, edificios: c.calendario_edificios || [], googleServiceEmail: creds ? creds.client_email : null });
+});
+
+app.put('/api/calendario-config', requireStaff, async (req, res) => {
+  await pool.query('update configuracion set calendario_config=$1 where id=1', [JSON.stringify(req.body.config || {})]);
+  ok(res, { ok: true });
+});
+
+app.put('/api/calendario-edificios', requireStaff, async (req, res) => {
+  await pool.query('update configuracion set calendario_edificios=$1 where id=1', [req.body.edificios || []]);
+  ok(res, { ok: true });
+});
+
+app.post('/api/calendario-config/probar', requireStaff, async (req, res) => {
+  try {
+    const c = await getConfig();
+    const cfg = c.calendario_config || {};
+    if (!cfg.googleCalendarId) return bad(res, 'Falta configurar el ID del calendario.');
+    const data = await probarCalendarioGoogle(cfg.googleCalendarId);
+    ok(res, { ok: true, nombre: data.summary });
+  } catch (e) { bad(res, e.message); }
+});
+
+app.get('/api/citas', requireStaff, async (req, res) => {
+  const citas = (await pool.query(`select * from citas where fecha_hora >= now() - interval '1 day' order by fecha_hora asc`)).rows;
+  ok(res, citas);
+});
+
+function escapeHtmlSrv(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
 /* ---------------- Portal de cliente ---------------- */
 
