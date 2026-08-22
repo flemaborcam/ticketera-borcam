@@ -268,7 +268,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   if (!req.session || !req.session.type) return ok(res, { session: null });
   if (req.session.type === 'staff') {
-    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html from usuarios where id=$1', [req.session.userId])).rows[0];
+    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html,es_superadmin from usuarios where id=$1', [req.session.userId])).rows[0];
     if (!u) return ok(res, { session: null });
     return ok(res, { session: { type: 'staff', usuario: u } });
   } else {
@@ -419,8 +419,15 @@ app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
 
 /* ---------------- Usuarios (staff) ---------------- */
 
+async function requireSuperadmin(req, res, next) {
+  if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
+  const u = (await pool.query('select es_superadmin from usuarios where id=$1', [req.session.userId])).rows[0];
+  if (!u || !u.es_superadmin) return bad(res, 'Solo un Superadmin puede hacer esto.', 403);
+  next();
+}
+
 app.get('/api/usuarios', requireStaff, async (req, res) => {
-  const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo from usuarios order by nombre')).rows;
+  const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin from usuarios order by nombre')).rows;
   ok(res, usuarios);
 });
 
@@ -434,6 +441,25 @@ app.put('/api/usuarios/me', requireStaff, async (req, res) => {
   } else {
     await pool.query('update usuarios set nombre=$1,apellido=$2,telefono=$3,cargo=$4 where id=$5',
       [nombre, apellido, telefono || '', cargo, req.session.userId]);
+  }
+  ok(res, { ok: true });
+});
+
+// Solo un Superadmin puede editar los datos de otro usuario del sistema
+app.put('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  const { nombre, apellido, telefono, cargo, esSuperadmin, password } = req.body;
+  if (password) {
+    if (password.length < 6) return bad(res, 'La contraseña debe tener al menos 6 caracteres.');
+    const hash = bcrypt.hashSync(password, 10);
+    await pool.query(
+      'update usuarios set nombre=$1,apellido=$2,telefono=$3,cargo=$4,es_superadmin=$5,password_hash=$6 where id=$7',
+      [nombre, apellido, telefono || '', cargo, !!esSuperadmin, hash, req.params.id]
+    );
+  } else {
+    await pool.query(
+      'update usuarios set nombre=$1,apellido=$2,telefono=$3,cargo=$4,es_superadmin=$5 where id=$6',
+      [nombre, apellido, telefono || '', cargo, !!esSuperadmin, req.params.id]
+    );
   }
   ok(res, { ok: true });
 });
