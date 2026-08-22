@@ -17,7 +17,7 @@ let state = {
   view: 'login', authView: 'login', ticketId: null,
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
-  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null
+  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set()
 };
 
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
@@ -122,7 +122,37 @@ async function logout() {
   render();
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
-function go(view) { state.view = view; render(); }
+function go(view) {
+  if (state.view === 'dashboard' && view !== 'dashboard') state.selectedTickets.clear();
+  state.view = view;
+  render();
+}
+
+function toggleSeleccionTicket(id, checked) {
+  if (checked) state.selectedTickets.add(id); else state.selectedTickets.delete(id);
+  render();
+}
+function limpiarSeleccion() { state.selectedTickets.clear(); render(); }
+
+async function aplicarAccionMasivaEstado() {
+  const val = document.getElementById('bulk-estado').value;
+  if (!val) { showToast('Elegí un estado para aplicar.'); return; }
+  const ids = Array.from(state.selectedTickets);
+  for (const id of ids) { await api('PATCH', '/api/tickets/' + id, { estado: val }); }
+  cache.tickets = (await api('GET', '/api/tickets')).map(mapTicket);
+  showToast(`Estado actualizado en ${ids.length} ticket${ids.length === 1 ? '' : 's'}.`);
+  limpiarSeleccion();
+}
+async function aplicarAccionMasivaAgente() {
+  const val = document.getElementById('bulk-agente').value;
+  if (!val) { showToast('Elegí una opción de asignación.'); return; }
+  const asignadoA = val === 'ninguno' ? null : val;
+  const ids = Array.from(state.selectedTickets);
+  for (const id of ids) { await api('PATCH', '/api/tickets/' + id, { asignadoA }); }
+  cache.tickets = (await api('GET', '/api/tickets')).map(mapTicket);
+  showToast(`Agente actualizado en ${ids.length} ticket${ids.length === 1 ? '' : 's'}.`);
+  limpiarSeleccion();
+}
 
 /* ---------------- Tickets (staff) ---------------- */
 
@@ -480,13 +510,15 @@ function renderShell(inner) {
 
 /* ---------------- Dashboard / stub ---------------- */
 
-function renderStub(t, clientMode) {
+function renderStub(t, clientMode, selectable) {
   const lastMsg = t.mensajes[t.mensajes.length - 1];
   const grupo = t.grupoId ? cache.clientes.find(g => g.id === t.grupoId) : null;
   const agente = t.asignadoA ? cache.usuarios.find(u => u.id === t.asignadoA) : null;
   const onclick = clientMode ? `openClienteTicket('${t.id}')` : `openTicket('${t.id}')`;
+  const checked = selectable && state.selectedTickets.has(t.id);
   return `
-  <button class="stub" onclick="${onclick}">
+  <div class="stub" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter'){${onclick}}">
+    ${selectable ? `<label class="stub-check" onclick="event.stopPropagation()"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleSeleccionTicket('${t.id}', this.checked)"></label>` : ''}
     <div class="stub-num"><div class="n">${t.numero.split('-').slice(1).join('-')}</div><div class="y">${t.numero.split('-')[0]}</div></div>
     <div class="stub-body">
       <div class="stub-top"><div class="stub-asunto">${escapeHtml(t.asunto)}</div><div class="stub-time">${fmtRel(t.actualizado)}</div></div>
@@ -498,7 +530,22 @@ function renderStub(t, clientMode) {
         ${!clientMode ? `<span class="tag tag-agente">${agente ? '👤 ' + escapeHtml(agente.nombre) + ' ' + escapeHtml(agente.apellido) : 'Sin asignar'}</span>` : ''}
       </div>
     </div>
-  </button>`;
+  </div>`;
+}
+
+function renderBulkActionBar() {
+  const n = state.selectedTickets.size;
+  const estOpts = `<option value="">Cambiar estado a…</option>` + CAT.ESTADOS.map(e => `<option value="${e}">${e}</option>`).join('');
+  const agenteOpts = `<option value="" disabled selected>Elegí un agente…</option><option value="ninguno">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
+  return `
+  <div class="card" style="margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+    <strong style="font-size:13.5px;">${n} ticket${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}</strong>
+    <select id="bulk-estado">${estOpts}</select>
+    <button class="btn btn-ghost" onclick="aplicarAccionMasivaEstado()">Aplicar estado</button>
+    <select id="bulk-agente">${agenteOpts}</select>
+    <button class="btn btn-ghost" onclick="aplicarAccionMasivaAgente()">Aplicar asignación</button>
+    <button class="btn btn-ghost" style="margin-left:auto;" onclick="limpiarSeleccion()">Deseleccionar todo</button>
+  </div>`;
 }
 
 function renderDashboard() {
@@ -508,7 +555,7 @@ function renderDashboard() {
   const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado' : e}</option>`).join('');
   const grupoOptions = `<option value="todos">Todos los clientes</option>` + cache.clientes.map(g => `<option value="${g.id}" ${state.filters.grupo === g.id ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('');
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
-  const list = tickets.length ? `<div class="stub-list">${tickets.map(renderStub).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
+  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
   return `
     <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${cache.tickets.length} tickets en total · visibles para todo el equipo${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
       <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button></div>
@@ -521,8 +568,9 @@ function renderDashboard() {
       <select onchange="setFilter('prioridad', this.value)">${prioOptions}</select>
       <select onchange="setFilter('grupo', this.value)">${grupoOptions}</select>
       <select onchange="setFilter('agente', this.value)">${agenteOptions}</select>
-      <input type="search" placeholder="Buscar…" value="${escapeHtml(state.filters.search)}" oninput="setFilter('search', this.value)">
+      <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filters.search)}" onkeydown="if(event.key==='Enter'){ setFilter('search', this.value); }" onsearch="setFilter('search', this.value)">
     </div>
+    ${state.selectedTickets.size ? renderBulkActionBar() : ''}
     ${list}`;
 }
 
