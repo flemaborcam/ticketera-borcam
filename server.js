@@ -748,15 +748,28 @@ function generarSlotsDia(dateStr, horario, duracionMinutos) {
   }
   return slots;
 }
+// 1º, 2º, 3º... "viernes" (u otro día) que cae dentro del mes, para repartir la rotación
+function ocurrenciaEnMes(date) {
+  const dia = Number(fechaMontevideoStr(date).split('-')[2]);
+  return Math.ceil(dia / 7);
+}
 
 app.get('/api/agenda/info', async (req, res) => {
   const c = await getConfig();
   const cfg = c.calendario_config || {};
+  const edificios = c.calendario_edificios || [];
   if (!cfg.activo) return ok(res, { activo: false });
 
+  const edificioSolicitado = (req.query.edificio || '').trim();
   const duracion = cfg.duracionMinutos || 60;
+  if (!edificioSolicitado) return ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: [] });
+
   const diasVisibles = cfg.diasVisibles || 21;
   const minNotice = cfg.minNoticeDays ?? 1;
+
+  const filasCitas = (await pool.query(`select fecha_hora, edificio from citas where estado='confirmada' and fecha_hora >= now()`)).rows;
+  const edificioPorFecha = {};
+  filasCitas.forEach(r => { edificioPorFecha[fechaMontevideoStr(new Date(r.fecha_hora))] = r.edificio; });
 
   const candidatos = [];
   const hoy = new Date();
@@ -765,16 +778,26 @@ app.get('/api/agenda/info', async (req, res) => {
     const d = new Date(hoy.getTime() + i * 24 * 60 * 60 * 1000);
     const dateStr = fechaMontevideoStr(d);
     const horario = (cfg.diasHorarios || {})[diaKeyMontevideo(d)];
+    if (!horario || !horario.activo) continue;
+
+    // Regla 1: si ese día de la semana rota entre varios edificios, solo entra si le toca a este
+    const rotacion = horario.rotacionEdificios || [];
+    if (rotacion.length) {
+      const asignado = rotacion[(ocurrenciaEnMes(d) - 1) % rotacion.length];
+      if (asignado !== edificioSolicitado) continue;
+    }
+
+    // Regla 2: si esa fecha puntual ya la tomó otro edificio, queda bloqueada para el resto
+    const ocupante = edificioPorFecha[dateStr];
+    if (ocupante && ocupante !== edificioSolicitado) continue;
+
     candidatos.push(...generarSlotsDia(dateStr, horario, duracion));
   }
 
-  const ocupadas = new Set(
-    (await pool.query(`select fecha_hora from citas where estado='confirmada' and fecha_hora >= now()`)).rows
-      .map(r => new Date(r.fecha_hora).toISOString())
-  );
+  const ocupadas = new Set(filasCitas.map(r => new Date(r.fecha_hora).toISOString()));
   const libres = candidatos.filter(s => !ocupadas.has(new Date(s).toISOString()));
 
-  ok(res, { activo: true, duracionMinutos: duracion, edificios: c.calendario_edificios || [], slots: libres });
+  ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: libres });
 });
 
 app.post('/api/agenda/reservar', async (req, res) => {
@@ -788,6 +811,13 @@ app.post('/api/agenda/reservar', async (req, res) => {
 
   const yaOcupado = await pool.query(`select 1 from citas where estado='confirmada' and fecha_hora=$1`, [fechaHora]);
   if (yaOcupado.rows.length) return bad(res, 'Ese horario ya no está disponible, elegí otro.', 409);
+
+  const dateStr = fechaMontevideoStr(new Date(fechaHora));
+  const otroEdificio = await pool.query(
+    `select 1 from citas where estado='confirmada' and (fecha_hora at time zone 'America/Montevideo')::date = $1::date and edificio <> $2 limit 1`,
+    [dateStr, edificio]
+  );
+  if (otroEdificio.rows.length) return bad(res, 'Esa fecha ya quedó asignada a otro edificio, elegí otra.', 409);
 
   const token = crypto.randomUUID();
   const duracion = cfg.duracionMinutos || 60;
