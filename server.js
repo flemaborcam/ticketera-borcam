@@ -431,6 +431,22 @@ app.get('/api/usuarios', requireStaff, async (req, res) => {
   ok(res, usuarios);
 });
 
+// Solo un Superadmin puede dar de alta usuarios directamente (sin pasar por el registro)
+app.post('/api/usuarios', requireStaff, requireSuperadmin, async (req, res) => {
+  const { nombre, apellido, telefono, email, cargo, password, esSuperadmin } = req.body;
+  if (!nombre || !apellido || !email || !password || !cargo) return bad(res, 'Completá todos los campos obligatorios.');
+  if (password.length < 6) return bad(res, 'La contraseña debe tener al menos 6 caracteres.');
+  const existe = (await pool.query('select id from usuarios where lower(email)=$1', [email.toLowerCase()])).rows[0];
+  if (existe) return bad(res, 'Ya existe una cuenta registrada con ese correo.');
+  const hash = bcrypt.hashSync(password, 10);
+  const r = await pool.query(
+    `insert into usuarios (nombre, apellido, telefono, email, password_hash, cargo, es_superadmin)
+     values ($1,$2,$3,$4,$5,$6,$7) returning id`,
+    [nombre, apellido, telefono || '', email.toLowerCase(), hash, cargo, !!esSuperadmin]
+  );
+  ok(res, { id: r.rows[0].id });
+});
+
 app.put('/api/usuarios/me', requireStaff, async (req, res) => {
   const { nombre, apellido, telefono, cargo, password } = req.body;
   if (password) {
@@ -461,6 +477,14 @@ app.put('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) =
       [nombre, apellido, telefono || '', cargo, !!esSuperadmin, req.params.id]
     );
   }
+  ok(res, { ok: true });
+});
+
+// Solo un Superadmin puede eliminar usuarios, y nunca a sí mismo (evita quedarse sin acceso)
+app.delete('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  if (req.params.id === req.session.userId) return bad(res, 'No podés eliminar tu propia cuenta.');
+  await pool.query('update tickets set asignado_a=null where asignado_a=$1', [req.params.id]);
+  await pool.query('delete from usuarios where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
 
