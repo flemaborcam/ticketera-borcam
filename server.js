@@ -607,13 +607,34 @@ function extraerNumeroTicket(asunto) {
   return m ? m[1].toUpperCase() : null;
 }
 
+function recortarCitas(texto) {
+  const lineas = texto.split('\n');
+  let corte = -1;
+  for (let i = 0; i < lineas.length; i++) {
+    const l = lineas[i].trim();
+    if (/^>{1,}/.test(l)) { corte = i; break; }
+    if (/^-{3,}\s*(mensaje original|original message)/i.test(l)) { corte = i; break; }
+    if (/^_{5,}$/.test(l)) { corte = i; break; }
+    if (/^(el|on)\s.+(escribió|wrote)\s*:?\s*$/i.test(l)) { corte = i; break; }
+    if (/^(de|from):\s*.+/i.test(l)) {
+      const siguientes = lineas.slice(i + 1, i + 5).join('\n');
+      if (/^(enviado|sent|fecha|date):/im.test(siguientes) && /^(para|to):/im.test(siguientes)) { corte = i; break; }
+    }
+  }
+  if (corte === -1) return texto;
+  let resultado = lineas.slice(0, corte);
+  while (resultado.length && /^[-_]{3,}$/.test(resultado[resultado.length - 1].trim())) resultado.pop();
+  return resultado.join('\n').trim();
+}
+
 async function procesarCorreoEntrante(parsed) {
   const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0] : null;
   if (!fromAddr) return;
   const remitenteEmail = fromAddr.address;
   const remitenteNombre = fromAddr.name || remitenteEmail;
   const asunto = parsed.subject || '(sin asunto)';
-  const textoLimpio = (parsed.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const sinCitas = recortarCitas((parsed.text || '').trim());
+  const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   const cuerpo = textoLimpio || '(mensaje sin texto)';
   const numeroDetectado = extraerNumeroTicket(asunto);
 
