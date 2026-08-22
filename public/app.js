@@ -757,10 +757,62 @@ function renderAutomatizaciones() {
   return `<div class="page-head"><div><h1>Automatizaciones</h1><div class="sub">Cadenas de pasos que responden solas ante ciertas palabras</div></div><button class="btn btn-primary" onclick="openNuevaAutomatizacionModal()">+ Nueva automatización</button></div>${list}`;
 }
 
+function openEditarUsuarioModal(id) {
+  state.modal = 'editar-usuario';
+  state.editUsuarioId = id;
+  render();
+}
+
+async function submitEditarUsuario(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  try {
+    await api('PUT', '/api/usuarios/' + state.editUsuarioId, {
+      nombre: fd.get('nombre').trim(), apellido: fd.get('apellido').trim(), telefono: fd.get('telefono').trim(),
+      cargo: fd.get('cargo'), esSuperadmin: fd.get('esSuperadmin') === 'on', password: fd.get('password').trim() || undefined
+    });
+    cache.usuarios = await api('GET', '/api/usuarios');
+    state.modal = null;
+    showToast('Usuario actualizado.');
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+
+function renderEditarUsuarioModal() {
+  const u = cache.usuarios.find(x => x.id === state.editUsuarioId);
+  if (!u) return '';
+  const cargoOptions = CAT.CARGOS.map(c => `<option value="${c}" ${u.cargo === c ? 'selected' : ''}>${c}</option>`).join('');
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Editar usuario</h2>
+    <p class="sub">${escapeHtml(u.email)} — solo un Superadmin puede modificar estos datos.</p>
+    <form onsubmit="return submitEditarUsuario(event)">
+      <div class="field-row">
+        <div class="field"><label>Nombre</label><input name="nombre" value="${escapeHtml(u.nombre)}" required></div>
+        <div class="field"><label>Apellido</label><input name="apellido" value="${escapeHtml(u.apellido)}" required></div>
+      </div>
+      <div class="field"><label>Teléfono</label><input name="telefono" value="${escapeHtml(u.telefono || '')}"></div>
+      <div class="field"><label>Cargo</label><select name="cargo">${cargoOptions}</select></div>
+      <div class="field"><label>Nueva contraseña (opcional)</label><input name="password" type="password" placeholder="Dejar en blanco para no cambiarla"></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;">
+        <input type="checkbox" name="esSuperadmin" ${u.es_superadmin ? 'checked' : ''}> Es Superadmin (puede editar a otros usuarios)
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-primary">Guardar cambios</button>
+      </div>
+    </form>
+  </div></div>`;
+}
+
 function renderUsuarios() {
+  const soyAdmin = currentUser().es_superadmin;
   const rows = cache.usuarios.map(u => `<div class="user-row"><div class="avatar">${initials(u.nombre, u.apellido)}</div>
-    <div><div class="u-name">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</div><div class="u-sub">${escapeHtml(u.email)}${u.telefono ? ' · ' + escapeHtml(u.telefono) : ''}</div></div>
-    <span class="tag tag-cat cargo-pill">${escapeHtml(u.cargo)}</span></div>`).join('');
+    <div><div class="u-name">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}${u.es_superadmin ? ' <span class="tag tag-esperando-al-cliente" style="margin-left:4px;">Superadmin</span>' : ''}</div>
+    <div class="u-sub">${escapeHtml(u.email)}${u.telefono ? ' · ' + escapeHtml(u.telefono) : ''}</div></div>
+    <span class="tag tag-cat cargo-pill">${escapeHtml(u.cargo)}</span>
+    ${soyAdmin ? `<button class="btn btn-ghost" style="margin-left:10px;" onclick="openEditarUsuarioModal('${u.id}')">Editar</button>` : ''}
+    </div>`).join('');
   return `<div class="page-head"><div><h1>Usuarios</h1><div class="sub">${cache.usuarios.length} personas con acceso a la plataforma</div></div></div><div class="user-list">${rows}</div>`;
 }
 
@@ -846,6 +898,7 @@ function renderActiveModal() {
   if (state.modal === 'nueva-respuesta' || state.modal === 'editar-respuesta') return renderRespuestaModal();
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
+  if (state.modal === 'editar-usuario') return renderEditarUsuarioModal();
   return '';
 }
 function renderNuevoCorreoModal() {
