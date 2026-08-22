@@ -15,7 +15,7 @@ let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatiz
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
-  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', search: '' },
+  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null
 };
@@ -126,6 +126,12 @@ function go(view) { state.view = view; render(); }
 
 /* ---------------- Tickets (staff) ---------------- */
 
+function fechaLocal(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function hoyStr() { return fechaLocal(new Date().toISOString()); }
+
 function filteredTickets() {
   const f = state.filters;
   return cache.tickets
@@ -134,6 +140,7 @@ function filteredTickets() {
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => f.grupo === 'todos' || t.grupoId === f.grupo)
     .filter(t => f.agente === 'todos' ? true : (f.agente === 'sin-asignar' ? !t.asignadoA : t.asignadoA === f.agente))
+    .filter(t => !f.fecha || fechaLocal(t.creado) === f.fecha)
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
     .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
 }
@@ -503,9 +510,12 @@ function renderDashboard() {
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(renderStub).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
   return `
-    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${cache.tickets.length} tickets en total · visibles para todo el equipo</div></div>
+    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${cache.tickets.length} tickets en total · visibles para todo el equipo${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
       <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button></div>
     <div class="filters">
+      <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>
+      <input type="date" value="${state.filters.fecha}" onchange="setFilter('fecha', this.value)" title="Buscar tickets de un día específico">
+      ${state.filters.fecha ? `<button class="btn btn-ghost" onclick="setFilter('fecha','')">Ver todos los días</button>` : ''}
       <select onchange="setFilter('estado', this.value)">${estOptions}</select>
       <select onchange="setFilter('categoria', this.value)">${catOptions}</select>
       <select onchange="setFilter('prioridad', this.value)">${prioOptions}</select>
