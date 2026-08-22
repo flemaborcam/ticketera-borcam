@@ -105,15 +105,20 @@ async function getConfig() {
 }
 
 let smtpTransportCache = null;
-async function getSmtpTransport(cfg) {
-  cfg = cfg || await getConfig();
-  if (!cfg.correo_activo || !cfg.smtp_host || !cfg.smtp_usuario || !cfg.smtp_pass_enc) return null;
+function construirTransporteSmtp(cfg) {
+  if (!cfg.smtp_host || !cfg.smtp_usuario || !cfg.smtp_pass_enc) return null;
   const pass = decrypt(cfg.smtp_pass_enc);
   if (!pass) return null;
   return nodemailer.createTransport({
     host: cfg.smtp_host, port: cfg.smtp_port || 465, secure: (cfg.smtp_port || 465) == 465,
     auth: { user: cfg.smtp_usuario, pass }
   });
+}
+// Para enviar correos reales: exige que la casilla esté activada.
+async function getSmtpTransport(cfg) {
+  cfg = cfg || await getConfig();
+  if (!cfg.correo_activo) return null;
+  return construirTransporteSmtp(cfg);
 }
 
 // Envía un correo real (si la casilla está activa y configurada); si no, no hace nada.
@@ -557,8 +562,8 @@ app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
   } catch (e) { resultado.imap.error = e.message; }
 
   try {
-    const transport = await getSmtpTransport(c);
-    if (!transport) throw new Error('Faltan datos de SMTP.');
+    const transport = construirTransporteSmtp(c);
+    if (!transport) throw new Error('Faltan datos de SMTP (servidor, usuario o contraseña).');
     await transport.verify();
     resultado.smtp.ok = true;
   } catch (e) { resultado.smtp.error = e.message; }
