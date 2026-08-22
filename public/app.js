@@ -437,8 +437,12 @@ async function submitCalendarioConfig(ev) {
   const fd = new FormData(ev.target);
   const diasHorarios = {};
   DIAS_SEMANA.forEach(([key]) => {
-    const rotacionEdificios = (fd.get('rotacion_' + key) || '').split(',').map(s => s.trim()).filter(Boolean);
-    diasHorarios[key] = { activo: fd.get('activo_' + key) === 'on', inicio: fd.get('inicio_' + key) || '09:00', fin: fd.get('fin_' + key) || '18:00', rotacionEdificios };
+    const asignacionOcurrencias = {};
+    [1, 2, 3, 4, 5].forEach(n => {
+      const v = (fd.get(`oc_${key}_${n}`) || '').trim();
+      if (v) asignacionOcurrencias[n] = v;
+    });
+    diasHorarios[key] = { activo: fd.get('activo_' + key) === 'on', inicio: fd.get('inicio_' + key) || '09:00', fin: fd.get('fin_' + key) || '18:00', asignacionOcurrencias };
   });
   const config = {
     activo: fd.get('agendaActiva') === 'on',
@@ -475,9 +479,18 @@ function copiarEnlaceAgenda() {
 function renderCalendarioHtml() {
   const c = cache.calendarioConfig || {};
   const horarios = c.diasHorarios || {};
+  const edificiosDisponibles = cache.calendarioEdificios || [];
   const filasDias = DIAS_SEMANA.map(([key, label]) => {
     const h = horarios[key] || {};
-    const rotacion = (h.rotacionEdificios || []).join(', ');
+    const asign = h.asignacionOcurrencias || {};
+    const selectsOcurrencia = [1, 2, 3, 4, 5].map(n => `
+      <div>
+        <label style="font-size:10.5px;color:var(--ink-soft);display:block;margin-bottom:2px;">${n}° del mes</label>
+        <select name="oc_${key}_${n}" style="width:100%;padding:6px 4px;font-size:12px;border:1px solid var(--line-strong);border-radius:6px;">
+          <option value="">Sin restricción</option>
+          ${edificiosDisponibles.map(e => `<option value="${escapeHtml(e)}" ${asign[n] === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+        </select>
+      </div>`).join('');
     return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
       <div class="field-row" style="align-items:center;margin-bottom:8px;">
         <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;width:110px;flex:none;text-transform:none;letter-spacing:0;font-weight:500;">
@@ -487,8 +500,7 @@ function renderCalendarioHtml() {
         <span style="color:var(--ink-soft);">a</span>
         <input type="time" name="fin_${key}" value="${h.fin || '18:00'}" style="max-width:110px;">
       </div>
-      <input name="rotacion_${key}" value="${escapeHtml(rotacion)}" placeholder="Rotación entre edificios (opcional): Edificio A, Edificio B"
-        style="width:100%;padding:8px 10px;border:1px solid var(--line-strong);border-radius:6px;font-size:13px;">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;">${selectsOcurrencia}</div>
     </div>`;
   }).join('');
 
@@ -526,7 +538,7 @@ function renderCalendarioHtml() {
 
         <div style="font-weight:600;font-size:13.5px;margin-bottom:10px;padding-top:12px;border-top:1px dashed var(--line-strong);">Días y horarios disponibles</div>
         ${filasDias}
-        <div class="hint-text" style="margin-bottom:16px;">Un solo bloque horario por día. Si dos o más edificios comparten ese día de la semana, escribilos en el orden que quieras alternar (ej: "Edificio A, Edificio B"): el 1er día del mes es para el primero de la lista, el 2do para el siguiente, y así se reparte solo, adaptándose a la cantidad de esos días que tenga cada mes. Dejalo vacío si ese día no rota entre edificios. Una vez que un edificio toma una fecha puntual, esa fecha queda bloqueada para los demás.</div>
+        <div class="hint-text" style="margin-bottom:16px;">Un solo bloque horario por día. Si un edificio comparte ese día con otro, asignale directamente cada repetición del mes (por ejemplo, en un mes con 4 viernes, podés poner "Edificio A" en 1°, 2° y 3°, y "Edificio B" en el 4°). Dejalo en "Sin restricción" si esa repetición está abierta a cualquiera. Una vez que un edificio toma una fecha puntual, esa fecha queda bloqueada para los demás.</div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Edificios (uno por línea)</div>
         <div class="field"><textarea name="edificios" style="min-height:90px;">${escapeHtml((cache.calendarioEdificios || []).join('\n'))}</textarea></div>
