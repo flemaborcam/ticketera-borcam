@@ -1145,7 +1145,14 @@ async function procesarCorreoEntrante(parsed) {
   const asunto = parsed.subject || '(sin asunto)';
   const sinCitas = recortarCitas((parsed.text || '').trim());
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-  const cuerpo = textoLimpio || '(mensaje sin texto)';
+  let cuerpo = textoLimpio;
+  let cuerpoHtml = null;
+  if (!cuerpo && parsed.html) {
+    cuerpoHtml = parsed.html;
+    cuerpo = '(Este correo llegó con formato HTML — ver el contenido completo abajo)';
+  } else if (!cuerpo) {
+    cuerpo = '(mensaje sin texto)';
+  }
   const numeroDetectado = extraerNumeroTicket(asunto);
 
   const adjuntosCrudos = [];
@@ -1174,8 +1181,8 @@ async function procesarCorreoEntrante(parsed) {
   if (ticket) {
     const adjuntos = await subirAdjuntosCrudos(ticket.id);
     await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
-      [ticket.id, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5)`,
+      [ticket.id, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
     if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(ticket.estado)) {
       await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
@@ -1194,8 +1201,8 @@ async function procesarCorreoEntrante(parsed) {
     const ticketId = r.rows[0].id;
     const adjuntos = await subirAdjuntosCrudos(ticketId);
     await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
-      [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntos)]
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5)`,
+      [ticketId, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
