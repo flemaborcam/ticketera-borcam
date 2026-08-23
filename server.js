@@ -1159,7 +1159,7 @@ async function procesarCorreoEntrante(parsed) {
   for (const a of (parsed.attachments || [])) {
     if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
     const tipo = a.contentType.startsWith('image/') ? 'imagen' : a.contentType.startsWith('video/') ? 'video' : a.contentType === 'application/pdf' ? 'pdf' : 'archivo';
-    adjuntosCrudos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, mime: a.contentType, size: a.size, buffer: a.content });
+    adjuntosCrudos.push({ id: crypto.randomUUID(), nombre: a.filename || 'adjunto', tipo, mime: a.contentType, size: a.size, buffer: a.content, cid: a.cid || null });
   }
   async function subirAdjuntosCrudos(ticketId) {
     const resultado = [];
@@ -1167,10 +1167,23 @@ async function procesarCorreoEntrante(parsed) {
       try {
         const path = `${ticketId}/${a.id}-${a.nombre}`;
         await subirArchivoStorage(path, a.buffer, a.mime);
-        resultado.push({ id: a.id, nombre: a.nombre, tipo: a.tipo, mime: a.mime, size: a.size, path });
+        resultado.push({ id: a.id, nombre: a.nombre, tipo: a.tipo, mime: a.mime, size: a.size, path, cid: a.cid });
       } catch (e) { console.error('Error subiendo adjunto de correo real:', e.message); }
     }
     return resultado;
+  }
+  // Reemplaza las referencias "cid:..." del HTML original por la URL real de cada adjunto ya subido,
+  // para que las imágenes/videos incrustados en el cuerpo del correo se vean bien.
+  async function corregirReferenciasCid(ticketId, mensajeId, adjuntos) {
+    if (!cuerpoHtml) return;
+    let htmlCorregido = cuerpoHtml;
+    let cambio = false;
+    for (const a of adjuntos) {
+      if (!a.cid) continue;
+      const url = `/api/adjuntos/${ticketId}/${mensajeId}/${a.id}`;
+      if (htmlCorregido.includes(`cid:${a.cid}`)) { htmlCorregido = htmlCorregido.split(`cid:${a.cid}`).join(url); cambio = true; }
+    }
+    if (cambio) await pool.query('update mensajes set cuerpo_html=$1 where id=$2', [htmlCorregido, mensajeId]);
   }
 
   let ticket = null;
@@ -1180,10 +1193,11 @@ async function procesarCorreoEntrante(parsed) {
 
   if (ticket) {
     const adjuntos = await subirAdjuntosCrudos(ticket.id);
-    await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5)`,
+    const rm = await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5) returning id`,
       [ticket.id, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
+    await corregirReferenciasCid(ticket.id, rm.rows[0].id, adjuntos);
     if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(ticket.estado)) {
       await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
     }
@@ -1200,10 +1214,11 @@ async function procesarCorreoEntrante(parsed) {
     );
     const ticketId = r.rows[0].id;
     const adjuntos = await subirAdjuntosCrudos(ticketId);
-    await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5)`,
+    const rm = await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5) returning id`,
       [ticketId, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
+    await corregirReferenciasCid(ticketId, rm.rows[0].id, adjuntos);
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
     await aplicarAvisoFueraHorario(ticketId);
