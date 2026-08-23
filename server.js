@@ -428,6 +428,18 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   ok(res, ticket);
 });
 
+// Borra absolutamente todos los tickets del sistema. Solo un Superadmin puede hacerlo.
+app.delete('/api/tickets', requireStaff, requireSuperadmin, async (req, res) => {
+  const r = await pool.query('delete from tickets');
+  ok(res, { ok: true, eliminados: r.rowCount });
+});
+
+// Reinicia el marcador de IMAP para que la próxima revisión vuelva a bajar TODA la casilla desde cero.
+app.post('/api/configuracion/reiniciar-imap', requireStaff, requireSuperadmin, async (req, res) => {
+  await pool.query('update configuracion set imap_ultimo_uid=0 where id=1');
+  ok(res, { ok: true });
+});
+
 app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
   await pool.query('delete from tickets where id=$1', [req.params.id]);
   ok(res, { ok: true });
@@ -461,7 +473,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
         const base64 = (a.dataUrl || '').split(',')[1] || '';
         const mime = (a.dataUrl || '').match(/^data:(.*?);base64,/)?.[1] || 'application/octet-stream';
         const attId = a.id || crypto.randomUUID();
-        const path = `${id}/${attId}-${a.nombre}`;
+        const path = `${id}/${attId}-${encodeURIComponent(a.nombre)}`;
         await subirArchivoStorage(path, Buffer.from(base64, 'base64'), mime);
         adjuntosProcesados.push({ id: attId, nombre: a.nombre, tipo: a.tipo, mime, size: a.size, path });
       } catch (e) { console.error('Error subiendo adjunto:', e.message); }
@@ -1165,7 +1177,7 @@ async function procesarCorreoEntrante(parsed) {
     const resultado = [];
     for (const a of adjuntosCrudos) {
       try {
-        const path = `${ticketId}/${a.id}-${a.nombre}`;
+        const path = `${ticketId}/${a.id}-${encodeURIComponent(a.nombre)}`;
         await subirArchivoStorage(path, a.buffer, a.mime);
         resultado.push({ id: a.id, nombre: a.nombre, tipo: a.tipo, mime: a.mime, size: a.size, path, cid: a.cid });
       } catch (e) { console.error('Error subiendo adjunto de correo real:', e.message); }
