@@ -297,10 +297,20 @@ async function aplicarAutomatizacionSiCorresponde(ticketId, texto, esNuevoTicket
   const activas = (await pool.query('select * from automatizaciones where activo=true')).rows;
   for (const auto of activas) {
     const pasos = (await pool.query('select * from automatizacion_pasos where automatizacion_id=$1 order by orden asc', [auto.id])).rows;
-    if (pasos[0] && (!pasos[0].solo_nuevo_ticket || esNuevoTicket) && pasoCoincide(pasos[0], texto)) {
-      await dispararPaso(ticketId, auto, pasos[0], 0, pasos.length);
-      return true;
-    }
+    if (!pasos[0]) continue;
+    if (pasos[0].solo_nuevo_ticket && !esNuevoTicket) continue;
+    if (!pasoCoincide(pasos[0], texto)) continue;
+
+    // Esta automatización ya se disparó antes en este mismo ticket: no se repite,
+    // aunque la palabra clave vuelva a aparecer en un mensaje posterior.
+    const yaDisparada = await pool.query(
+      `select 1 from mensajes where ticket_id=$1 and automatico=true and autor like $2 limit 1`,
+      [ticketId, `Automatización · ${auto.nombre} (%`]
+    );
+    if (yaDisparada.rows.length) continue;
+
+    await dispararPaso(ticketId, auto, pasos[0], 0, pasos.length);
+    return true;
   }
   return false;
 }
