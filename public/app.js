@@ -776,7 +776,7 @@ function renderBulkActionBar() {
       <select id="bulk-agente" style="${selectStyle}">${agenteOpts}</select>
       <button class="btn btn-ghost" style="${btnStyle}" onclick="aplicarAccionMasivaAgente()">Aplicar asignación</button>
     </div>
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:10px;border-top:1px dashed var(--line-strong);">
+    <div style="display:flex;justify-content:center;align-items:center;gap:10px;padding-top:10px;border-top:1px dashed var(--line-strong);">
       <button class="btn btn-danger" style="${btnStyle}" onclick="aplicarAccionMasivaEliminar()">Eliminar seleccionados</button>
       <button class="btn btn-ghost" style="${btnStyle}" onclick="limpiarSeleccion()">Deseleccionar todo</button>
     </div>
