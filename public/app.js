@@ -696,6 +696,14 @@ async function reiniciarImap() {
   } catch (e) { showToast(e.message); }
 }
 
+async function saltarAlFinalImap() {
+  if (!confirm('Esto marca como "ya revisado" todo lo que hay ahora mismo en la casilla, sin recrear tickets viejos. De ahora en más, solo se van a procesar los correos que lleguen nuevos. ¿Continuar?')) return;
+  try {
+    await api('POST', '/api/configuracion/saltar-al-final-imap');
+    showToast('Listo. A partir de ahora solo se procesan los correos nuevos que lleguen.');
+  } catch (e) { showToast(e.message); }
+}
+
 /* ---------------- Portal de cliente ---------------- */
 
 async function loadClienteTickets() {
@@ -1263,6 +1271,7 @@ function renderConfiguracion() {
       <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;color:var(--stamp-red);">Zona de peligro</div>
       <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer. Solo visible para Superadmin.</div>
       <button type="button" class="btn btn-danger btn-block" onclick="eliminarTodosLosTickets()">Eliminar TODOS los tickets</button>
+      <button type="button" class="btn btn-ghost btn-block" style="margin-top:10px;" onclick="saltarAlFinalImap()">Saltar al final de la casilla (recomendado, solo procesa lo nuevo)</button>
       <button type="button" class="btn btn-danger btn-block" style="margin-top:10px;" onclick="reiniciarImap()">Reprocesar toda la casilla de correo desde cero</button>
     </div>` : ''}`;
 }
