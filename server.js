@@ -428,6 +428,11 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   ok(res, ticket);
 });
 
+app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from tickets where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
   await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, req.params.id]);
   ok(res, await ticketConMensajes(req.params.id));
