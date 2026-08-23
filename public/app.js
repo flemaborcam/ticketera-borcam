@@ -157,6 +157,16 @@ async function aplicarAccionMasivaAgente() {
   limpiarSeleccion();
 }
 
+async function aplicarAccionMasivaEliminar() {
+  const ids = Array.from(state.selectedTickets);
+  if (!ids.length) return;
+  if (!confirm(`¿Eliminar ${ids.length} ticket${ids.length === 1 ? '' : 's'} definitivamente? Esta acción no se puede deshacer.`)) return;
+  for (const id of ids) { await api('DELETE', '/api/tickets/' + id); }
+  cache.tickets = cache.tickets.filter(t => !state.selectedTickets.has(t.id));
+  showToast(`${ids.length} ticket${ids.length === 1 ? '' : 's'} eliminado${ids.length === 1 ? '' : 's'}.`);
+  limpiarSeleccion();
+}
+
 /* ---------------- Tickets (staff) ---------------- */
 
 function fechaLocal(iso) {
@@ -755,14 +765,17 @@ function renderBulkActionBar() {
   const n = state.selectedTickets.size;
   const estOpts = `<option value="">Cambiar estado a…</option>` + CAT.ESTADOS.map(e => `<option value="${e}">${e}</option>`).join('');
   const agenteOpts = `<option value="" disabled selected>Elegí un agente…</option><option value="ninguno">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
+  const selectStyle = 'height:38px;padding:0 10px;border:1px solid var(--line-strong);border-radius:var(--radius);font-size:13.5px;background:#fff;';
+  const btnStyle = 'height:38px;';
   return `
   <div class="card" style="margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
     <strong style="font-size:13.5px;">${n} ticket${n === 1 ? '' : 's'} seleccionado${n === 1 ? '' : 's'}</strong>
-    <select id="bulk-estado">${estOpts}</select>
-    <button class="btn btn-ghost" onclick="aplicarAccionMasivaEstado()">Aplicar estado</button>
-    <select id="bulk-agente">${agenteOpts}</select>
-    <button class="btn btn-ghost" onclick="aplicarAccionMasivaAgente()">Aplicar asignación</button>
-    <button class="btn btn-ghost" style="margin-left:auto;" onclick="limpiarSeleccion()">Deseleccionar todo</button>
+    <select id="bulk-estado" style="${selectStyle}">${estOpts}</select>
+    <button class="btn btn-ghost" style="${btnStyle}" onclick="aplicarAccionMasivaEstado()">Aplicar estado</button>
+    <select id="bulk-agente" style="${selectStyle}">${agenteOpts}</select>
+    <button class="btn btn-ghost" style="${btnStyle}" onclick="aplicarAccionMasivaAgente()">Aplicar asignación</button>
+    <button class="btn btn-danger" style="${btnStyle}" onclick="aplicarAccionMasivaEliminar()">Eliminar seleccionados</button>
+    <button class="btn btn-ghost" style="${btnStyle}margin-left:auto;" onclick="limpiarSeleccion()">Deseleccionar todo</button>
   </div>`;
 }
 
