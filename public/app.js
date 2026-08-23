@@ -17,7 +17,8 @@ let state = {
   view: 'login', authView: 'login', ticketId: null,
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
-  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1
+  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
+  filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1
 };
 
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
@@ -737,7 +738,8 @@ function logoSvg(variant) {
 }
 function navItems(activeView) {
   const items = [
-    { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
+    { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
+    { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
@@ -809,6 +811,51 @@ function renderBulkActionBar() {
       <button class="btn btn-ghost" style="${btnStyle}" onclick="limpiarSeleccion()">Deseleccionar todo</button>
     </div>
   </div>`;
+}
+
+function esTicketDeReserva(t) {
+  return t.asunto.toLowerCase().includes('reserva');
+}
+function filteredReservas() {
+  const f = state.filtersReservas;
+  return cache.tickets
+    .filter(esTicketDeReserva)
+    .filter(t => f.estado === 'todos' ? t.estado !== 'Cerrado' : t.estado === f.estado)
+    .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
+    .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
+    .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
+}
+function setFilterReservas(k, v) { state.filtersReservas[k] = v; state.paginaReservas = 1; render(); }
+function irAPaginaReservas(n) { state.paginaReservas = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+function renderReservas() {
+  const todos = filteredReservas();
+  const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
+  if (state.paginaReservas > totalPaginas) state.paginaReservas = totalPaginas;
+  if (state.paginaReservas < 1) state.paginaReservas = 1;
+  const desde = (state.paginaReservas - 1) * TICKETS_POR_PAGINA;
+  const tickets = todos.slice(desde, desde + TICKETS_POR_PAGINA);
+
+  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filtersReservas.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados)' : e}</option>`).join('');
+  const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filtersReservas.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
+  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, false)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva".</div></div>`;
+
+  const paginacion = todos.length > TICKETS_POR_PAGINA ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px;">
+      <button class="btn btn-ghost" ${state.paginaReservas <= 1 ? 'disabled' : ''} onclick="irAPaginaReservas(${state.paginaReservas - 1})">&larr; Anterior</button>
+      <span style="font-size:13.5px;color:var(--ink-soft);">Página ${state.paginaReservas} de ${totalPaginas}</span>
+      <button class="btn btn-ghost" ${state.paginaReservas >= totalPaginas ? 'disabled' : ''} onclick="irAPaginaReservas(${state.paginaReservas + 1})">Siguiente &rarr;</button>
+    </div>` : '';
+
+  return `
+    <div class="page-head"><div><h1>Reservas</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} con "reserva" en el asunto</div></div></div>
+    <div class="filters">
+      <select onchange="setFilterReservas('estado', this.value)">${estOptions}</select>
+      <select onchange="setFilterReservas('prioridad', this.value)">${prioOptions}</select>
+      <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filtersReservas.search)}" onkeydown="if(event.key==='Enter'){ setFilterReservas('search', this.value); }" onsearch="setFilterReservas('search', this.value)">
+    </div>
+    ${list}
+    ${paginacion}`;
 }
 
 function renderDashboard() {
@@ -1433,6 +1480,7 @@ function render() {
   else if (state.view === 'usuarios') inner = renderUsuarios();
   else if (state.view === 'respuestas') inner = renderRespuestas();
   else if (state.view === 'grupos') inner = renderGrupos();
+  else if (state.view === 'reservas') inner = renderReservas();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
