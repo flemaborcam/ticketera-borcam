@@ -495,6 +495,24 @@ async function saveFirma() {
   render();
 }
 
+async function generarCodigoTelegram() {
+  const el = document.getElementById('codigo-telegram');
+  try {
+    const r = await api('POST', '/api/usuarios/me/telegram/generar-codigo');
+    if (el) el.innerHTML = `
+      <div class="hint-text">Abrí Telegram, entrá a la conversación con nuestro bot y mandale por privado este código:</div>
+      <div style="font-family:monospace;font-size:20px;font-weight:700;letter-spacing:2px;background:var(--brand-tint);color:var(--brand);padding:10px 14px;border-radius:8px;text-align:center;margin-top:8px;">${r.codigo}</div>
+      <div class="hint-text" style="margin-top:8px;">En cuanto lo recibamos, se vincula solo (puede tardar hasta 1 minuto).</div>`;
+  } catch (e) { showToast(e.message); }
+}
+async function desvincularTelegram() {
+  if (!confirm('¿Desvincular tu Telegram? Vas a dejar de recibir recordatorios privados hasta que lo vuelvas a vincular.')) return;
+  await api('POST', '/api/usuarios/me/telegram/desvincular');
+  session.usuario.telegram_chat_id = null;
+  showToast('Telegram desvinculado.');
+  render();
+}
+
 /* ---------------- Calendario de instalaciones ---------------- */
 
 const DIAS_SEMANA = [['lunes', 'Lunes'], ['martes', 'Martes'], ['miercoles', 'Miércoles'], ['jueves', 'Jueves'], ['viernes', 'Viernes'], ['sabado', 'Sábado'], ['domingo', 'Domingo']];
@@ -696,7 +714,11 @@ async function submitConfiguracion(ev) {
     avisoFindeActivo: fd.get('avisoFindeActivo') === 'on', avisoFindeMensaje: fd.get('avisoFindeMensaje').trim(),
     avisoFueraHorarioActivo: fd.get('avisoFueraHorarioActivo') === 'on', avisoFueraHorarioMensaje: fd.get('avisoFueraHorarioMensaje').trim(),
     avisoFueraHorarioInicio: fd.get('avisoFueraHorarioInicio'), avisoFueraHorarioFin: fd.get('avisoFueraHorarioFin'),
-    telegramActivo: fd.get('telegramActivo') === 'on', telegramChatId: fd.get('telegramChatId').trim()
+    telegramActivo: fd.get('telegramActivo') === 'on', telegramChatId: fd.get('telegramChatId').trim(),
+    seguimientoActivo: fd.get('seguimientoActivo') === 'on',
+    seguimientoDiasRecordatorio: Number(fd.get('seguimientoDiasRecordatorio')) || 2,
+    seguimientoRepetirDias: Number(fd.get('seguimientoRepetirDias')) || 2,
+    seguimientoDiasEscalar: Number(fd.get('seguimientoDiasEscalar')) || 0
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -1292,6 +1314,17 @@ function renderPerfil() {
       </div>
       <div id="firma-editor" class="sign-editor" contenteditable="true">${u.firma_html || ''}</div>
       <div class="reply-actions" style="margin-top:12px;"><button type="button" class="btn btn-primary" onclick="saveFirma()">Guardar firma</button></div>
+    </div>
+    <div class="card card-narrow" style="margin-top:18px;">
+      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Recordatorios por Telegram</div>
+      ${u.telegram_chat_id ? `
+        <div class="hint-text" style="margin-bottom:12px;color:var(--stamp-green);font-weight:600;">✅ Tu Telegram ya está vinculado. Vas a recibir ahí los recordatorios de tickets asignados que estén parados hace varios días.</div>
+        <button type="button" class="btn btn-ghost btn-block" onclick="desvincularTelegram()">Desvincular Telegram</button>
+      ` : `
+        <div class="hint-text" style="margin-bottom:12px;">Vinculá tu Telegram para recibir avisos privados si un ticket asignado a vos lleva varios días sin actividad.</div>
+        <button type="button" class="btn btn-primary btn-block" onclick="generarCodigoTelegram()">Generar código para vincular</button>
+        <div id="codigo-telegram" style="margin-top:10px;"></div>
+      `}
     </div>`;
 }
 
@@ -1352,6 +1385,17 @@ function renderConfiguracion() {
           <input type="checkbox" name="telegramActivo" ${c.telegramActivo ? 'checked' : ''}> Activar notificaciones en Telegram
         </label>
         <div class="field"><label>Chat ID del grupo</label><input name="telegramChatId" value="${escapeHtml(c.telegramChatId || '')}" placeholder="-1001234567890"></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Seguimiento de tickets asignados</div>
+        <div class="hint-text" style="margin-bottom:10px;">Si un ticket asignado a alguien lleva varios días sin actividad, se le avisa por Telegram al técnico (necesita vincular su Telegram desde "Mi perfil"). Si sigue sin resolverse, se puede escalar al grupo general.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="seguimientoActivo" ${c.seguimientoActivo !== false ? 'checked' : ''}> Activar seguimiento de tickets asignados
+        </label>
+        <div class="field-row">
+          <div class="field"><label>Días sin actividad para el 1er recordatorio</label><input type="number" name="seguimientoDiasRecordatorio" min="1" value="${c.seguimientoDiasRecordatorio || 2}"></div>
+          <div class="field"><label>Repetir cada (días)</label><input type="number" name="seguimientoRepetirDias" min="1" value="${c.seguimientoRepetirDias || 2}"></div>
+        </div>
+        <div class="field"><label>Escalar al grupo de Telegram a los (días) — 0 para desactivar</label><input type="number" name="seguimientoDiasEscalar" min="0" value="${c.seguimientoDiasEscalar || 0}"></div>
 
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
       </form>
