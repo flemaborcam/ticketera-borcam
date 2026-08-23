@@ -869,7 +869,10 @@ function renderAdjuntos(ticketId, mensajeId, adjuntos) {
   return `<div class="msg-attachments">${adjuntos.map(a => {
     const url = `/api/adjuntos/${ticketId}/${mensajeId}/${a.id}`;
     if (a.tipo === 'imagen') return `<a href="${url}" download="${escapeHtml(a.nombre)}"><img src="${url}" alt="${escapeHtml(a.nombre)}"></a>`;
-    if (a.tipo === 'video') return `<video controls src="${url}" class="attach-video"></video>`;
+    if (a.tipo === 'video') return `<div class="attach-video-wrap">
+        <video controls src="${url}" class="attach-video"></video>
+        <a class="attach-file" href="${url}" download="${escapeHtml(a.nombre)}">⬇ Descargar ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span></a>
+      </div>`;
     return `<a class="attach-file" href="${url}" download="${escapeHtml(a.nombre)}">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span></a>`;
   }).join('')}</div>`;
 }
