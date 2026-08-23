@@ -206,11 +206,20 @@ async function getSmtpTransport(cfg) {
 }
 
 // Envía un correo real (si la casilla está activa y configurada); si no, no hace nada.
-async function enviarEmailReal({ to, cc, subject, text, html, attachments }) {
+async function demasiadosEnviosAutomaticosRecientes() {
+  const r = await pool.query(`select count(*) from mensajes where automatico=true and fecha > now() - interval '1 hour'`);
+  return Number(r.rows[0].count) >= 200; // margen de seguridad por debajo del límite típico de proveedores (500/hora)
+}
+
+async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAutomatico }) {
   try {
     const cfg = await getConfig();
     const transport = await getSmtpTransport(cfg);
     if (!transport || !to) return false;
+    if (esAutomatico && await demasiadosEnviosAutomaticosRecientes()) {
+      console.warn('Envío automático pausado por exceso de volumen en la última hora (posible reprocesamiento masivo).');
+      return false;
+    }
     await transport.sendMail({
       from: `"${cfg.casilla_nombre || 'Soporte'}" <${cfg.smtp_usuario}>`,
       to, cc: (cc && cc.length) ? cc.join(',') : undefined,
@@ -244,7 +253,7 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
       [ticketId, cuerpo, destinatarios]
     );
     const ctx = await contextoTicket(ticketId);
-    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo });
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
   }
 }
 
@@ -263,7 +272,7 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
     [ticketId, `Automatización · ${automatizacion.nombre} (paso ${index + 1}/${totalPasos})`, resp.cuerpo]
   );
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: resp.cuerpo });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: resp.cuerpo, esAutomatico: true });
   if (paso.accion_estado && paso.accion_estado !== 'Sin cambio') {
     await aplicarCambioEstado(ticketId, paso.accion_estado);
   } else {
@@ -438,6 +447,25 @@ app.delete('/api/tickets', requireStaff, requireSuperadmin, async (req, res) => 
 app.post('/api/configuracion/reiniciar-imap', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('update configuracion set imap_ultimo_uid=0 where id=1');
   ok(res, { ok: true });
+});
+
+// Marca como "ya revisado" todo lo que hay hasta ahora en la casilla, sin recrear tickets viejos.
+// Solo procesa los correos que lleguen de ahora en más.
+app.post('/api/configuracion/saltar-al-final-imap', requireStaff, requireSuperadmin, async (req, res) => {
+  try {
+    const c = await getConfig();
+    if (!c.imap_host || !c.imap_usuario || !c.imap_pass_enc) return bad(res, 'Faltan datos de IMAP.');
+    const client = new ImapFlow({
+      host: c.imap_host, port: c.imap_port || 993, secure: true,
+      auth: { user: c.imap_usuario, pass: decrypt(c.imap_pass_enc) }, logger: false
+    });
+    await client.connect();
+    const mailbox = await client.mailboxOpen('INBOX');
+    await client.logout();
+    const maxUid = Math.max(0, (mailbox.uidNext || 1) - 1);
+    await pool.query('update configuracion set imap_ultimo_uid=$1 where id=1', [maxUid]);
+    ok(res, { ok: true, maxUid });
+  } catch (e) { bad(res, e.message); }
 });
 
 app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
@@ -1091,7 +1119,7 @@ async function aplicarAvisoFinDeSemana(ticketId) {
     [ticketId, mensaje]
   );
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
 
 // Lunes a viernes, fuera del horario laboral configurado (ej: antes de las 09:00 o desde las 18:00)
@@ -1121,7 +1149,7 @@ async function aplicarAvisoFueraHorario(ticketId) {
     [ticketId, mensaje]
   );
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
 
 function extraerNumeroTicket(asunto) {
