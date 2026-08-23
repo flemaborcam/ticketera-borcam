@@ -37,7 +37,7 @@ function mapTicket(row) {
   };
 }
 function mapMensaje(m) {
-  return { id: m.id, tipo: m.tipo, autor: m.autor, cuerpo: m.cuerpo, cc: m.cc || [], adjuntos: m.adjuntos || [], firmaHtml: m.firma_html || '', destinatarios: m.destinatarios || [], automatico: m.automatico, fecha: m.fecha };
+  return { id: m.id, tipo: m.tipo, autor: m.autor, cuerpo: m.cuerpo, cuerpoHtml: m.cuerpo_html || null, cc: m.cc || [], adjuntos: m.adjuntos || [], firmaHtml: m.firma_html || '', destinatarios: m.destinatarios || [], automatico: m.automatico, fecha: m.fecha };
 }
 
 /* ---------------- Bootstrap / sesión ---------------- */
@@ -860,6 +860,7 @@ function renderThreadHtml(t) {
         <span>${fmtDateTime(m.fecha)}</span></div>
       ${m.cc.length ? `<div class="msg-cc">CC: ${m.cc.map(escapeHtml).join(', ')}</div>` : ''}
       <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>
+      ${m.cuerpoHtml ? `<iframe class="msg-html-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" srcdoc="${escapeHtml(m.cuerpoHtml)}"></iframe>` : ''}
       ${m.adjuntos.length ? renderAdjuntos(t.id, m.id, m.adjuntos) : ''}
       ${m.firmaHtml ? `<div class="msg-firma">${m.firmaHtml}</div>` : ''}</div>`;
   }).join('');
