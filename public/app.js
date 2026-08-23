@@ -676,6 +676,26 @@ async function probarTelegram() {
   } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
 }
 
+async function eliminarTodosLosTickets() {
+  const escrito = prompt('Esto borra TODOS los tickets del sistema, sin excepción, y no se puede deshacer.\n\nEscribí ELIMINAR (en mayúsculas) para confirmar:');
+  if (escrito !== 'ELIMINAR') { if (escrito !== null) showToast('No se eliminó nada: el texto no coincidía.'); return; }
+  try {
+    const r = await api('DELETE', '/api/tickets');
+    cache.tickets = [];
+    showToast(`${r.eliminados} ticket${r.eliminados === 1 ? '' : 's'} eliminado${r.eliminados === 1 ? '' : 's'}.`);
+    go('dashboard');
+  } catch (e) { showToast(e.message); }
+}
+
+async function reiniciarImap() {
+  const escrito = prompt('Esto hace que el sistema vuelva a bajar TODOS los correos de la casilla desde el principio, como si nunca la hubiera revisado (puede recrear muchos tickets de golpe, y las respuestas viejas no van a quedar agrupadas en el ticket original). Escribí REINICIAR para confirmar:');
+  if (escrito !== 'REINICIAR') { if (escrito !== null) showToast('No se hizo ningún cambio: el texto no coincidía.'); return; }
+  try {
+    await api('POST', '/api/configuracion/reiniciar-imap');
+    showToast('Listo. La próxima revisión de la casilla va a bajar todo desde cero (puede tardar unos minutos según cuántos correos haya).');
+  } catch (e) { showToast(e.message); }
+}
+
 /* ---------------- Portal de cliente ---------------- */
 
 async function loadClienteTickets() {
@@ -1237,7 +1257,14 @@ function renderConfiguracion() {
         <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
         <div id="resultado-telegram" style="margin-top:8px;"></div>
       </div>
-    </div>`;
+    </div>
+    ${currentUser().es_superadmin ? `
+    <div class="card card-narrow" style="max-width:560px;margin-top:18px;border-color:var(--stamp-red-tint);">
+      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;color:var(--stamp-red);">Zona de peligro</div>
+      <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer. Solo visible para Superadmin.</div>
+      <button type="button" class="btn btn-danger btn-block" onclick="eliminarTodosLosTickets()">Eliminar TODOS los tickets</button>
+      <button type="button" class="btn btn-danger btn-block" style="margin-top:10px;" onclick="reiniciarImap()">Reprocesar toda la casilla de correo desde cero</button>
+    </div>` : ''}`;
 }
 
 /* ---------------- Modales ---------------- */
