@@ -480,7 +480,7 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
 
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const id = req.params.id;
-  const { tipo, cuerpo, cc, adjuntos, incluirFirma } = req.body;
+  const { tipo, cuerpo, cc, adjuntos, incluirFirma, documentoLegalId } = req.body;
   if (!cuerpo || !cuerpo.trim()) return bad(res, 'El mensaje no puede estar vacío.');
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
   if (!t) return bad(res, 'No encontrado', 404);
@@ -507,21 +507,47 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
       } catch (e) { console.error('Error subiendo adjunto:', e.message); }
     }
 
-    await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc, adjuntos, firma_html)
-       values ($1,'saliente',$2,$3,$4,$5,$6)`,
-      [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntosProcesados), firmaHtml]
-    );
+    let cuerpoFinal = cuerpo;
+    let linkDocumento = null;
+    if (documentoLegalId) {
+      const doc = (await pool.query('select * from documentos_legales where id=$1', [documentoLegalId])).rows[0];
+      if (doc) {
+        const token = crypto.randomUUID();
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        linkDocumento = `${baseUrl}/aceptar-documento/${token}`;
+        const rm = await pool.query(
+          `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc, adjuntos, firma_html) values ($1,'saliente',$2,$3,$4,$5,$6) returning id`,
+          [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntosProcesados), firmaHtml]
+        );
+        await pool.query(
+          `insert into aceptaciones_legales (ticket_id, mensaje_id, documento_nombre, documento_texto, token)
+           values ($1,$2,$3,$4,$5)`,
+          [id, rm.rows[0].id, doc.nombre, doc.texto, token]
+        );
+        cuerpoFinal = `${cuerpo}\n\nPara continuar con la gestión, por favor leé y aceptá este documento:\n${doc.nombre}\n${linkDocumento}`;
+      } else {
+        await pool.query(
+          `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc, adjuntos, firma_html) values ($1,'saliente',$2,$3,$4,$5,$6)`,
+          [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntosProcesados), firmaHtml]
+        );
+      }
+    } else {
+      await pool.query(
+        `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc, adjuntos, firma_html) values ($1,'saliente',$2,$3,$4,$5,$6)`,
+        [id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc || [], JSON.stringify(adjuntosProcesados), firmaHtml]
+      );
+    }
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
 
     const attachmentsForMail = (adjuntos || []).map(a => {
       const base64 = (a.dataUrl || '').split(',')[1] || '';
       return { filename: a.nombre, content: base64, encoding: 'base64' };
     });
-    const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
+    const linkHtml = linkDocumento ? `<p style="margin-top:16px;"><a href="${linkDocumento}" style="background:#1E56C7;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Leer y aceptar el documento</a></p>` : '';
+    const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${linkHtml}${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
     await enviarEmailReal({
       to: t.remitente_email, cc: cc || [], subject: `[${t.numero}] ${t.asunto}`,
-      text: cuerpo, html: htmlBody, attachments: attachmentsForMail
+      text: cuerpoFinal, html: htmlBody, attachments: attachmentsForMail
     });
   }
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
@@ -983,6 +1009,136 @@ app.get('/cancelar-cita/:token', async (req, res) => {
       }
     </script>`}
   </div></body></html>`);
+});
+
+/* ---------------- Documentos legales (descargos con firma electrónica) ---------------- */
+
+app.get('/api/documentos-legales', requireStaff, async (req, res) => {
+  ok(res, (await pool.query('select * from documentos_legales order by nombre')).rows);
+});
+app.post('/api/documentos-legales', requireStaff, async (req, res) => {
+  const { nombre, texto } = req.body;
+  if (!nombre || !texto) return bad(res, 'Faltan datos');
+  const r = await pool.query('insert into documentos_legales (nombre, texto) values ($1,$2) returning id', [nombre, texto]);
+  ok(res, { id: r.rows[0].id });
+});
+app.put('/api/documentos-legales/:id', requireStaff, async (req, res) => {
+  const { nombre, texto, activo } = req.body;
+  await pool.query('update documentos_legales set nombre=$1, texto=$2, activo=$3 where id=$4', [nombre, texto, !!activo, req.params.id]);
+  ok(res, { ok: true });
+});
+app.delete('/api/documentos-legales/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from documentos_legales where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+
+// Trae las aceptaciones (pendientes o firmadas) asociadas a un ticket, para mostrar su estado
+app.get('/api/tickets/:id/aceptaciones', requireStaff, async (req, res) => {
+  ok(res, (await pool.query('select * from aceptaciones_legales where ticket_id=$1 order by creado desc', [req.params.id])).rows);
+});
+
+app.get('/aceptar-documento/:token', async (req, res) => {
+  const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
+  if (!a) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Documento no encontrado</h1>');
+  const t = (await pool.query('select remitente_nombre, remitente_email from tickets where id=$1', [a.ticket_id])).rows[0] || {};
+
+  if (a.estado === 'aceptado') {
+    const fechaFmt = new Date(a.fecha_aceptacion).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+    return res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Documento aceptado</title>
+    <style>body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;}
+    .card{background:#fff;border-radius:10px;padding:32px;max-width:460px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
+    h1{font-size:20px;color:#1F8A5F;} p{color:#48607F;line-height:1.5;}</style></head>
+    <body><div class="card"><h1>✅ Este documento ya fue aceptado</h1><p>Quedó registrada la aceptación de <strong>${escapeHtmlSrv(a.nombre_solicitante || t.remitente_nombre || '')}</strong> el ${fechaFmt}.</p></div></body></html>`);
+  }
+
+  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtmlSrv(a.documento_nombre)}</title>
+  <style>
+    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;margin:0;padding:20px;}
+    .wrap{max-width:640px;margin:0 auto;}
+    .card{background:#fff;border-radius:10px;padding:28px;box-shadow:0 2px 10px rgba(15,42,77,.08);margin-bottom:16px;}
+    h1{font-size:20px;color:#0F2A4D;margin:0 0 14px;}
+    .texto{white-space:pre-wrap;font-size:14px;line-height:1.6;color:#20262B;max-height:420px;overflow-y:auto;border:1px solid #DCE7F5;border-radius:8px;padding:16px;background:#FAFCFE;}
+    .field{margin-bottom:14px;} label{display:block;font-size:12.5px;font-weight:600;color:#48607F;margin-bottom:5px;text-transform:uppercase;letter-spacing:.03em;}
+    input,textarea{width:100%;padding:10px 12px;border:1px solid #B7CDE8;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;}
+    .row{display:flex;gap:12px;} .row .field{flex:1;}
+    .checkrow{display:flex;align-items:flex-start;gap:10px;font-size:13.5px;color:#20262B;margin:16px 0;line-height:1.4;}
+    button{background:#1E56C7;color:#fff;border:none;padding:13px 20px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
+    button:disabled{opacity:.5;cursor:default;}
+    #msg{margin-top:14px;font-weight:600;text-align:center;}
+    .ok-box{text-align:center;} .ok-box h2{color:#1F8A5F;font-family:'IBM Plex Sans',sans-serif;}
+  </style></head>
+  <body><div class="wrap">
+    <div class="card">
+      <h1>${escapeHtmlSrv(a.documento_nombre)}</h1>
+      <div class="texto">${escapeHtmlSrv(a.documento_texto)}</div>
+    </div>
+    <div class="card" id="form-card">
+      <form id="form-aceptar" onsubmit="return aceptar(event)">
+        <div class="field"><label>Nombre completo</label><input name="nombre" value="${escapeHtmlSrv(t.remitente_nombre || '')}" required></div>
+        <div class="row">
+          <div class="field"><label>Documento de identidad</label><input name="documentoIdentidad"></div>
+          <div class="field"><label>Empresa / Institución (si corresponde)</label><input name="empresaInstitucion"></div>
+        </div>
+        <div class="field"><label>Motivo de la solicitud</label><input name="motivoSolicitud" required></div>
+        <div class="field"><label>Descripción del material (cámara/s, fecha y hora del registro)</label><input name="descripcionMaterial"></div>
+        <div class="field"><label>Medio de entrega (pendrive, correo, nube, etc.)</label><input name="medioEntrega"></div>
+        <label class="checkrow"><input type="checkbox" id="check-leido" required style="margin-top:3px;"> He leído y entiendo el contenido de este documento, y acepto plenamente todos sus términos.</label>
+        <button type="submit">Aceptar y firmar</button>
+        <div id="msg"></div>
+      </form>
+    </div>
+  </div>
+  <script>
+    async function aceptar(ev){
+      ev.preventDefault();
+      const btn = ev.target.querySelector('button');
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      const fd = new FormData(ev.target);
+      try {
+        const r = await fetch('/api/documentos/aceptar/${a.token}', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            nombreSolicitante: fd.get('nombre'), documentoIdentidad: fd.get('documentoIdentidad'),
+            empresaInstitucion: fd.get('empresaInstitucion'), motivoSolicitud: fd.get('motivoSolicitud'),
+            descripcionMaterial: fd.get('descripcionMaterial'), medioEntrega: fd.get('medioEntrega')
+          })
+        });
+        const data = await r.json();
+        if(!r.ok) throw new Error(data.error || 'No se pudo registrar la aceptación.');
+        document.getElementById('form-card').innerHTML = '<div class="ok-box"><h2>✅ ¡Listo!</h2><p>Tu aceptación quedó registrada correctamente.</p></div>';
+      } catch(e){
+        document.getElementById('msg').innerHTML = '<span style="color:#C43D3D;">'+e.message+'</span>';
+        btn.disabled = false; btn.textContent = 'Aceptar y firmar';
+      }
+      return false;
+    }
+  </script>
+  </body></html>`);
+});
+
+app.post('/api/documentos/aceptar/:token', async (req, res) => {
+  const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
+  if (!a) return bad(res, 'No encontrado', 404);
+  if (a.estado === 'aceptado') return ok(res, { ok: true, yaAceptado: true });
+  const { nombreSolicitante, documentoIdentidad, empresaInstitucion, motivoSolicitud, descripcionMaterial, medioEntrega } = req.body;
+  if (!nombreSolicitante || !motivoSolicitud) return bad(res, 'Completá al menos el nombre y el motivo de la solicitud.');
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+  await pool.query(
+    `update aceptaciones_legales set estado='aceptado', fecha_aceptacion=now(), ip_aceptante=$1,
+       nombre_solicitante=$2, documento_identidad=$3, empresa_institucion=$4, motivo_solicitud=$5,
+       descripcion_material=$6, medio_entrega=$7
+     where id=$8`,
+    [ip, nombreSolicitante, documentoIdentidad || '', empresaInstitucion || '', motivoSolicitud, descripcionMaterial || '', medioEntrega || '', a.id]
+  );
+  const fechaFmt = new Date().toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+    [a.ticket_id, 'Aceptación de documento',
+      `${nombreSolicitante} aceptó el documento "${a.documento_nombre}" el ${fechaFmt} (IP: ${ip}).\nMotivo: ${motivoSolicitud}${descripcionMaterial ? '\nMaterial: ' + descripcionMaterial : ''}${medioEntrega ? '\nMedio de entrega: ' + medioEntrega : ''}`]
+  );
+  await pool.query('update tickets set actualizado=now() where id=$1', [a.ticket_id]);
+  ok(res, { ok: true });
 });
 
 /* ---------------- Calendario: configuración (staff) ---------------- */
