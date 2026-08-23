@@ -59,10 +59,10 @@ async function boot() {
 }
 
 async function loadStaffData() {
-  const [tickets, usuarios, clientes, respuestas, automatizaciones, configuracion, catalogos] = await Promise.all([
+  const [tickets, usuarios, clientes, respuestas, automatizaciones, configuracion, catalogos, documentosLegales] = await Promise.all([
     api('GET', '/api/tickets'), api('GET', '/api/usuarios'), api('GET', '/api/clientes'),
     api('GET', '/api/respuestas'), api('GET', '/api/automatizaciones'), api('GET', '/api/configuracion'),
-    api('GET', '/api/catalogos')
+    api('GET', '/api/catalogos'), api('GET', '/api/documentos-legales')
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
@@ -70,12 +70,17 @@ async function loadStaffData() {
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
+  cache.documentosLegales = documentosLegales;
   CAT = catalogos;
 }
 
 async function refreshTicket(id) {
-  const t = await api('GET', '/api/tickets/' + id);
+  const [t, aceptaciones] = await Promise.all([
+    api('GET', '/api/tickets/' + id),
+    api('GET', `/api/tickets/${id}/aceptaciones`)
+  ]);
   const mapped = mapTicket(t);
+  mapped.aceptaciones = aceptaciones;
   const idx = cache.tickets.findIndex(x => x.id === id);
   if (idx >= 0) cache.tickets[idx] = mapped; else cache.tickets.unshift(mapped);
   return mapped;
@@ -277,7 +282,8 @@ async function submitReply(ev, ticketId) {
       const ccRaw = (fd.get('cc') || '').trim();
       const cc = ccRaw ? ccRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
       await api('POST', `/api/tickets/${ticketId}/mensajes`, {
-        tipo: 'saliente', cuerpo, cc, adjuntos: state.pendingAttachments, incluirFirma: fd.get('incluirFirma') === 'on'
+        tipo: 'saliente', cuerpo, cc, adjuntos: state.pendingAttachments, incluirFirma: fd.get('incluirFirma') === 'on',
+        documentoLegalId: fd.get('documentoLegalId') || null
       });
       state.pendingAttachments = [];
     } else {
@@ -347,6 +353,48 @@ function insertCanned(selectEl) {
   const textarea = selectEl.closest('form').querySelector('textarea[name="cuerpo"]');
   if (c && textarea) { textarea.value = c.cuerpo; textarea.focus(); }
   selectEl.value = '';
+}
+
+/* ---------------- Documentos legales (firma electrónica) ---------------- */
+
+function openNuevoDocumentoModal() { state.modal = 'nuevo-documento'; state.editDocumentoId = null; render(); }
+function openEditarDocumentoModal(id) { state.modal = 'editar-documento'; state.editDocumentoId = id; render(); }
+async function submitDocumento(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const nombre = fd.get('nombre').trim(), texto = fd.get('texto').trim(), activo = fd.get('activo') === 'on';
+  if (!nombre || !texto) return false;
+  if (state.modal === 'editar-documento') await api('PUT', '/api/documentos-legales/' + state.editDocumentoId, { nombre, texto, activo });
+  else await api('POST', '/api/documentos-legales', { nombre, texto });
+  cache.documentosLegales = await api('GET', '/api/documentos-legales');
+  state.modal = null; render();
+  return false;
+}
+async function deleteDocumento(id) {
+  if (!confirm('¿Eliminar este documento? No afecta a las aceptaciones ya firmadas (quedan igual con su copia guardada).')) return;
+  await api('DELETE', '/api/documentos-legales/' + id);
+  cache.documentosLegales = cache.documentosLegales.filter(d => d.id !== id);
+  render();
+}
+function renderDocumentos() {
+  const rows = cache.documentosLegales.map(d => `
+    <div class="card" style="margin-bottom:12px;opacity:${d.activo ? '1' : '.55'};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <span style="font-weight:600;font-size:14.5px;">${escapeHtml(d.nombre)}</span>
+            <span class="tag ${d.activo ? 'tag-resuelto' : 'tag-cerrado'}">${d.activo ? 'Activo' : 'Pausado'}</span>
+          </div>
+          <div style="font-size:13px;color:var(--ink-soft);white-space:pre-wrap;max-height:80px;overflow:hidden;">${escapeHtml(d.texto.slice(0, 220))}${d.texto.length > 220 ? '…' : ''}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex:none;">
+          <button class="btn btn-ghost" onclick="openEditarDocumentoModal('${d.id}')">Editar</button>
+          <button class="btn btn-danger" onclick="deleteDocumento('${d.id}')">Eliminar</button>
+        </div>
+      </div>
+    </div>`).join('');
+  const list = cache.documentosLegales.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay documentos cargados</div></div>`;
+  return `<div class="page-head"><div><h1>Documentos</h1><div class="sub">Descargos u otros textos que el cliente puede leer y aceptar con firma electrónica al responder un ticket</div></div><button class="btn btn-primary" onclick="openNuevoDocumentoModal()">+ Nuevo documento</button></div>${list}`;
 }
 
 /* ---------------- Automatizaciones ---------------- */
@@ -740,7 +788,7 @@ function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
@@ -985,6 +1033,7 @@ function renderTicket(id) {
         <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
       </div>
     </div>
+    ${renderAceptacionesTicket(t)}
     <div class="thread">${thread}</div>
     <div class="reply-box">
       <div class="reply-tabs">
@@ -998,7 +1047,9 @@ function renderTicket(id) {
         ${state.replyTab === 'saliente' && u.firma_html ? `<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" name="incluirFirma" checked> Incluir mi firma</label>` : ''}
         ${state.replyTab === 'saliente' ? `
         <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Opcional, separá con coma.</div></div>
-        <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>` : ''}
+        <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
+        ${cache.documentosLegales.filter(d => d.activo).length ? `
+        <div class="field"><label>Pedir aceptación de un documento (opcional)</label><select name="documentoLegalId"><option value="">Ninguno</option>${cache.documentosLegales.filter(d => d.activo).map(d => `<option value="${d.id}">${escapeHtml(d.nombre)}</option>`).join('')}</select><div class="hint-text">Se le agrega al cliente un enlace para leer y aceptar ese documento, con registro de fecha, hora e IP.</div></div>` : ''}` : ''}
         <div class="reply-actions"><button type="submit" class="btn btn-primary">${state.replyTab === 'saliente' ? 'Enviar respuesta' : 'Simular correo entrante'}</button></div>
       </form>
     </div>`;
@@ -1332,8 +1383,47 @@ function renderActiveModal() {
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
   if (state.modal === 'editar-usuario') return renderEditarUsuarioModal();
   if (state.modal === 'nuevo-usuario') return renderNuevoUsuarioModal();
+  if (state.modal === 'nuevo-documento' || state.modal === 'editar-documento') return renderDocumentoModal();
   return '';
 }
+function renderDocumentoModal() {
+  const editing = state.modal === 'editar-documento';
+  const d = editing ? cache.documentosLegales.find(x => x.id === state.editDocumentoId) : null;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px;">
+    <h2>${editing ? 'Editar documento' : 'Nuevo documento'}</h2>
+    <p class="sub">Este texto se le muestra al cliente para que lo lea y acepte con firma electrónica al responder un ticket.</p>
+    <form onsubmit="return submitDocumento(event)">
+      <div class="field"><label>Nombre</label><input name="nombre" value="${d ? escapeHtml(d.nombre) : ''}" placeholder="Ej: Descargo de Responsabilidad — Entrega de grabaciones CCTV" required></div>
+      <div class="field"><label>Contenido</label><textarea name="texto" style="min-height:260px;" required>${d ? escapeHtml(d.texto) : ''}</textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;"><input type="checkbox" name="activo" ${!d || d.activo ? 'checked' : ''}> Documento activo (disponible para elegir al responder)</label>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${editing ? 'Guardar cambios' : 'Crear documento'}</button></div>
+    </form>
+  </div></div>`;
+}
+
+function renderAceptacionesTicket(t) {
+  const lista = t.aceptaciones || [];
+  if (!lista.length) return '';
+  return `<div class="card" style="margin-bottom:18px;">
+    <div style="font-weight:600;font-size:13.5px;margin-bottom:10px;">Documentos enviados para firma</div>
+    ${lista.map(a => {
+      if (a.estado === 'aceptado') {
+        const fecha = fmtDateTime(a.fecha_aceptacion);
+        return `<div style="padding:10px 0;border-bottom:1px dashed var(--line-strong);">
+          <div><span class="tag tag-resuelto">✅ Aceptado</span> <strong>${escapeHtml(a.documento_nombre)}</strong></div>
+          <div class="hint-text" style="margin-top:6px;">Firmado por <strong>${escapeHtml(a.nombre_solicitante || '')}</strong> el ${fecha} · IP: ${escapeHtml(a.ip_aceptante || '—')}</div>
+          ${a.motivo_solicitud ? `<div class="hint-text">Motivo: ${escapeHtml(a.motivo_solicitud)}</div>` : ''}
+          ${a.descripcion_material ? `<div class="hint-text">Material: ${escapeHtml(a.descripcion_material)}</div>` : ''}
+        </div>`;
+      }
+      return `<div style="padding:10px 0;border-bottom:1px dashed var(--line-strong);">
+        <div><span class="tag tag-en-progreso">⏳ Pendiente</span> <strong>${escapeHtml(a.documento_nombre)}</strong></div>
+        <div class="hint-text" style="margin-top:6px;">Todavía no fue aceptado por el cliente.</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
 function renderNuevoCorreoModal() {
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>Simular correo entrante</h2><p class="sub">Crea un ticket nuevo como si llegara a ${cache.configuracion.casillaEmail ? `<strong>${escapeHtml(cache.configuracion.casillaEmail)}</strong>` : 'la casilla de soporte'}.</p>
@@ -1481,6 +1571,7 @@ function render() {
   else if (state.view === 'respuestas') inner = renderRespuestas();
   else if (state.view === 'grupos') inner = renderGrupos();
   else if (state.view === 'reservas') inner = renderReservas();
+  else if (state.view === 'documentos') inner = renderDocumentos();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
