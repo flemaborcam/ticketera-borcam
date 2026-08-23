@@ -371,7 +371,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   if (!req.session || !req.session.type) return ok(res, { session: null });
   if (req.session.type === 'staff') {
-    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html,es_superadmin from usuarios where id=$1', [req.session.userId])).rows[0];
+    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html,es_superadmin,telegram_chat_id,telegram_link_code from usuarios where id=$1', [req.session.userId])).rows[0];
     if (!u) return ok(res, { session: null });
     return ok(res, { session: { type: 'staff', usuario: u } });
   } else {
@@ -677,6 +677,16 @@ app.put('/api/usuarios/me/firma', requireStaff, async (req, res) => {
   ok(res, { ok: true });
 });
 
+app.post('/api/usuarios/me/telegram/generar-codigo', requireStaff, async (req, res) => {
+  const codigo = Math.random().toString(36).slice(2, 8).toUpperCase();
+  await pool.query('update usuarios set telegram_link_code=$1 where id=$2', [codigo, req.session.userId]);
+  ok(res, { codigo });
+});
+app.post('/api/usuarios/me/telegram/desvincular', requireStaff, async (req, res) => {
+  await pool.query('update usuarios set telegram_chat_id=null, telegram_link_code=null where id=$1', [req.session.userId]);
+  ok(res, { ok: true });
+});
+
 /* ---------------- Respuestas predefinidas ---------------- */
 
 app.get('/api/respuestas', requireStaff, async (req, res) => {
@@ -761,7 +771,11 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     avisoFueraHorarioActivo: c.aviso_fuera_horario_activo !== false, avisoFueraHorarioMensaje: c.aviso_fuera_horario_mensaje,
     avisoFueraHorarioInicio: c.aviso_fuera_horario_inicio || '09:00', avisoFueraHorarioFin: c.aviso_fuera_horario_fin || '18:00',
     telegramActivo: !!c.telegram_activo, telegramChatId: c.telegram_chat_id || '',
-    telegramConfiguradoServidor: !!process.env.TELEGRAM_BOT_TOKEN
+    telegramConfiguradoServidor: !!process.env.TELEGRAM_BOT_TOKEN,
+    seguimientoActivo: c.seguimiento_activo !== false,
+    seguimientoDiasRecordatorio: c.seguimiento_dias_recordatorio || 2,
+    seguimientoRepetirDias: c.seguimiento_repetir_dias || 2,
+    seguimientoDiasEscalar: c.seguimiento_dias_escalar || 0
   });
 });
 
@@ -777,7 +791,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        aviso_finde_activo=$14, aviso_finde_mensaje=$15,
        aviso_fuera_horario_activo=$16, aviso_fuera_horario_mensaje=$17,
        aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19,
-       telegram_activo=$20, telegram_chat_id=$21
+       telegram_activo=$20, telegram_chat_id=$21,
+       seguimiento_activo=$22, seguimiento_dias_recordatorio=$23, seguimiento_repetir_dias=$24, seguimiento_dias_escalar=$25
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -788,7 +803,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       !!b.avisoFindeActivo, b.avisoFindeMensaje || '',
       !!b.avisoFueraHorarioActivo, b.avisoFueraHorarioMensaje || '',
       b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00',
-      !!b.telegramActivo, b.telegramChatId || ''
+      !!b.telegramActivo, b.telegramChatId || '',
+      !!b.seguimientoActivo, b.seguimientoDiasRecordatorio || 2, b.seguimientoRepetirDias || 2, b.seguimientoDiasEscalar || 0
     ]
   );
   ok(res, { ok: true });
@@ -1216,6 +1232,94 @@ async function notificarTelegramNuevoTicket(ticket, baseUrl) {
   await enviarTelegram(mensaje);
 }
 
+// Envía un mensaje de Telegram a un chat privado específico (no al grupo general)
+async function enviarTelegramA(chatId, texto) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return false;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true })
+    });
+    const data = await r.json();
+    return !!data.ok;
+  } catch (e) { console.error('Error enviando Telegram privado:', e.message); return false; }
+}
+
+// Revisa mensajes privados nuevos que le llegaron al bot, para vincular la cuenta de quien mandó su código
+async function revisarTelegramUpdates() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  try {
+    const c = await getConfig();
+    const offset = (c.telegram_ultimo_update_id || 0) + 1;
+    const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=0`);
+    const data = await r.json();
+    if (!data.ok || !data.result || !data.result.length) return;
+    let maxId = c.telegram_ultimo_update_id || 0;
+    for (const update of data.result) {
+      if (update.update_id > maxId) maxId = update.update_id;
+      const msg = update.message;
+      if (!msg || !msg.text) continue;
+      const codigo = msg.text.trim().toUpperCase();
+      const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [codigo])).rows[0];
+      if (usuario) {
+        await pool.query('update usuarios set telegram_chat_id=$1, telegram_link_code=null where id=$2', [String(msg.chat.id), usuario.id]);
+        await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. De ahora en más vas a recibir acá los recordatorios de tus tickets asignados.`);
+      }
+    }
+    await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
+  } catch (e) { console.error('Error revisando mensajes de Telegram:', e.message); }
+}
+
+// Recorre los tickets asignados sin actividad reciente y manda recordatorios (y escala al grupo si corresponde)
+async function revisarSeguimientoTickets() {
+  try {
+    const c = await getConfig();
+    if (c.seguimiento_activo === false) return;
+    const diasRecordatorio = c.seguimiento_dias_recordatorio || 2;
+    const diasEscalar = c.seguimiento_dias_escalar || 0; // 0 = escalada desactivada
+    const repetirDias = c.seguimiento_repetir_dias || diasRecordatorio;
+
+    const stale = (await pool.query(
+      `select id, numero, asunto, remitente_nombre, asignado_a, actualizado, ultimo_recordatorio, ultima_escalada
+       from tickets
+       where asignado_a is not null and estado not in ('Resuelto','Cerrado')
+         and actualizado <= now() - ($1 || ' days')::interval`,
+      [diasRecordatorio]
+    )).rows;
+    if (!stale.length) return;
+
+    const usuarios = (await pool.query('select id, nombre, telegram_chat_id from usuarios')).rows;
+    const ahora = Date.now();
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
+
+    for (const t of stale) {
+      const diasSinActividad = Math.floor((ahora - new Date(t.actualizado).getTime()) / 86400000);
+      const link = baseUrl ? `${baseUrl}/?ticket=${t.id}` : '';
+      const agente = usuarios.find(u => u.id === t.asignado_a);
+
+      const necesitaRecordatorio = !t.ultimo_recordatorio || Math.floor((ahora - new Date(t.ultimo_recordatorio).getTime()) / 86400000) >= repetirDias;
+      if (necesitaRecordatorio) {
+        if (agente && agente.telegram_chat_id) {
+          const msg = `⏰ <b>Recordatorio de ticket</b>\nEl ticket #${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}" está asignado a vos y no tiene actividad hace ${diasSinActividad} día(s).\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}`;
+          await enviarTelegramA(agente.telegram_chat_id, msg);
+        }
+        await pool.query('update tickets set ultimo_recordatorio=now() where id=$1', [t.id]);
+      }
+
+      if (diasEscalar > 0 && diasSinActividad >= diasEscalar) {
+        const necesitaEscalada = !t.ultima_escalada || Math.floor((ahora - new Date(t.ultima_escalada).getTime()) / 86400000) >= repetirDias;
+        if (necesitaEscalada) {
+          const msg = `🚨 <b>Ticket sin resolver hace ${diasSinActividad} días</b>\n#${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}"\nAsignado a: ${agente ? escapeHtmlSrv(agente.nombre) : 'sin asignar'}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}`;
+          await enviarTelegram(msg);
+          await pool.query('update tickets set ultima_escalada=now() where id=$1', [t.id]);
+        }
+      }
+    }
+  } catch (e) { console.error('Error en seguimiento de tickets:', e.message); }
+}
+
 function escapeHtmlSrv(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -1467,6 +1571,12 @@ async function revisarCasillaReal() {
 // Revisa la casilla apenas arranca el servidor, y después cada 60 segundos
 setTimeout(revisarCasillaReal, 8000);
 setInterval(revisarCasillaReal, 60 * 1000);
+
+setTimeout(revisarTelegramUpdates, 5000);
+setInterval(revisarTelegramUpdates, 60 * 1000);
+
+setTimeout(revisarSeguimientoTickets, 20000);
+setInterval(revisarSeguimientoTickets, 30 * 60 * 1000);
 
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 
