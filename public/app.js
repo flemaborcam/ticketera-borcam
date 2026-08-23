@@ -17,7 +17,7 @@ let state = {
   view: 'login', authView: 'login', ticketId: null,
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
-  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set()
+  pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1
 };
 
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
@@ -168,7 +168,7 @@ function hoyStr() { return fechaLocal(new Date().toISOString()); }
 function filteredTickets() {
   const f = state.filters;
   return cache.tickets
-    .filter(t => f.estado === 'todos' || t.estado === f.estado)
+    .filter(t => f.estado === 'todos' ? t.estado !== 'Cerrado' : t.estado === f.estado)
     .filter(t => f.categoria === 'todas' || t.categoria === f.categoria)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => f.grupo === 'todos' || t.grupoId === f.grupo)
@@ -177,7 +177,9 @@ function filteredTickets() {
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
     .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
 }
-function setFilter(k, v) { state.filters[k] = v; render(); }
+function setFilter(k, v) { state.filters[k] = v; state.paginaTickets = 1; render(); }
+const TICKETS_POR_PAGINA = 20;
+function irAPagina(n) { state.paginaTickets = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
 async function openTicket(id) {
   state.ticketId = id; state.view = 'ticket'; state.replyTab = 'saliente'; state.pendingAttachments = [];
@@ -199,6 +201,17 @@ async function tomarTicket(id) {
   await api('POST', '/api/tickets/' + id + '/tomar');
   await refreshTicket(id);
   render();
+}
+
+async function eliminarTicket(id) {
+  const t = cache.tickets.find(x => x.id === id);
+  if (!confirm(`¿Eliminar el ticket ${t ? t.numero : ''} definitivamente? Esta acción no se puede deshacer y borra toda la conversación.`)) return;
+  try {
+    await api('DELETE', '/api/tickets/' + id);
+    cache.tickets = cache.tickets.filter(x => x.id !== id);
+    showToast('Ticket eliminado.');
+    go('dashboard');
+  } catch (e) { showToast(e.message); }
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
@@ -754,15 +767,29 @@ function renderBulkActionBar() {
 }
 
 function renderDashboard() {
-  const tickets = filteredTickets();
+  const todos = filteredTickets();
+  const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
+  if (state.paginaTickets > totalPaginas) state.paginaTickets = totalPaginas;
+  if (state.paginaTickets < 1) state.paginaTickets = 1;
+  const desde = (state.paginaTickets - 1) * TICKETS_POR_PAGINA;
+  const tickets = todos.slice(desde, desde + TICKETS_POR_PAGINA);
+
   const catOptions = ['todas', ...CAT.CATEGORIAS].map(c => `<option value="${c}" ${state.filters.categoria === c ? 'selected' : ''}>${c === 'todas' ? 'Todas las categorías' : c}</option>`).join('');
   const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filters.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
-  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado' : e}</option>`).join('');
+  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados)' : e}</option>`).join('');
   const grupoOptions = `<option value="todos">Todos los clientes</option>` + cache.clientes.map(g => `<option value="${g.id}" ${state.filters.grupo === g.id ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('');
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
+
+  const paginacion = todos.length > TICKETS_POR_PAGINA ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px;">
+      <button class="btn btn-ghost" ${state.paginaTickets <= 1 ? 'disabled' : ''} onclick="irAPagina(${state.paginaTickets - 1})">&larr; Anterior</button>
+      <span style="font-size:13.5px;color:var(--ink-soft);">Página ${state.paginaTickets} de ${totalPaginas}</span>
+      <button class="btn btn-ghost" ${state.paginaTickets >= totalPaginas ? 'disabled' : ''} onclick="irAPagina(${state.paginaTickets + 1})">Siguiente &rarr;</button>
+    </div>` : '';
+
   return `
-    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${cache.tickets.length} tickets en total · visibles para todo el equipo${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
+    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
       <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button></div>
     <div class="filters">
       <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>
@@ -776,7 +803,8 @@ function renderDashboard() {
       <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filters.search)}" onkeydown="if(event.key==='Enter'){ setFilter('search', this.value); }" onsearch="setFilter('search', this.value)">
     </div>
     ${state.selectedTickets.size ? renderBulkActionBar() : ''}
-    ${list}`;
+    ${list}
+    ${paginacion}`;
 }
 
 /* ---------------- Ticket detail ---------------- */
@@ -850,6 +878,7 @@ function renderTicket(id) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
           ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
+          <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
         </div>
       </div>
       <div class="meta-grid">
