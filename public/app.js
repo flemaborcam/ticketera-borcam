@@ -288,6 +288,8 @@ async function submitReply(ev, ticketId) {
         documentoLegalId: fd.get('documentoLegalId') || null
       });
       state.pendingAttachments = [];
+    } else if (state.replyTab === 'nota') {
+      await api('POST', `/api/tickets/${ticketId}/mensajes`, { tipo: 'nota', cuerpo });
     } else {
       await api('POST', `/api/tickets/${ticketId}/mensajes`, { tipo: 'entrante', cuerpo });
     }
@@ -1034,6 +1036,10 @@ function limpiarCuerpo(texto) {
 }
 function renderThreadHtml(t) {
   return t.mensajes.map(m => {
+    if (m.tipo === 'nota') {
+      return `<div class="msg msg-nota"><div class="msg-head"><span class="msg-autor">🔒 ${escapeHtml(m.autor)} <span class="auto-badge" style="background:var(--stamp-amber-tint);color:var(--stamp-amber);">Nota interna</span></span><span>${fmtDateTime(m.fecha)}</span></div>
+        <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div></div>`;
+    }
     if (m.tipo === 'sistema') {
       return `<div class="msg msg-sistema"><div class="msg-head"><span class="msg-autor">&#9993; ${escapeHtml(m.autor)}</span><span>${fmtDateTime(m.fecha)}</span></div>
         <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>${m.destinatarios.length ? `<div class="msg-destinatarios">Enviado a: ${m.destinatarios.map(escapeHtml).join(', ')}</div>` : ''}</div>`;
@@ -1100,18 +1106,20 @@ function renderTicket(id) {
       <div class="reply-tabs">
         <button class="reply-tab ${state.replyTab === 'saliente' ? 'active' : ''}" onclick="setReplyTab('saliente')">Responder como agente</button>
         <button class="reply-tab ${state.replyTab === 'entrante' ? 'active' : ''}" onclick="setReplyTab('entrante')">Simular respuesta del solicitante</button>
+        <button class="reply-tab ${state.replyTab === 'nota' ? 'active' : ''}" onclick="setReplyTab('nota')">🔒 Nota interna</button>
       </div>
       <form onsubmit="return submitReply(event, '${t.id}')">
         ${state.replyTab === 'saliente' && cache.respuestas.length ? `
         <div class="field"><label>Respuesta predefinida</label><select onchange="insertCanned(this)"><option value="">Elegir una respuesta…</option>${cache.respuestas.map(r => `<option value="${r.id}">${escapeHtml(r.titulo)}</option>`).join('')}</select></div>` : ''}
-        <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="${state.replyTab === 'saliente' ? 'Escribí tu respuesta…' : 'Escribí el correo que llegaría del solicitante…'}" required></textarea></div>
+        ${state.replyTab === 'nota' ? `<div class="hint-text" style="margin-bottom:10px;">Esta nota es solo para uso interno del equipo. El cliente nunca la ve, ni en el portal ni por correo.</div>` : ''}
+        <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="${state.replyTab === 'saliente' ? 'Escribí tu respuesta…' : state.replyTab === 'nota' ? 'Escribí la nota interna…' : 'Escribí el correo que llegaría del solicitante…'}" required></textarea></div>
         ${state.replyTab === 'saliente' && u.firma_html ? `<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" name="incluirFirma" checked> Incluir mi firma</label>` : ''}
         ${state.replyTab === 'saliente' ? `
         <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Opcional, separá con coma.</div></div>
         <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
         ${cache.documentosLegales.filter(d => d.activo).length ? `
         <div class="field"><label>Pedir aceptación de un documento (opcional)</label><select name="documentoLegalId"><option value="">Ninguno</option>${cache.documentosLegales.filter(d => d.activo).map(d => `<option value="${d.id}">${escapeHtml(d.nombre)}</option>`).join('')}</select><div class="hint-text">Se le agrega al cliente un enlace para leer y aceptar ese documento, con registro de fecha, hora e IP.</div></div>` : ''}` : ''}
-        <div class="reply-actions"><button type="submit" class="btn btn-primary">${state.replyTab === 'saliente' ? 'Enviar respuesta' : 'Simular correo entrante'}</button></div>
+        <div class="reply-actions"><button type="submit" class="btn btn-primary">${state.replyTab === 'saliente' ? 'Enviar respuesta' : state.replyTab === 'nota' ? 'Guardar nota interna' : 'Simular correo entrante'}</button></div>
       </form>
     </div>`;
 }
