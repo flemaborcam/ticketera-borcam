@@ -185,7 +185,7 @@ function filteredTickets() {
   const f = state.filters;
   return cache.tickets
     .filter(t => !esTicketDeReserva(t))
-    .filter(t => f.estado === 'todos' ? t.estado !== 'Cerrado' : t.estado === f.estado)
+    .filter(t => f.estado === 'todos' ? (t.estado !== 'Cerrado' && t.estado !== 'Resuelto') : t.estado === f.estado)
     .filter(t => f.categoria === 'todas' || t.categoria === f.categoria)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => f.grupo === 'todos' || t.grupoId === f.grupo)
@@ -891,7 +891,7 @@ function filteredReservas() {
   const f = state.filtersReservas;
   return cache.tickets
     .filter(esTicketDeReserva)
-    .filter(t => f.estado === 'todos' ? t.estado !== 'Cerrado' : t.estado === f.estado)
+    .filter(t => f.estado === 'todos' ? (t.estado !== 'Cerrado' && t.estado !== 'Resuelto') : t.estado === f.estado)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
     .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
@@ -907,7 +907,7 @@ function renderReservas() {
   const desde = (state.paginaReservas - 1) * TICKETS_POR_PAGINA;
   const tickets = todos.slice(desde, desde + TICKETS_POR_PAGINA);
 
-  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filtersReservas.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados)' : e}</option>`).join('');
+  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filtersReservas.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filtersReservas.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, false)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva".</div></div>`;
 
@@ -939,7 +939,7 @@ function renderDashboard() {
 
   const catOptions = ['todas', ...CAT.CATEGORIAS].map(c => `<option value="${c}" ${state.filters.categoria === c ? 'selected' : ''}>${c === 'todas' ? 'Todas las categorías' : c}</option>`).join('');
   const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filters.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
-  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados)' : e}</option>`).join('');
+  const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const grupoOptions = `<option value="todos">Todos los clientes</option>` + cache.clientes.map(g => `<option value="${g.id}" ${state.filters.grupo === g.id ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('');
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
