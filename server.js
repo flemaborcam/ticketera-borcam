@@ -680,6 +680,16 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
   if (!t) return bad(res, 'No encontrado', 404);
 
+  if (tipo === 'nota') {
+    const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'nota',$2,$3)`,
+      [id, `${staff.nombre} ${staff.apellido}`, cuerpo]
+    );
+    await pool.query('update tickets set actualizado=now() where id=$1', [id]);
+    return ok(res, await ticketConMensajes(id));
+  }
+
   if (tipo === 'entrante') {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, t.remitente_nombre, cuerpo]);
     await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
@@ -1574,6 +1584,7 @@ app.get('/api/portal/tickets', requireCliente, async (req, res) => {
 app.get('/api/portal/tickets/:id', requireCliente, async (req, res) => {
   const t = await ticketConMensajes(req.params.id);
   if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
+  t.mensajes = t.mensajes.filter(m => m.tipo !== 'nota');
   ok(res, t);
 });
 
