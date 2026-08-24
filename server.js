@@ -442,24 +442,22 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
 
 async function generarRespaldoJSON() {
   const [usuarios, clientes, tickets, mensajes, respuestas, automatizaciones, pasos, configRow, citas, documentosLegales, aceptaciones] = await Promise.all([
-    pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin,creado from usuarios'),
-    pool.query('select id,nombre,direccion,telefono,correo,rol,creado from clientes'),
+    pool.query('select * from usuarios'),
+    pool.query('select * from clientes'),
     pool.query('select * from tickets'),
     pool.query('select * from mensajes'),
     pool.query('select * from respuestas_predefinidas'),
     pool.query('select * from automatizaciones'),
     pool.query('select * from automatizacion_pasos'),
-    pool.query(`select casilla_email, casilla_nombre, correo_activo, imap_host, imap_port, imap_usuario,
-                       smtp_host, smtp_port, smtp_usuario, aviso_finde_mensaje, aviso_fuera_horario_mensaje,
-                       telegram_chat_id, calendario_config, calendario_edificios
-                from configuracion where id=1`),
+    pool.query('select * from configuracion where id=1'),
     pool.query('select * from citas'),
     pool.query('select * from documentos_legales'),
     pool.query('select * from aceptaciones_legales')
   ]);
   return {
+    version: 1,
     generado: new Date().toISOString(),
-    nota: 'Este respaldo no incluye los archivos adjuntos (fotos/videos) en sí, solo su referencia. Tampoco incluye contraseñas (quedan excluidas por seguridad).',
+    nota: 'Respaldo completo (incluye contraseñas cifradas/hasheadas, necesarias para poder restaurar). No incluye los archivos adjuntos en sí (fotos/videos), solo su referencia. Guardalo en un lugar privado.',
     usuarios: usuarios.rows, clientes: clientes.rows, tickets: tickets.rows, mensajes: mensajes.rows,
     respuestas_predefinidas: respuestas.rows, automatizaciones: automatizaciones.rows, automatizacion_pasos: pasos.rows,
     configuracion: configRow.rows[0], citas: citas.rows, documentos_legales: documentosLegales.rows, aceptaciones_legales: aceptaciones.rows
@@ -472,6 +470,132 @@ app.get('/api/respaldo/descargar', requireStaff, requireSuperadmin, async (req, 
   res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
   res.setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(data, null, 2));
+});
+
+// Vuelca un respaldo completo dentro de la base de datos actual (borra todo lo existente primero)
+async function restaurarDesdeRespaldo(data) {
+  if (!data || !Array.isArray(data.tickets) || !Array.isArray(data.usuarios)) {
+    throw new Error('El archivo no tiene el formato esperado de un respaldo de este sistema.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Se borra todo en orden (hijos antes que padres) para no chocar con las referencias
+    await client.query('delete from aceptaciones_legales');
+    await client.query('delete from documentos_legales');
+    await client.query('delete from citas');
+    await client.query('delete from mensajes');
+    await client.query('delete from tickets');
+    await client.query('delete from automatizacion_pasos');
+    await client.query('delete from automatizaciones');
+    await client.query('delete from respuestas_predefinidas');
+    await client.query('delete from clientes');
+    await client.query('delete from usuarios');
+
+    for (const u of data.usuarios || []) {
+      await client.query(
+        `insert into usuarios (id,nombre,apellido,telefono,email,password_hash,cargo,firma_html,es_superadmin,telegram_chat_id,telegram_link_code,creado)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [u.id, u.nombre, u.apellido, u.telefono, u.email, u.password_hash, u.cargo, u.firma_html || '', !!u.es_superadmin, u.telegram_chat_id, u.telegram_link_code, u.creado]
+      );
+    }
+    for (const c of data.clientes || []) {
+      await client.query(
+        `insert into clientes (id,nombre,direccion,telefono,correo,rol,portal_password_hash,creado)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [c.id, c.nombre, c.direccion, c.telefono, c.correo, c.rol, c.portal_password_hash, c.creado]
+      );
+    }
+    for (const r of data.respuestas_predefinidas || []) {
+      await client.query('insert into respuestas_predefinidas (id,titulo,cuerpo) values ($1,$2,$3)', [r.id, r.titulo, r.cuerpo]);
+    }
+    for (const a of data.automatizaciones || []) {
+      await client.query('insert into automatizaciones (id,nombre,activo) values ($1,$2,$3)', [a.id, a.nombre, a.activo]);
+    }
+    for (const p of data.automatizacion_pasos || []) {
+      await client.query(
+        `insert into automatizacion_pasos (id,automatizacion_id,orden,match_any,palabras,respuesta_id,accion_estado,solo_nuevo_ticket)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [p.id, p.automatizacion_id, p.orden, p.match_any, p.palabras || [], p.respuesta_id, p.accion_estado, !!p.solo_nuevo_ticket]
+      );
+    }
+    for (const t of data.tickets || []) {
+      await client.query(
+        `insert into tickets (id,numero,asunto,categoria,prioridad,estado,remitente_nombre,remitente_email,asignado_a,cliente_id,automatizacion_activa_id,automatizacion_activa_paso,creado,actualizado,ultimo_recordatorio,ultima_escalada)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [t.id, t.numero, t.asunto, t.categoria, t.prioridad, t.estado, t.remitente_nombre, t.remitente_email, t.asignado_a, t.cliente_id, t.automatizacion_activa_id, t.automatizacion_activa_paso, t.creado, t.actualizado, t.ultimo_recordatorio, t.ultima_escalada]
+      );
+    }
+    for (const m of data.mensajes || []) {
+      await client.query(
+        `insert into mensajes (id,ticket_id,tipo,autor,cuerpo,cc,adjuntos,firma_html,destinatarios,automatico,fecha,cuerpo_html)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [m.id, m.ticket_id, m.tipo, m.autor, m.cuerpo, m.cc || [], JSON.stringify(m.adjuntos || []), m.firma_html || '', m.destinatarios || [], !!m.automatico, m.fecha, m.cuerpo_html]
+      );
+    }
+    for (const c of data.citas || []) {
+      await client.query(
+        `insert into citas (id,nombre_cliente,correo_cliente,telefono,tiene_internet,edificio,numero_unidad,fecha_hora,duracion_minutos,estado,google_event_id,token_cancelacion,creado)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [c.id, c.nombre_cliente, c.correo_cliente, c.telefono, c.tiene_internet, c.edificio, c.numero_unidad, c.fecha_hora, c.duracion_minutos, c.estado, c.google_event_id, c.token_cancelacion, c.creado]
+      );
+    }
+    for (const d of data.documentos_legales || []) {
+      await client.query('insert into documentos_legales (id,nombre,texto,activo,creado) values ($1,$2,$3,$4,$5)', [d.id, d.nombre, d.texto, d.activo, d.creado]);
+    }
+    for (const a of data.aceptaciones_legales || []) {
+      await client.query(
+        `insert into aceptaciones_legales (id,ticket_id,mensaje_id,documento_nombre,documento_texto,token,estado,nombre_solicitante,documento_identidad,empresa_institucion,motivo_solicitud,descripcion_material,medio_entrega,ip_aceptante,fecha_aceptacion,creado)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [a.id, a.ticket_id, a.mensaje_id, a.documento_nombre, a.documento_texto, a.token, a.estado, a.nombre_solicitante, a.documento_identidad, a.empresa_institucion, a.motivo_solicitud, a.descripcion_material, a.medio_entrega, a.ip_aceptante, a.fecha_aceptacion, a.creado]
+      );
+    }
+    if (data.configuracion) {
+      const c = data.configuracion;
+      await client.query(
+        `update configuracion set casilla_email=$1,casilla_nombre=$2,correo_activo=$3,imap_host=$4,imap_port=$5,imap_usuario=$6,imap_pass_enc=$7,
+           smtp_host=$8,smtp_port=$9,smtp_usuario=$10,smtp_pass_enc=$11,aviso_finde_activo=$12,aviso_finde_mensaje=$13,
+           aviso_fuera_horario_activo=$14,aviso_fuera_horario_mensaje=$15,aviso_fuera_horario_inicio=$16,aviso_fuera_horario_fin=$17,
+           telegram_activo=$18,telegram_chat_id=$19,telegram_ultimo_update_id=$20,calendario_config=$21,calendario_edificios=$22,
+           seguimiento_activo=$23,seguimiento_dias_recordatorio=$24,seguimiento_repetir_dias=$25,seguimiento_dias_escalar=$26,
+           respaldo_activo=$27,respaldo_correo_destino=$28,respaldo_frecuencia_dias=$29,respaldo_ultimo=$30,imap_ultimo_uid=$31
+         where id=1`,
+        [
+          c.casilla_email, c.casilla_nombre, c.correo_activo, c.imap_host, c.imap_port, c.imap_usuario, c.imap_pass_enc,
+          c.smtp_host, c.smtp_port, c.smtp_usuario, c.smtp_pass_enc, c.aviso_finde_activo, c.aviso_finde_mensaje,
+          c.aviso_fuera_horario_activo, c.aviso_fuera_horario_mensaje, c.aviso_fuera_horario_inicio, c.aviso_fuera_horario_fin,
+          c.telegram_activo, c.telegram_chat_id, c.telegram_ultimo_update_id, JSON.stringify(c.calendario_config || {}), c.calendario_edificios || [],
+          c.seguimiento_activo, c.seguimiento_dias_recordatorio, c.seguimiento_repetir_dias, c.seguimiento_dias_escalar,
+          c.respaldo_activo, c.respaldo_correo_destino, c.respaldo_frecuencia_dias, c.respaldo_ultimo, c.imap_ultimo_uid
+        ]
+      );
+    }
+
+    // Recalcula el contador de tickets por año, para que el próximo número nuevo no choque con los restaurados
+    const maxPorAnio = {};
+    for (const t of data.tickets || []) {
+      const m = (t.numero || '').match(/^T-(\d{4})-(\d+)$/);
+      if (m) { const anio = Number(m[1]), num = Number(m[2]); maxPorAnio[anio] = Math.max(maxPorAnio[anio] || 0, num); }
+    }
+    for (const anio of Object.keys(maxPorAnio)) {
+      await client.query('insert into contadores (anio, valor) values ($1,$2) on conflict (anio) do update set valor=$2', [Number(anio), maxPorAnio[anio]]);
+    }
+
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+app.post('/api/respaldo/restaurar', requireStaff, requireSuperadmin, async (req, res) => {
+  try {
+    await restaurarDesdeRespaldo(req.body);
+    ok(res, { ok: true });
+  } catch (e) { bad(res, 'Error restaurando el respaldo: ' + e.message); }
 });
 
 async function ejecutarRespaldoProgramado() {
@@ -488,7 +612,7 @@ async function ejecutarRespaldoProgramado() {
     const enviado = await enviarEmailReal({
       to: c.respaldo_correo_destino,
       subject: `Respaldo automático — Sistema de Tickets (${new Date().toLocaleDateString('es-UY')})`,
-      text: 'Adjunto el respaldo completo de los datos del sistema de tickets (tickets, conversaciones, clientes, configuración, etc.). Guardalo en un lugar seguro. No incluye los archivos adjuntos (fotos/videos) en sí, ni contraseñas.',
+      text: 'Adjunto el respaldo completo de los datos del sistema de tickets (tickets, conversaciones, clientes, configuración, usuarios, etc.), listo para restaurar si hiciera falta. Guardalo en un lugar privado y seguro, ya que incluye contraseñas cifradas/hasheadas.',
       attachments: [{ filename: nombreArchivo, content: Buffer.from(json).toString('base64'), encoding: 'base64' }],
       esAutomatico: true
     });
