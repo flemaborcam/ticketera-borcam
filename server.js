@@ -974,7 +974,9 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     seguimientoRepetirDias: c.seguimiento_repetir_dias || 2,
     seguimientoDiasEscalar: c.seguimiento_dias_escalar || 0,
     respaldoActivo: !!c.respaldo_activo, respaldoCorreoDestino: c.respaldo_correo_destino || '',
-    respaldoFrecuenciaDias: c.respaldo_frecuencia_dias || 7, respaldoUltimo: c.respaldo_ultimo
+    respaldoFrecuenciaDias: c.respaldo_frecuencia_dias || 7, respaldoUltimo: c.respaldo_ultimo,
+    recordatorioSinAsignarActivo: c.recordatorio_sin_asignar_activo !== false,
+    recordatorioSinAsignarHora: c.recordatorio_sin_asignar_hora || '18:00'
   });
 });
 
@@ -992,7 +994,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19,
        telegram_activo=$20, telegram_chat_id=$21,
        seguimiento_activo=$22, seguimiento_dias_recordatorio=$23, seguimiento_repetir_dias=$24, seguimiento_dias_escalar=$25,
-       respaldo_activo=$26, respaldo_correo_destino=$27, respaldo_frecuencia_dias=$28
+       respaldo_activo=$26, respaldo_correo_destino=$27, respaldo_frecuencia_dias=$28,
+       recordatorio_sin_asignar_activo=$29, recordatorio_sin_asignar_hora=$30
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -1005,7 +1008,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00',
       !!b.telegramActivo, b.telegramChatId || '',
       !!b.seguimientoActivo, b.seguimientoDiasRecordatorio || 2, b.seguimientoRepetirDias || 2, b.seguimientoDiasEscalar || 0,
-      !!b.respaldoActivo, b.respaldoCorreoDestino || '', b.respaldoFrecuenciaDias || 7
+      !!b.respaldoActivo, b.respaldoCorreoDestino || '', b.respaldoFrecuenciaDias || 7,
+      !!b.recordatorioSinAsignarActivo, b.recordatorioSinAsignarHora || '18:00'
     ]
   );
   ok(res, { ok: true });
@@ -1521,6 +1525,41 @@ async function revisarSeguimientoTickets() {
   } catch (e) { console.error('Error en seguimiento de tickets:', e.message); }
 }
 
+// Después de la hora configurada, manda al grupo de Telegram un mensaje por cada ticket sin asignar.
+// Se repite todos los días, pero como mucho una vez por día.
+async function revisarRecordatorioDiarioSinAsignar() {
+  try {
+    const c = await getConfig();
+    if (c.recordatorio_sin_asignar_activo === false) return;
+    if (!c.telegram_activo || !c.telegram_chat_id) return;
+
+    const horaConfigurada = c.recordatorio_sin_asignar_hora || '18:00';
+    const horaActual = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+    if (horaActual < horaConfigurada) return;
+
+    const hoyStr = fechaMontevideoStr(new Date());
+    const ultimoStr = c.recordatorio_sin_asignar_ultimo ? new Date(c.recordatorio_sin_asignar_ultimo).toISOString().slice(0, 10) : null;
+    if (ultimoStr === hoyStr) return;
+
+    const candidatos = (await pool.query(
+      `select id, numero, asunto, remitente_nombre from tickets
+       where asignado_a is null and estado not in ('Resuelto','Cerrado')
+       order by creado asc`
+    )).rows.filter(t => !(t.asunto || '').toLowerCase().includes('reserva'));
+
+    if (candidatos.length) {
+      const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
+      await enviarTelegram(`📋 <b>Recordatorio de fin del día</b>\nHay ${candidatos.length} ticket(s) sin asignar:`);
+      for (const t of candidatos) {
+        const link = baseUrl ? `${baseUrl}/?ticket=${t.id}` : '';
+        const msg = `🎫 <b>Sin asignar</b> #${escapeHtmlSrv(t.numero)}\n${escapeHtmlSrv(t.asunto)}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir y tomarlo</a>` : ''}`;
+        await enviarTelegram(msg);
+      }
+    }
+    await pool.query('update configuracion set recordatorio_sin_asignar_ultimo=$1 where id=1', [hoyStr]);
+  } catch (e) { console.error('Error en recordatorio diario de sin asignar:', e.message); }
+}
+
 function escapeHtmlSrv(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -1784,6 +1823,9 @@ setInterval(revisarSeguimientoTickets, 30 * 60 * 1000);
 
 setTimeout(ejecutarRespaldoProgramado, 40000);
 setInterval(ejecutarRespaldoProgramado, 6 * 60 * 60 * 1000);
+
+setTimeout(revisarRecordatorioDiarioSinAsignar, 25000);
+setInterval(revisarRecordatorioDiarioSinAsignar, 15 * 60 * 1000);
 
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 
