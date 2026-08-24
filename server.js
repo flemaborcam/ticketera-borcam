@@ -414,6 +414,7 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`,
     [ticketId, remitenteNombre, cuerpo]
   );
+  await pool.query('update tickets set necesita_atencion=true where id=$1', [ticketId]);
   const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
   await aplicarAvisoFinDeSemana(ticketId);
   await aplicarAvisoFueraHorario(ticketId);
@@ -681,6 +682,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
 
   if (tipo === 'entrante') {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, t.remitente_nombre, cuerpo]);
+    await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
     if (t.estado === 'Resuelto' || t.estado === 'Cerrado') await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
     await aplicarAutomatizacionSiCorresponde(id, cuerpo);
     await aplicarAvisoFinDeSemana(id);
@@ -732,6 +734,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
       );
     }
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
+    await pool.query('update tickets set necesita_atencion=false where id=$1', [id]);
 
     const attachmentsForMail = (adjuntos || []).map(a => {
       const base64 = (a.dataUrl || '').split(',')[1] || '';
@@ -1543,6 +1546,7 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
   const cliente = (await pool.query('select nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
   await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, cliente.nombre, cuerpo]);
+  await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
   if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(t.estado)) {
     await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
   }
@@ -1696,6 +1700,7 @@ async function procesarCorreoEntrante(parsed) {
       [ticket.id, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
     await corregirReferenciasCid(ticket.id, rm.rows[0].id, adjuntos);
+    await pool.query('update tickets set necesita_atencion=true where id=$1', [ticket.id]);
     if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(ticket.estado)) {
       await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
     }
@@ -1717,6 +1722,7 @@ async function procesarCorreoEntrante(parsed) {
       [ticketId, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
     );
     await corregirReferenciasCid(ticketId, rm.rows[0].id, adjuntos);
+    await pool.query('update tickets set necesita_atencion=true where id=$1', [ticketId]);
     await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
     await aplicarAvisoFinDeSemana(ticketId);
     await aplicarAvisoFueraHorario(ticketId);
