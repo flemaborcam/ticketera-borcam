@@ -184,6 +184,7 @@ function hoyStr() { return fechaLocal(new Date().toISOString()); }
 function filteredTickets() {
   const f = state.filters;
   return cache.tickets
+    .filter(t => !esTicketDeReserva(t))
     .filter(t => f.estado === 'todos' ? t.estado !== 'Cerrado' : t.estado === f.estado)
     .filter(t => f.categoria === 'todas' || t.categoria === f.categoria)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
