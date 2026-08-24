@@ -793,6 +793,22 @@ async function descargarRespaldoAhora() {
   } catch (e) { showToast(e.message); }
 }
 
+async function restaurarRespaldo() {
+  const input = document.getElementById('input-restaurar');
+  const file = input.files && input.files[0];
+  if (!file) { showToast('Elegí primero el archivo de respaldo.'); return; }
+  const escrito = prompt('Esto BORRA todos los datos actuales del sistema y los reemplaza por los del archivo elegido. No se puede deshacer.\n\nEscribí RESTAURAR para confirmar:');
+  if (escrito !== 'RESTAURAR') { if (escrito !== null) showToast('No se restauró nada: el texto no coincidía.'); return; }
+  try {
+    const texto = await file.text();
+    const data = JSON.parse(texto);
+    showToast('Restaurando… no cierres esta ventana.');
+    await api('POST', '/api/respaldo/restaurar', data);
+    showToast('¡Restaurado con éxito! Recargando…');
+    setTimeout(() => window.location.reload(), 1500);
+  } catch (e) { showToast('Error al restaurar: ' + e.message); }
+}
+
 /* ---------------- Portal de cliente ---------------- */
 
 async function loadClienteTickets() {
@@ -1439,6 +1455,12 @@ function renderConfiguracion() {
       ${currentUser().es_superadmin ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
         <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo ahora</button>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <label style="font-weight:600;font-size:13px;color:var(--stamp-red);display:block;margin-bottom:6px;">Restaurar desde un archivo de respaldo</label>
+        <div class="hint-text" style="margin-bottom:8px;">Borra TODOS los datos actuales y los reemplaza por los del archivo. Usar solo en una recuperación real.</div>
+        <input type="file" id="input-restaurar" accept="application/json">
+        <button type="button" class="btn btn-danger btn-block" style="margin-top:8px;" onclick="restaurarRespaldo()">Restaurar este archivo</button>
       </div>` : ''}
     </div>
     ${currentUser().es_superadmin ? `
