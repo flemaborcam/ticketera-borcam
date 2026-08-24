@@ -474,8 +474,20 @@ app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
 });
 
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
-  await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, req.params.id]);
-  ok(res, await ticketConMensajes(req.params.id));
+  const id = req.params.id;
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, id]);
+
+  const t = (await pool.query('select numero, asunto, remitente_email from tickets where id=$1', [id])).rows[0];
+  const ccs = await collectTicketCCs(id);
+  const mensaje = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+    [id, 'Notificación automática', mensaje]
+  );
+  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: mensaje, esAutomatico: true });
+
+  ok(res, await ticketConMensajes(id));
 });
 
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
