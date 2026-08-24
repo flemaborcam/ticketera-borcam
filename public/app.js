@@ -719,7 +719,10 @@ async function submitConfiguracion(ev) {
     seguimientoActivo: fd.get('seguimientoActivo') === 'on',
     seguimientoDiasRecordatorio: Number(fd.get('seguimientoDiasRecordatorio')) || 2,
     seguimientoRepetirDias: Number(fd.get('seguimientoRepetirDias')) || 2,
-    seguimientoDiasEscalar: Number(fd.get('seguimientoDiasEscalar')) || 0
+    seguimientoDiasEscalar: Number(fd.get('seguimientoDiasEscalar')) || 0,
+    respaldoActivo: fd.get('respaldoActivo') === 'on',
+    respaldoCorreoDestino: fd.get('respaldoCorreoDestino').trim(),
+    respaldoFrecuenciaDias: Number(fd.get('respaldoFrecuenciaDias')) || 7
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -773,6 +776,20 @@ async function saltarAlFinalImap() {
   try {
     await api('POST', '/api/configuracion/saltar-al-final-imap');
     showToast('Listo. A partir de ahora solo se procesan los correos nuevos que lleguen.');
+  } catch (e) { showToast(e.message); }
+}
+
+async function descargarRespaldoAhora() {
+  try {
+    const r = await fetch('/api/respaldo/descargar', { credentials: 'same-origin' });
+    if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(data.error || 'No se pudo generar el respaldo.'); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Respaldo descargado.');
   } catch (e) { showToast(e.message); }
 }
 
@@ -1398,7 +1415,18 @@ function renderConfiguracion() {
         </div>
         <div class="field"><label>Escalar al grupo de Telegram a los (días) — 0 para desactivar</label><input type="number" name="seguimientoDiasEscalar" min="0" value="${c.seguimientoDiasEscalar || 0}"></div>
 
-        <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Respaldo automático del sistema</div>
+        <div class="hint-text" style="margin-bottom:10px;">Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración). No incluye los archivos adjuntos en sí ni contraseñas.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="respaldoActivo" ${c.respaldoActivo ? 'checked' : ''}> Enviarme un respaldo automático por correo
+        </label>
+        <div class="field-row">
+          <div class="field"><label>Correo de destino</label><input name="respaldoCorreoDestino" type="email" value="${escapeHtml(c.respaldoCorreoDestino || '')}" placeholder="tu-correo-personal@gmail.com"></div>
+          <div class="field"><label>Cada cuántos días</label><input type="number" name="respaldoFrecuenciaDias" min="1" value="${c.respaldoFrecuenciaDias || 7}"></div>
+        </div>
+        ${c.respaldoUltimo ? `<div class="hint-text" style="margin-top:-6px;">Último respaldo enviado: ${new Date(c.respaldoUltimo).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short' })}</div>` : ''}
+
+        <button type="submit" class="btn btn-primary btn-block" style="margin-top:12px;">Guardar configuración</button>
       </form>
       <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
         <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión de correo</button>
@@ -1408,6 +1436,10 @@ function renderConfiguracion() {
         <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
         <div id="resultado-telegram" style="margin-top:8px;"></div>
       </div>
+      ${currentUser().es_superadmin ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo ahora</button>
+      </div>` : ''}
     </div>
     ${currentUser().es_superadmin ? `
     <div class="card card-narrow" style="max-width:560px;margin-top:18px;border-color:var(--stamp-red-tint);">
