@@ -723,7 +723,9 @@ async function submitConfiguracion(ev) {
     seguimientoDiasEscalar: Number(fd.get('seguimientoDiasEscalar')) || 0,
     respaldoActivo: fd.get('respaldoActivo') === 'on',
     respaldoCorreoDestino: fd.get('respaldoCorreoDestino').trim(),
-    respaldoFrecuenciaDias: Number(fd.get('respaldoFrecuenciaDias')) || 7
+    respaldoFrecuenciaDias: Number(fd.get('respaldoFrecuenciaDias')) || 7,
+    recordatorioSinAsignarActivo: fd.get('recordatorioSinAsignarActivo') === 'on',
+    recordatorioSinAsignarHora: fd.get('recordatorioSinAsignarHora') || '18:00'
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -1422,6 +1424,13 @@ function renderConfiguracion() {
           <input type="checkbox" name="telegramActivo" ${c.telegramActivo ? 'checked' : ''}> Activar notificaciones en Telegram
         </label>
         <div class="field"><label>Chat ID del grupo</label><input name="telegramChatId" value="${escapeHtml(c.telegramChatId || '')}" placeholder="-1001234567890"></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Recordatorio diario de tickets sin asignar</div>
+        <div class="hint-text" style="margin-bottom:10px;">Todos los días, después de esta hora, se manda al grupo un mensaje aparte por cada ticket sin asignar (excepto los de reserva), para que cualquiera lo pueda tomar. Como mucho se manda una vez por día.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="recordatorioSinAsignarActivo" ${c.recordatorioSinAsignarActivo !== false ? 'checked' : ''}> Activar recordatorio diario
+        </label>
+        <div class="field"><label>Mandarlo después de las</label><input type="time" name="recordatorioSinAsignarHora" value="${c.recordatorioSinAsignarHora || '18:00'}" style="max-width:140px;"></div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Seguimiento de tickets asignados</div>
         <div class="hint-text" style="margin-bottom:10px;">Si un ticket asignado a alguien lleva varios días sin actividad, se le avisa por Telegram al técnico (necesita vincular su Telegram desde "Mi perfil"). Si sigue sin resolverse, se puede escalar al grupo general.</div>
