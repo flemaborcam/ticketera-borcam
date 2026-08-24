@@ -438,6 +438,64 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
 });
 
 // Borra absolutamente todos los tickets del sistema. Solo un Superadmin puede hacerlo.
+/* ---------------- Respaldo del sistema ---------------- */
+
+async function generarRespaldoJSON() {
+  const [usuarios, clientes, tickets, mensajes, respuestas, automatizaciones, pasos, configRow, citas, documentosLegales, aceptaciones] = await Promise.all([
+    pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin,creado from usuarios'),
+    pool.query('select id,nombre,direccion,telefono,correo,rol,creado from clientes'),
+    pool.query('select * from tickets'),
+    pool.query('select * from mensajes'),
+    pool.query('select * from respuestas_predefinidas'),
+    pool.query('select * from automatizaciones'),
+    pool.query('select * from automatizacion_pasos'),
+    pool.query(`select casilla_email, casilla_nombre, correo_activo, imap_host, imap_port, imap_usuario,
+                       smtp_host, smtp_port, smtp_usuario, aviso_finde_mensaje, aviso_fuera_horario_mensaje,
+                       telegram_chat_id, calendario_config, calendario_edificios
+                from configuracion where id=1`),
+    pool.query('select * from citas'),
+    pool.query('select * from documentos_legales'),
+    pool.query('select * from aceptaciones_legales')
+  ]);
+  return {
+    generado: new Date().toISOString(),
+    nota: 'Este respaldo no incluye los archivos adjuntos (fotos/videos) en sí, solo su referencia. Tampoco incluye contraseñas (quedan excluidas por seguridad).',
+    usuarios: usuarios.rows, clientes: clientes.rows, tickets: tickets.rows, mensajes: mensajes.rows,
+    respuestas_predefinidas: respuestas.rows, automatizaciones: automatizaciones.rows, automatizacion_pasos: pasos.rows,
+    configuracion: configRow.rows[0], citas: citas.rows, documentos_legales: documentosLegales.rows, aceptaciones_legales: aceptaciones.rows
+  };
+}
+
+app.get('/api/respaldo/descargar', requireStaff, requireSuperadmin, async (req, res) => {
+  const data = await generarRespaldoJSON();
+  const nombre = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
+  res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(data, null, 2));
+});
+
+async function ejecutarRespaldoProgramado() {
+  try {
+    const c = await getConfig();
+    if (!c.respaldo_activo || !c.respaldo_correo_destino) return;
+    const frecuencia = c.respaldo_frecuencia_dias || 7;
+    const ultimo = c.respaldo_ultimo ? new Date(c.respaldo_ultimo).getTime() : 0;
+    if (Date.now() - ultimo < frecuencia * 24 * 60 * 60 * 1000) return;
+
+    const data = await generarRespaldoJSON();
+    const json = JSON.stringify(data, null, 2);
+    const nombreArchivo = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
+    const enviado = await enviarEmailReal({
+      to: c.respaldo_correo_destino,
+      subject: `Respaldo automático — Sistema de Tickets (${new Date().toLocaleDateString('es-UY')})`,
+      text: 'Adjunto el respaldo completo de los datos del sistema de tickets (tickets, conversaciones, clientes, configuración, etc.). Guardalo en un lugar seguro. No incluye los archivos adjuntos (fotos/videos) en sí, ni contraseñas.',
+      attachments: [{ filename: nombreArchivo, content: Buffer.from(json).toString('base64'), encoding: 'base64' }],
+      esAutomatico: true
+    });
+    if (enviado) await pool.query('update configuracion set respaldo_ultimo=now() where id=1');
+  } catch (e) { console.error('Error generando respaldo automático:', e.message); }
+}
+
 app.delete('/api/tickets', requireStaff, requireSuperadmin, async (req, res) => {
   const r = await pool.query('delete from tickets');
   ok(res, { ok: true, eliminados: r.rowCount });
@@ -787,7 +845,9 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     seguimientoActivo: c.seguimiento_activo !== false,
     seguimientoDiasRecordatorio: c.seguimiento_dias_recordatorio || 2,
     seguimientoRepetirDias: c.seguimiento_repetir_dias || 2,
-    seguimientoDiasEscalar: c.seguimiento_dias_escalar || 0
+    seguimientoDiasEscalar: c.seguimiento_dias_escalar || 0,
+    respaldoActivo: !!c.respaldo_activo, respaldoCorreoDestino: c.respaldo_correo_destino || '',
+    respaldoFrecuenciaDias: c.respaldo_frecuencia_dias || 7, respaldoUltimo: c.respaldo_ultimo
   });
 });
 
@@ -804,7 +864,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        aviso_fuera_horario_activo=$16, aviso_fuera_horario_mensaje=$17,
        aviso_fuera_horario_inicio=$18, aviso_fuera_horario_fin=$19,
        telegram_activo=$20, telegram_chat_id=$21,
-       seguimiento_activo=$22, seguimiento_dias_recordatorio=$23, seguimiento_repetir_dias=$24, seguimiento_dias_escalar=$25
+       seguimiento_activo=$22, seguimiento_dias_recordatorio=$23, seguimiento_repetir_dias=$24, seguimiento_dias_escalar=$25,
+       respaldo_activo=$26, respaldo_correo_destino=$27, respaldo_frecuencia_dias=$28
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -816,7 +877,8 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       !!b.avisoFueraHorarioActivo, b.avisoFueraHorarioMensaje || '',
       b.avisoFueraHorarioInicio || '09:00', b.avisoFueraHorarioFin || '18:00',
       !!b.telegramActivo, b.telegramChatId || '',
-      !!b.seguimientoActivo, b.seguimientoDiasRecordatorio || 2, b.seguimientoRepetirDias || 2, b.seguimientoDiasEscalar || 0
+      !!b.seguimientoActivo, b.seguimientoDiasRecordatorio || 2, b.seguimientoRepetirDias || 2, b.seguimientoDiasEscalar || 0,
+      !!b.respaldoActivo, b.respaldoCorreoDestino || '', b.respaldoFrecuenciaDias || 7
     ]
   );
   ok(res, { ok: true });
@@ -1589,6 +1651,9 @@ setInterval(revisarTelegramUpdates, 60 * 1000);
 
 setTimeout(revisarSeguimientoTickets, 20000);
 setInterval(revisarSeguimientoTickets, 30 * 60 * 1000);
+
+setTimeout(ejecutarRespaldoProgramado, 40000);
+setInterval(ejecutarRespaldoProgramado, 6 * 60 * 60 * 1000);
 
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 
