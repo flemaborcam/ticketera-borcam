@@ -1425,7 +1425,7 @@ async function aplicarAvisoFueraHorario(ticketId) {
 }
 
 function extraerNumeroTicket(asunto) {
-  const m = (asunto || '').match(/\[?(T-\d{4}-\d{4})\]?/i);
+  const m = (asunto || '').match(/\[?(T-\d{4}-\d+)\]?/i);
   return m ? m[1].toUpperCase() : null;
 }
 
