@@ -658,10 +658,10 @@ app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
 
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
   const id = req.params.id;
-  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const staff = (await pool.query('select nombre, apellido, telegram_chat_id from usuarios where id=$1', [req.session.userId])).rows[0];
   await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, id]);
 
-  const t = (await pool.query('select numero, asunto, remitente_email from tickets where id=$1', [id])).rows[0];
+  const t = (await pool.query('select numero, asunto, remitente_nombre, remitente_email from tickets where id=$1', [id])).rows[0];
   const ccs = await collectTicketCCs(id);
   const mensaje = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
   await pool.query(
@@ -669,6 +669,13 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
     [id, 'Notificación automática', mensaje]
   );
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: mensaje, esAutomatico: true });
+
+  if (staff.telegram_chat_id) {
+    await enviarTelegramARegistrado(staff.telegram_chat_id,
+      `✅ <b>Tomaste el ticket ${escapeHtmlSrv(t.numero)}</b>\n${escapeHtmlSrv(t.asunto)}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}\n\nPara responderlo, respondé (Responder) este mismo mensaje con tu respuesta.`,
+      id
+    );
+  }
 
   ok(res, await ticketConMensajes(id));
 });
@@ -1407,29 +1414,46 @@ app.get('/api/citas', requireStaff, async (req, res) => {
 
 /* ---------------- Notificaciones a Telegram ---------------- */
 
-async function enviarTelegramForzado(chatId, texto) {
+async function enviarTelegramForzado(chatId, texto, threadId) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('Falta configurar TELEGRAM_BOT_TOKEN en el servidor.');
   if (!chatId) throw new Error('Falta el Chat ID del grupo de Telegram.');
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true })
+    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true, ...(threadId ? { message_thread_id: threadId } : {}) })
   });
   const data = await r.json();
   if (!data.ok) throw new Error(data.description || 'Error desconocido al enviar a Telegram.');
   return data;
 }
 
-async function enviarTelegram(texto) {
+async function enviarTelegram(texto, threadId) {
   try {
     const c = await getConfig();
     if (!c.telegram_activo || !c.telegram_chat_id) return false;
-    await enviarTelegramForzado(c.telegram_chat_id, texto);
+    await enviarTelegramForzado(c.telegram_chat_id, texto, threadId);
     return true;
   } catch (e) {
     console.error('Error enviando a Telegram:', e.message);
     return false;
   }
+}
+
+// Crea un tema (sub-chat) nuevo dentro del grupo para un ticket. Si falla (permisos, temas
+// no habilitados, etc.) devuelve null y el resto del sistema sigue funcionando sin tema dedicado.
+async function crearTemaTelegramParaTicket(chatId, numero, asunto) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return null;
+  try {
+    const nombre = `${numero} · ${asunto}`.slice(0, 128);
+    const r = await fetch(`https://api.telegram.org/bot${token}/createForumTopic`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, name: nombre })
+    });
+    const data = await r.json();
+    if (!data.ok) { console.error('No se pudo crear el tema de Telegram:', data.description); return null; }
+    return data.result.message_thread_id;
+  } catch (e) { console.error('Error creando tema de Telegram:', e.message); return null; }
 }
 
 async function notificarTelegramNuevoTicket(ticket, baseUrl) {
@@ -1461,7 +1485,57 @@ async function enviarTelegramA(chatId, texto) {
   } catch (e) { console.error('Error enviando Telegram privado:', e.message); return false; }
 }
 
+// Igual que enviarTelegramA, pero además recuerda a qué ticket corresponde ese mensaje puntual,
+// para que si el técnico lo responde citándolo (Responder), el sistema sepa a qué ticket se refiere.
+async function enviarTelegramARegistrado(chatId, texto, ticketId) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return false;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true })
+    });
+    const data = await r.json();
+    if (data.ok && data.result && ticketId) {
+      await pool.query(
+        `insert into telegram_notificaciones_ticket (chat_id, message_id, ticket_id) values ($1,$2,$3)`,
+        [String(chatId), data.result.message_id, ticketId]
+      );
+    }
+    return !!data.ok;
+  } catch (e) { console.error('Error enviando Telegram privado:', e.message); return false; }
+}
+
 // Revisa mensajes privados nuevos que le llegaron al bot, para vincular la cuenta de quien mandó su código
+// Responde un ticket exactamente como si se hiciera desde la plataforma: mensaje saliente,
+// cambio de estado, aviso de asignación si estaba libre, y envío real por correo al cliente.
+async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
+  const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
+  if (!t) return { ok: false, error: 'No encontré ningún ticket con ese número.' };
+  const staff = (await pool.query('select nombre, apellido, firma_html from usuarios where id=$1', [staffId])).rows[0];
+
+  if (!t.asignado_a) {
+    await pool.query('update tickets set asignado_a=$1 where id=$2', [staffId, ticketId]);
+    const ccsAsig = await collectTicketCCs(ticketId);
+    const msgAsig = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
+    await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`, [ticketId, 'Notificación automática', msgAsig]);
+    await enviarEmailReal({ to: t.remitente_email, cc: ccsAsig, subject: `[${t.numero}] ${t.asunto}`, text: msgAsig, esAutomatico: true });
+  }
+
+  const firmaHtml = staff.firma_html || '';
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, firma_html) values ($1,'saliente',$2,$3,$4)`,
+    [ticketId, `${staff.nombre} ${staff.apellido}`, cuerpo, firmaHtml]
+  );
+  if (t.estado === 'Abierto') await pool.query(`update tickets set estado='En progreso' where id=$1`, [ticketId]);
+  await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [ticketId]);
+
+  const ccs = await collectTicketCCs(ticketId);
+  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
+  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, html: htmlBody });
+  return { ok: true, numero: t.numero };
+}
+
 async function revisarTelegramUpdates() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
@@ -1475,13 +1549,52 @@ async function revisarTelegramUpdates() {
     for (const update of data.result) {
       if (update.update_id > maxId) maxId = update.update_id;
       const msg = update.message;
-      if (!msg || !msg.text) continue;
-      const codigo = msg.text.trim().toUpperCase();
-      const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [codigo])).rows[0];
+      if (!msg || !msg.text || !msg.chat || msg.chat.type !== 'private' || (msg.from && msg.from.is_bot)) continue;
+      const texto = msg.text.trim();
+
+      // 1) ¿Es un código de vinculación?
+      const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [texto.toUpperCase()])).rows[0];
       if (usuario) {
         await pool.query('update usuarios set telegram_chat_id=$1, telegram_link_code=null where id=$2', [String(msg.chat.id), usuario.id]);
-        await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. De ahora en más vas a recibir acá los recordatorios de tus tickets asignados.`);
+        await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. Vas a recibir acá tus avisos, y para responder un ticket alcanza con mantener presionado ese aviso y elegir "Responder" (sin necesitar escribir el número).`);
+        continue;
       }
+
+      const staffRow = (await pool.query('select id from usuarios where telegram_chat_id=$1', [String(msg.chat.id)])).rows[0];
+      if (!staffRow) {
+        await enviarTelegramA(msg.chat.id, '⚠️ Tu Telegram todavía no está vinculado a ningún usuario del sistema. Generá tu código desde "Mi perfil" primero.');
+        continue;
+      }
+
+      // 2) ¿Está respondiendo (citando) el aviso de un ticket puntual?
+      let ticketId = null;
+      let cuerpoRespuesta = texto;
+      if (msg.reply_to_message) {
+        const rel = (await pool.query(
+          'select ticket_id from telegram_notificaciones_ticket where chat_id=$1 and message_id=$2',
+          [String(msg.chat.id), msg.reply_to_message.message_id]
+        )).rows[0];
+        if (rel) ticketId = rel.ticket_id;
+      }
+
+      // 3) Si no citó nada reconocible, ¿escribió el número a mano? formato: T-2026-13973 mensaje
+      if (!ticketId) {
+        const m = texto.match(/^#?\s*(T-\d{4}-\d+)[:\s-]+([\s\S]+)$/i);
+        if (m) {
+          const ticketRow = (await pool.query('select id from tickets where numero=$1', [m[1].toUpperCase()])).rows[0];
+          if (!ticketRow) { await enviarTelegramA(msg.chat.id, `⚠️ No encontré ningún ticket con el número ${m[1].toUpperCase()}.`); continue; }
+          ticketId = ticketRow.id;
+          cuerpoRespuesta = m[2].trim();
+        }
+      }
+
+      if (!ticketId) {
+        await enviarTelegramA(msg.chat.id, 'No reconocí a qué ticket te referís. Mantené presionado el aviso de ese ticket → "Responder", o escribí el número seguido de tu mensaje:\nT-2026-0001 tu mensaje de respuesta');
+        continue;
+      }
+
+      const resultado = await responderTicketViaTelegram(ticketId, staffRow.id, cuerpoRespuesta);
+      await enviarTelegramA(msg.chat.id, resultado.ok ? `✅ Respuesta enviada al cliente del ticket ${resultado.numero}.` : `⚠️ ${resultado.error}`);
     }
     await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
   } catch (e) { console.error('Error revisando mensajes de Telegram:', e.message); }
@@ -1517,8 +1630,8 @@ async function revisarSeguimientoTickets() {
       const necesitaRecordatorio = !t.ultimo_recordatorio || Math.floor((ahora - new Date(t.ultimo_recordatorio).getTime()) / 86400000) >= repetirDias;
       if (necesitaRecordatorio) {
         if (agente && agente.telegram_chat_id) {
-          const msg = `⏰ <b>Recordatorio de ticket</b>\nEl ticket #${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}" está asignado a vos y no tiene actividad hace ${diasSinActividad} día(s).\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}`;
-          await enviarTelegramA(agente.telegram_chat_id, msg);
+          const msg = `⏰ <b>Recordatorio de ticket</b>\nEl ticket #${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}" está asignado a vos y no tiene actividad hace ${diasSinActividad} día(s).\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}\n\nRespondé (Responder) este mensaje con tu respuesta para el cliente.`;
+          await enviarTelegramARegistrado(agente.telegram_chat_id, msg, t.id);
         }
         await pool.query('update tickets set ultimo_recordatorio=now() where id=$1', [t.id]);
       }
