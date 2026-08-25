@@ -8,13 +8,10 @@ const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
-
 const ENC_KEY = crypto.createHash('sha256').update(process.env.COOKIE_SECRET || 'cambia-este-secreto').digest();
-
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const BUCKET_ADJUNTOS = 'adjuntos';
-
 async function subirArchivoStorage(path, buffer, contentType) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) throw new Error('Falta configurar SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY.');
   const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET_ADJUNTOS}/${path}`, {
@@ -30,7 +27,6 @@ async function subirArchivoStorage(path, buffer, contentType) {
   if (!r.ok) throw new Error('No se pudo subir el archivo a Storage (' + (await r.text()) + ')');
   return path;
 }
-
 async function descargarArchivoStorage(path) {
   const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET_ADJUNTOS}/${path}`, {
     headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY }
@@ -38,15 +34,12 @@ async function descargarArchivoStorage(path) {
   if (!r.ok) throw new Error('No se pudo descargar el archivo.');
   return r;
 }
-
 /* ---------------- Google Calendar (cuenta de servicio) ---------------- */
-
 function credencialesGoogle() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
   if (!raw) return null;
   try { return JSON.parse(raw); } catch (e) { return null; }
 }
-
 async function obtenerTokenGoogle() {
   const creds = credencialesGoogle();
   if (!creds || !creds.client_email || !creds.private_key) throw new Error('Falta configurar GOOGLE_SERVICE_ACCOUNT_JSON.');
@@ -63,7 +56,6 @@ async function obtenerTokenGoogle() {
   if (!data.access_token) throw new Error('No se pudo autenticar con Google: ' + JSON.stringify(data));
   return data.access_token;
 }
-
 async function crearEventoGoogle(calendarId, evento) {
   const token = await obtenerTokenGoogle();
   const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
@@ -73,7 +65,6 @@ async function crearEventoGoogle(calendarId, evento) {
   if (!r.ok) throw new Error('Error creando evento en Google Calendar: ' + JSON.stringify(data));
   return data;
 }
-
 async function eliminarEventoGoogle(calendarId, eventId) {
   if (!eventId) return;
   try {
@@ -83,7 +74,6 @@ async function eliminarEventoGoogle(calendarId, eventId) {
     });
   } catch (e) { console.error('Error eliminando evento de Google Calendar:', e.message); }
 }
-
 async function probarCalendarioGoogle(calendarId) {
   const token = await obtenerTokenGoogle();
   const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}`, {
@@ -93,7 +83,6 @@ async function probarCalendarioGoogle(calendarId) {
   if (!r.ok) throw new Error(data.error?.message || 'No se pudo acceder al calendario.');
   return data;
 }
-
 function encrypt(text) {
   if (!text) return '';
   const iv = crypto.randomBytes(12);
@@ -112,17 +101,14 @@ function decrypt(payload) {
     return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
   } catch (e) { return ''; }
 }
-
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('localhost')
     ? false
     : { rejectUnauthorized: false }
 });
-
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -130,15 +116,12 @@ app.use(cookieSession({
   maxAge: 30 * 24 * 60 * 60 * 1000
 }));
 app.use(express.static(path.join(__dirname, 'public')));
-
 const ESTADOS = ['Abierto', 'En progreso', 'Esperando al Cliente', 'Resuelto', 'Cerrado'];
 const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'Recursos Humanos', 'Otro'];
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
 const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio'];
-
 /* ---------------- Helpers ---------------- */
-
 function requireStaff(req, res, next) {
   if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
   next();
@@ -149,7 +132,6 @@ function requireCliente(req, res, next) {
 }
 function ok(res, data) { res.json(data); }
 function bad(res, msg, code) { res.status(code || 400).json({ error: msg }); }
-
 async function nextTicketNumero() {
   const anio = new Date().getFullYear();
   const client = await pool.connect();
@@ -169,25 +151,21 @@ async function nextTicketNumero() {
     client.release();
   }
 }
-
 async function ticketConMensajes(ticketId) {
   const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return null;
   const mensajes = (await pool.query('select * from mensajes where ticket_id=$1 order by fecha asc', [ticketId])).rows;
   return { ...t, mensajes };
 }
-
 async function collectTicketCCs(ticketId) {
   const r = await pool.query(
     `select distinct unnest(cc) as email from mensajes where ticket_id=$1 and cc is not null`, [ticketId]
   );
   return r.rows.map(row => row.email);
 }
-
 async function getConfig() {
   return (await pool.query('select * from configuracion where id=1')).rows[0];
 }
-
 let smtpTransportCache = null;
 function construirTransporteSmtp(cfg) {
   if (!cfg.smtp_host || !cfg.smtp_usuario || !cfg.smtp_pass_enc) return null;
@@ -204,13 +182,11 @@ async function getSmtpTransport(cfg) {
   if (!cfg.correo_activo) return null;
   return construirTransporteSmtp(cfg);
 }
-
 // Envía un correo real (si la casilla está activa y configurada); si no, no hace nada.
 async function demasiadosEnviosAutomaticosRecientes() {
   const r = await pool.query(`select count(*) from mensajes where automatico=true and fecha > now() - interval '1 hour'`);
   return Number(r.rows[0].count) >= 200; // margen de seguridad por debajo del límite típico de proveedores (500/hora)
 }
-
 async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAutomatico }) {
   try {
     const cfg = await getConfig();
@@ -237,7 +213,6 @@ async function contextoTicket(ticketId) {
   const ccs = await collectTicketCCs(ticketId);
   return { ...t, ccs };
 }
-
 // Aplica un cambio de estado y, si corresponde, dispara el correo automático de "Esperando al Cliente"
 async function aplicarCambioEstado(ticketId, nuevoEstado) {
   const t = (await pool.query('select estado, remitente_email from tickets where id=$1', [ticketId])).rows[0];
@@ -256,13 +231,11 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
     await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
   }
 }
-
 function pasoCoincide(paso, texto) {
   if (paso.match_any) return true;
   const low = (texto || '').toLowerCase();
   return (paso.palabras || []).some(p => p && low.includes(p));
 }
-
 async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
   const resp = (await pool.query('select * from respuestas_predefinidas where id=$1', [paso.respuesta_id])).rows[0];
   if (!resp) return;
@@ -287,7 +260,6 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
     [activa.id, activa.paso, ticketId]
   );
 }
-
 // Motor de automatizaciones: continúa una cadena activa o dispara el primer paso que coincida
 async function aplicarAutomatizacionSiCorresponde(ticketId, texto, esNuevoTicket = false) {
   const t = (await pool.query('select automatizacion_activa_id, automatizacion_activa_paso from tickets where id=$1', [ticketId])).rows[0];
@@ -309,7 +281,6 @@ async function aplicarAutomatizacionSiCorresponde(ticketId, texto, esNuevoTicket
     if (!pasos[0]) continue;
     if (pasos[0].solo_nuevo_ticket && !esNuevoTicket) continue;
     if (!pasoCoincide(pasos[0], texto)) continue;
-
     // Esta automatización ya se disparó antes en este mismo ticket: no se repite,
     // aunque la palabra clave vuelva a aparecer en un mensaje posterior.
     const yaDisparada = await pool.query(
@@ -317,20 +288,16 @@ async function aplicarAutomatizacionSiCorresponde(ticketId, texto, esNuevoTicket
       [ticketId, `Automatización · ${auto.nombre} (%`]
     );
     if (yaDisparada.rows.length) continue;
-
     await dispararPaso(ticketId, auto, pasos[0], 0, pasos.length);
     return true;
   }
   return false;
 }
-
 /* ---------------- Auth ---------------- */
-
 app.post('/api/auth/login', async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
   const password = req.body.password || '';
   if (!email || !password) return bad(res, 'Faltan datos');
-
   const staff = (await pool.query('select * from usuarios where lower(email)=$1', [email])).rows[0];
   if (staff && bcrypt.compareSync(password, staff.password_hash)) {
     req.session.type = 'staff';
@@ -345,7 +312,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
   bad(res, 'Correo o contraseña incorrectos.', 401);
 });
-
 app.post('/api/auth/register', async (req, res) => {
   const { nombre, apellido, telefono, email, cargo, password } = req.body;
   if (!nombre || !apellido || !email || !password || !cargo) return bad(res, 'Completá todos los campos obligatorios.');
@@ -362,12 +328,10 @@ app.post('/api/auth/register', async (req, res) => {
   req.session.userId = r.rows[0].id;
   ok(res, { type: 'staff' });
 });
-
 app.post('/api/auth/logout', (req, res) => {
   req.session = null;
   ok(res, { ok: true });
 });
-
 app.get('/api/auth/me', async (req, res) => {
   if (!req.session || !req.session.type) return ok(res, { session: null });
   if (req.session.type === 'staff') {
@@ -380,26 +344,20 @@ app.get('/api/auth/me', async (req, res) => {
     return ok(res, { session: { type: 'cliente', cliente: c } });
   }
 });
-
 /* ---------------- Catálogos ---------------- */
-
 app.get('/api/catalogos', requireStaff, (req, res) => {
   ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE });
 });
-
 /* ---------------- Tickets (staff) ---------------- */
-
 app.get('/api/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query('select * from tickets order by actualizado desc')).rows;
   ok(res, tickets);
 });
-
 app.get('/api/tickets/:id', requireStaff, async (req, res) => {
   const t = await ticketConMensajes(req.params.id);
   if (!t) return bad(res, 'No encontrado', 404);
   ok(res, t);
 });
-
 app.post('/api/tickets', requireStaff, async (req, res) => {
   const { remitenteNombre, remitenteEmail, asunto, cuerpo } = req.body;
   if (!remitenteNombre || !remitenteEmail || !asunto || !cuerpo) return bad(res, 'Faltan datos');
@@ -425,7 +383,6 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   const ticket = await ticketConMensajes(ticketId);
   ok(res, { ticket, automatizado });
 });
-
 app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   const { categoria, prioridad, estado, asignadoA, clienteId } = req.body;
   const id = req.params.id;
@@ -437,10 +394,8 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   const ticket = await ticketConMensajes(id);
   ok(res, ticket);
 });
-
 // Borra absolutamente todos los tickets del sistema. Solo un Superadmin puede hacerlo.
 /* ---------------- Respaldo del sistema ---------------- */
-
 async function generarRespaldoJSON() {
   const [usuarios, clientes, tickets, mensajes, respuestas, automatizaciones, pasos, configRow, citas, documentosLegales, aceptaciones] = await Promise.all([
     pool.query('select * from usuarios'),
@@ -464,7 +419,6 @@ async function generarRespaldoJSON() {
     configuracion: configRow.rows[0], citas: citas.rows, documentos_legales: documentosLegales.rows, aceptaciones_legales: aceptaciones.rows
   };
 }
-
 app.get('/api/respaldo/descargar', requireStaff, requireSuperadmin, async (req, res) => {
   const data = await generarRespaldoJSON();
   const nombre = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
@@ -472,7 +426,6 @@ app.get('/api/respaldo/descargar', requireStaff, requireSuperadmin, async (req, 
   res.setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(data, null, 2));
 });
-
 // Vuelca un respaldo completo dentro de la base de datos actual (borra todo lo existente primero)
 async function restaurarDesdeRespaldo(data) {
   if (!data || !Array.isArray(data.tickets) || !Array.isArray(data.usuarios)) {
@@ -481,7 +434,6 @@ async function restaurarDesdeRespaldo(data) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
     // Se borra todo en orden (hijos antes que padres) para no chocar con las referencias
     await client.query('delete from aceptaciones_legales');
     await client.query('delete from documentos_legales');
@@ -493,7 +445,6 @@ async function restaurarDesdeRespaldo(data) {
     await client.query('delete from respuestas_predefinidas');
     await client.query('delete from clientes');
     await client.query('delete from usuarios');
-
     for (const u of data.usuarios || []) {
       await client.query(
         `insert into usuarios (id,nombre,apellido,telefono,email,password_hash,cargo,firma_html,es_superadmin,telegram_chat_id,telegram_link_code,creado)
@@ -572,7 +523,6 @@ async function restaurarDesdeRespaldo(data) {
         ]
       );
     }
-
     // Recalcula el contador de tickets por año, para que el próximo número nuevo no choque con los restaurados
     const maxPorAnio = {};
     for (const t of data.tickets || []) {
@@ -582,7 +532,6 @@ async function restaurarDesdeRespaldo(data) {
     for (const anio of Object.keys(maxPorAnio)) {
       await client.query('insert into contadores (anio, valor) values ($1,$2) on conflict (anio) do update set valor=$2', [Number(anio), maxPorAnio[anio]]);
     }
-
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
@@ -591,14 +540,12 @@ async function restaurarDesdeRespaldo(data) {
     client.release();
   }
 }
-
 app.post('/api/respaldo/restaurar', requireStaff, requireSuperadmin, async (req, res) => {
   try {
     await restaurarDesdeRespaldo(req.body);
     ok(res, { ok: true });
   } catch (e) { bad(res, 'Error restaurando el respaldo: ' + e.message); }
 });
-
 async function ejecutarRespaldoProgramado() {
   try {
     const c = await getConfig();
@@ -606,7 +553,6 @@ async function ejecutarRespaldoProgramado() {
     const frecuencia = c.respaldo_frecuencia_dias || 7;
     const ultimo = c.respaldo_ultimo ? new Date(c.respaldo_ultimo).getTime() : 0;
     if (Date.now() - ultimo < frecuencia * 24 * 60 * 60 * 1000) return;
-
     const data = await generarRespaldoJSON();
     const json = JSON.stringify(data, null, 2);
     const nombreArchivo = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
@@ -620,18 +566,15 @@ async function ejecutarRespaldoProgramado() {
     if (enviado) await pool.query('update configuracion set respaldo_ultimo=now() where id=1');
   } catch (e) { console.error('Error generando respaldo automático:', e.message); }
 }
-
 app.delete('/api/tickets', requireStaff, requireSuperadmin, async (req, res) => {
   const r = await pool.query('delete from tickets');
   ok(res, { ok: true, eliminados: r.rowCount });
 });
-
 // Reinicia el marcador de IMAP para que la próxima revisión vuelva a bajar TODA la casilla desde cero.
 app.post('/api/configuracion/reiniciar-imap', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('update configuracion set imap_ultimo_uid=0 where id=1');
   ok(res, { ok: true });
 });
-
 // Marca como "ya revisado" todo lo que hay hasta ahora en la casilla, sin recrear tickets viejos.
 // Solo procesa los correos que lleguen de ahora en más.
 app.post('/api/configuracion/saltar-al-final-imap', requireStaff, requireSuperadmin, async (req, res) => {
@@ -650,17 +593,14 @@ app.post('/api/configuracion/saltar-al-final-imap', requireStaff, requireSuperad
     ok(res, { ok: true, maxUid });
   } catch (e) { bad(res, e.message); }
 });
-
 app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
   await pool.query('delete from tickets where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
   const id = req.params.id;
   const staff = (await pool.query('select nombre, apellido, telegram_chat_id from usuarios where id=$1', [req.session.userId])).rows[0];
   await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, id]);
-
   const t = (await pool.query('select numero, asunto, remitente_nombre, remitente_email from tickets where id=$1', [id])).rows[0];
   const ccs = await collectTicketCCs(id);
   const mensaje = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
@@ -669,7 +609,6 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
     [id, 'Notificación automática', mensaje]
   );
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: mensaje, esAutomatico: true });
-
   if (staff.telegram_chat_id) {
     const ultimoCliente = (await pool.query(
       `select cuerpo from mensajes where ticket_id=$1 and tipo='entrante' order by fecha desc limit 1`, [id]
@@ -682,17 +621,14 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
       id
     );
   }
-
   ok(res, await ticketConMensajes(id));
 });
-
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const id = req.params.id;
   const { tipo, cuerpo, cc, adjuntos, incluirFirma, documentoLegalId } = req.body;
   if (!cuerpo || !cuerpo.trim()) return bad(res, 'El mensaje no puede estar vacío.');
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
   if (!t) return bad(res, 'No encontrado', 404);
-
   if (tipo === 'nota') {
     const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
     await pool.query(
@@ -702,7 +638,6 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     await pool.query('update tickets set actualizado=now() where id=$1', [id]);
     return ok(res, await ticketConMensajes(id));
   }
-
   if (tipo === 'entrante') {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, t.remitente_nombre, cuerpo]);
     await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
@@ -713,7 +648,6 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   } else {
     const staff = (await pool.query('select * from usuarios where id=$1', [req.session.userId])).rows[0];
     const firmaHtml = (incluirFirma && staff.firma_html) ? staff.firma_html : '';
-
     const adjuntosProcesados = [];
     for (const a of (adjuntos || [])) {
       try {
@@ -725,7 +659,6 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
         adjuntosProcesados.push({ id: attId, nombre: a.nombre, tipo: a.tipo, mime, size: a.size, path });
       } catch (e) { console.error('Error subiendo adjunto:', e.message); }
     }
-
     let cuerpoFinal = cuerpo;
     let linkDocumento = null;
     if (documentoLegalId) {
@@ -758,7 +691,6 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     }
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
     await pool.query('update tickets set necesita_atencion=false where id=$1', [id]);
-
     const attachmentsForMail = (adjuntos || []).map(a => {
       const base64 = (a.dataUrl || '').split(',')[1] || '';
       return { filename: a.nombre, content: base64, encoding: 'base64' };
@@ -773,19 +705,15 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
 });
-
 /* ---------------- Clientes ---------------- */
-
 app.get('/api/clientes', requireStaff, async (req, res) => {
   const clientes = (await pool.query('select id,nombre,direccion,telefono,correo,rol,(portal_password_hash is not null) as tiene_portal from clientes order by nombre')).rows;
   ok(res, clientes);
 });
-
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.params.id])).rows;
   ok(res, tickets);
 });
-
 app.post('/api/clientes', requireStaff, async (req, res) => {
   const { nombre, direccion, telefono, correo, rol, portalPassword } = req.body;
   if (!nombre) return bad(res, 'Falta el nombre del cliente.');
@@ -797,7 +725,6 @@ app.post('/api/clientes', requireStaff, async (req, res) => {
   );
   ok(res, { id: r.rows[0].id });
 });
-
 app.put('/api/clientes/:id', requireStaff, async (req, res) => {
   const { nombre, direccion, telefono, correo, rol, portalPassword } = req.body;
   if (portalPassword) {
@@ -814,27 +741,22 @@ app.put('/api/clientes/:id', requireStaff, async (req, res) => {
   }
   ok(res, { ok: true });
 });
-
 app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   await pool.query('update tickets set cliente_id=null where cliente_id=$1', [req.params.id]);
   await pool.query('delete from clientes where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 /* ---------------- Usuarios (staff) ---------------- */
-
 async function requireSuperadmin(req, res, next) {
   if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
   const u = (await pool.query('select es_superadmin from usuarios where id=$1', [req.session.userId])).rows[0];
   if (!u || !u.es_superadmin) return bad(res, 'Solo un Superadmin puede hacer esto.', 403);
   next();
 }
-
 app.get('/api/usuarios', requireStaff, async (req, res) => {
   const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin from usuarios order by nombre')).rows;
   ok(res, usuarios);
 });
-
 // Solo un Superadmin puede dar de alta usuarios directamente (sin pasar por el registro)
 app.post('/api/usuarios', requireStaff, requireSuperadmin, async (req, res) => {
   const { nombre, apellido, telefono, email, cargo, password, esSuperadmin } = req.body;
@@ -850,7 +772,6 @@ app.post('/api/usuarios', requireStaff, requireSuperadmin, async (req, res) => {
   );
   ok(res, { id: r.rows[0].id });
 });
-
 app.put('/api/usuarios/me', requireStaff, async (req, res) => {
   const { nombre, apellido, telefono, cargo, password } = req.body;
   if (password) {
@@ -864,7 +785,6 @@ app.put('/api/usuarios/me', requireStaff, async (req, res) => {
   }
   ok(res, { ok: true });
 });
-
 // Solo un Superadmin puede editar los datos de otro usuario del sistema
 app.put('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) => {
   const { nombre, apellido, telefono, cargo, esSuperadmin, password } = req.body;
@@ -883,7 +803,6 @@ app.put('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) =
   }
   ok(res, { ok: true });
 });
-
 // Solo un Superadmin puede eliminar usuarios, y nunca a sí mismo (evita quedarse sin acceso)
 app.delete('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res) => {
   if (req.params.id === req.session.userId) return bad(res, 'No podés eliminar tu propia cuenta.');
@@ -891,12 +810,10 @@ app.delete('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res
   await pool.query('delete from usuarios where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 app.put('/api/usuarios/me/firma', requireStaff, async (req, res) => {
   await pool.query('update usuarios set firma_html=$1 where id=$2', [req.body.html || '', req.session.userId]);
   ok(res, { ok: true });
 });
-
 app.post('/api/usuarios/me/telegram/generar-codigo', requireStaff, async (req, res) => {
   const codigo = Math.random().toString(36).slice(2, 8).toUpperCase();
   await pool.query('update usuarios set telegram_link_code=$1 where id=$2', [codigo, req.session.userId]);
@@ -906,9 +823,7 @@ app.post('/api/usuarios/me/telegram/desvincular', requireStaff, async (req, res)
   await pool.query('update usuarios set telegram_chat_id=null, telegram_link_code=null where id=$1', [req.session.userId]);
   ok(res, { ok: true });
 });
-
 /* ---------------- Respuestas predefinidas ---------------- */
-
 app.get('/api/respuestas', requireStaff, async (req, res) => {
   ok(res, (await pool.query('select * from respuestas_predefinidas order by titulo')).rows);
 });
@@ -927,9 +842,7 @@ app.delete('/api/respuestas/:id', requireStaff, async (req, res) => {
   await pool.query('delete from respuestas_predefinidas where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 /* ---------------- Automatizaciones ---------------- */
-
 app.get('/api/automatizaciones', requireStaff, async (req, res) => {
   const autos = (await pool.query('select * from automatizaciones order by nombre')).rows;
   for (const a of autos) {
@@ -937,7 +850,6 @@ app.get('/api/automatizaciones', requireStaff, async (req, res) => {
   }
   ok(res, autos);
 });
-
 app.post('/api/automatizaciones', requireStaff, async (req, res) => {
   const { nombre, activo, pasos } = req.body;
   if (!nombre || !pasos || !pasos.length) return bad(res, 'Faltan datos');
@@ -953,7 +865,6 @@ app.post('/api/automatizaciones', requireStaff, async (req, res) => {
   }
   ok(res, { id: autoId });
 });
-
 app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   const { nombre, activo, pasos } = req.body;
   await pool.query('update automatizaciones set nombre=$1, activo=$2 where id=$3', [nombre, !!activo, req.params.id]);
@@ -968,19 +879,15 @@ app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   }
   ok(res, { ok: true });
 });
-
 app.post('/api/automatizaciones/:id/toggle', requireStaff, async (req, res) => {
   await pool.query('update automatizaciones set activo = not activo where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 app.delete('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   await pool.query('delete from automatizaciones where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 /* ---------------- Configuración ---------------- */
-
 app.get('/api/configuracion', requireStaff, async (req, res) => {
   const c = await getConfig();
   ok(res, {
@@ -1002,7 +909,6 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     recordatorioSinAsignarHora: c.recordatorio_sin_asignar_hora || '18:00'
   });
 });
-
 app.put('/api/configuracion', requireStaff, async (req, res) => {
   const b = req.body;
   const c = await getConfig();
@@ -1037,7 +943,6 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
   );
   ok(res, { ok: true });
 });
-
 // Prueba las credenciales guardadas sin activar el polling — para verificar antes de confiar en la conexión
 app.post('/api/configuracion/probar-telegram', requireStaff, async (req, res) => {
   try {
@@ -1046,18 +951,15 @@ app.post('/api/configuracion/probar-telegram', requireStaff, async (req, res) =>
     ok(res, { ok: true });
   } catch (e) { bad(res, e.message); }
 });
-
 app.post('/api/configuracion/probar-seguimiento', requireStaff, async (req, res) => {
   try {
     await revisarSeguimientoTickets();
     ok(res, { ok: true });
   } catch (e) { bad(res, e.message); }
 });
-
 app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
   const c = await getConfig();
   const resultado = { imap: { ok: false, error: null }, smtp: { ok: false, error: null } };
-
   try {
     if (!c.imap_host || !c.imap_usuario || !c.imap_pass_enc) throw new Error('Faltan datos de IMAP.');
     const client = new ImapFlow({
@@ -1068,19 +970,15 @@ app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
     await client.logout();
     resultado.imap.ok = true;
   } catch (e) { resultado.imap.error = e.message; }
-
   try {
     const transport = construirTransporteSmtp(c);
     if (!transport) throw new Error('Faltan datos de SMTP (servidor, usuario o contraseña).');
     await transport.verify();
     resultado.smtp.ok = true;
   } catch (e) { resultado.smtp.error = e.message; }
-
   ok(res, resultado);
 });
-
 /* ---------------- Agenda de instalaciones (calendario público) ---------------- */
-
 const DIA_MAP = { Sun: 'domingo', Mon: 'lunes', Tue: 'martes', Wed: 'miercoles', Thu: 'jueves', Fri: 'viernes', Sat: 'sabado' };
 function diaKeyMontevideo(date) {
   const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(date);
@@ -1109,24 +1007,19 @@ function ocurrenciaEnMes(date) {
   const dia = Number(fechaMontevideoStr(date).split('-')[2]);
   return Math.ceil(dia / 7);
 }
-
 app.get('/api/agenda/info', async (req, res) => {
   const c = await getConfig();
   const cfg = c.calendario_config || {};
   const edificios = c.calendario_edificios || [];
   if (!cfg.activo) return ok(res, { activo: false });
-
   const edificioSolicitado = (req.query.edificio || '').trim();
   const duracion = cfg.duracionMinutos || 60;
   if (!edificioSolicitado) return ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: [] });
-
   const diasVisibles = cfg.diasVisibles || 21;
   const minNotice = cfg.minNoticeDays ?? 1;
-
   const filasCitas = (await pool.query(`select fecha_hora, edificio from citas where estado='confirmada' and fecha_hora >= now()`)).rows;
   const edificioPorFecha = {};
   filasCitas.forEach(r => { edificioPorFecha[fechaMontevideoStr(new Date(r.fecha_hora))] = r.edificio; });
-
   const candidatos = [];
   const hoy = new Date();
   for (let i = 0; i < diasVisibles; i++) {
@@ -1135,25 +1028,19 @@ app.get('/api/agenda/info', async (req, res) => {
     const dateStr = fechaMontevideoStr(d);
     const horario = (cfg.diasHorarios || {})[diaKeyMontevideo(d)];
     if (!horario || !horario.activo) continue;
-
     // Regla 1: asignación explícita por repetición del mes (1er/2do/3er/4to/5to de ese día)
     const asignacion = horario.asignacionOcurrencias || {};
     const asignado = asignacion[String(ocurrenciaEnMes(d))];
     if (asignado && asignado !== edificioSolicitado) continue;
-
     // Regla 2: si esa fecha puntual ya la tomó otro edificio, queda bloqueada para el resto
     const ocupante = edificioPorFecha[dateStr];
     if (ocupante && ocupante !== edificioSolicitado) continue;
-
     candidatos.push(...generarSlotsDia(dateStr, horario, duracion));
   }
-
   const ocupadas = new Set(filasCitas.map(r => new Date(r.fecha_hora).toISOString()));
   const libres = candidatos.filter(s => !ocupadas.has(new Date(s).toISOString()));
-
   ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: libres });
 });
-
 app.post('/api/agenda/reservar', async (req, res) => {
   const { fechaHora, nombreCliente, correoCliente, telefono, tieneInternet, edificio, numeroUnidad } = req.body;
   if (!fechaHora || !nombreCliente || !correoCliente || !telefono || !edificio || !numeroUnidad || tieneInternet === undefined) {
@@ -1162,17 +1049,14 @@ app.post('/api/agenda/reservar', async (req, res) => {
   const c = await getConfig();
   const cfg = c.calendario_config || {};
   if (!cfg.activo) return bad(res, 'La agenda no está activa en este momento.');
-
   const yaOcupado = await pool.query(`select 1 from citas where estado='confirmada' and fecha_hora=$1`, [fechaHora]);
   if (yaOcupado.rows.length) return bad(res, 'Ese horario ya no está disponible, elegí otro.', 409);
-
   const dateStr = fechaMontevideoStr(new Date(fechaHora));
   const otroEdificio = await pool.query(
     `select 1 from citas where estado='confirmada' and (fecha_hora at time zone 'America/Montevideo')::date = $1::date and edificio <> $2 limit 1`,
     [dateStr, edificio]
   );
   if (otroEdificio.rows.length) return bad(res, 'Esa fecha ya quedó asignada a otro edificio, elegí otra.', 409);
-
   const token = crypto.randomUUID();
   const duracion = cfg.duracionMinutos || 60;
   const r = await pool.query(
@@ -1181,7 +1065,6 @@ app.post('/api/agenda/reservar', async (req, res) => {
     [nombreCliente, correoCliente, telefono, !!tieneInternet, edificio, numeroUnidad, fechaHora, duracion, token]
   );
   const citaId = r.rows[0].id;
-
   if (cfg.googleCalendarId) {
     try {
       const inicio = new Date(fechaHora);
@@ -1195,7 +1078,6 @@ app.post('/api/agenda/reservar', async (req, res) => {
       await pool.query('update citas set google_event_id=$1 where id=$2', [evento.id, citaId]);
     } catch (e) { console.error('Error creando evento de Google Calendar:', e.message); }
   }
-
   try {
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const linkCancelar = `${baseUrl}/cancelar-cita/${token}`;
@@ -1213,10 +1095,8 @@ app.post('/api/agenda/reservar', async (req, res) => {
       html
     });
   } catch (e) { console.error('Error enviando confirmación de turno:', e.message); }
-
   ok(res, { ok: true });
 });
-
 app.post('/api/agenda/cancelar/:token', async (req, res) => {
   const cita = (await pool.query('select * from citas where token_cancelacion=$1', [req.params.token])).rows[0];
   if (!cita) return bad(res, 'Turno no encontrado.', 404);
@@ -1227,11 +1107,9 @@ app.post('/api/agenda/cancelar/:token', async (req, res) => {
   if (cfg.googleCalendarId && cita.google_event_id) await eliminarEventoGoogle(cfg.googleCalendarId, cita.google_event_id);
   ok(res, { ok: true });
 });
-
 app.get('/agendar', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'agendar.html'));
 });
-
 app.get('/cancelar-cita/:token', async (req, res) => {
   const cita = (await pool.query('select * from citas where token_cancelacion=$1', [req.params.token])).rows[0];
   if (!cita) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Turno no encontrado</h1>');
@@ -1261,9 +1139,7 @@ app.get('/cancelar-cita/:token', async (req, res) => {
     </script>`}
   </div></body></html>`);
 });
-
 /* ---------------- Documentos legales (descargos con firma electrónica) ---------------- */
-
 app.get('/api/documentos-legales', requireStaff, async (req, res) => {
   ok(res, (await pool.query('select * from documentos_legales order by nombre')).rows);
 });
@@ -1282,17 +1158,14 @@ app.delete('/api/documentos-legales/:id', requireStaff, async (req, res) => {
   await pool.query('delete from documentos_legales where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-
 // Trae las aceptaciones (pendientes o firmadas) asociadas a un ticket, para mostrar su estado
 app.get('/api/tickets/:id/aceptaciones', requireStaff, async (req, res) => {
   ok(res, (await pool.query('select * from aceptaciones_legales where ticket_id=$1 order by creado desc', [req.params.id])).rows);
 });
-
 app.get('/aceptar-documento/:token', async (req, res) => {
   const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
   if (!a) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Documento no encontrado</h1>');
   const t = (await pool.query('select remitente_nombre, remitente_email from tickets where id=$1', [a.ticket_id])).rows[0] || {};
-
   if (a.estado === 'aceptado') {
     const fechaFmt = new Date(a.fecha_aceptacion).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
     return res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Documento aceptado</title>
@@ -1301,7 +1174,6 @@ app.get('/aceptar-documento/:token', async (req, res) => {
     h1{font-size:20px;color:#1F8A5F;} p{color:#48607F;line-height:1.5;}</style></head>
     <body><div class="card"><h1>✅ Este documento ya fue aceptado</h1><p>Quedó registrada la aceptación de <strong>${escapeHtmlSrv(a.nombre_solicitante || t.remitente_nombre || '')}</strong> el ${fechaFmt}.</p></div></body></html>`);
   }
-
   res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtmlSrv(a.documento_nombre)}</title>
   <style>
@@ -1367,7 +1239,6 @@ app.get('/aceptar-documento/:token', async (req, res) => {
   </script>
   </body></html>`);
 });
-
 app.post('/api/documentos/aceptar/:token', async (req, res) => {
   const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
   if (!a) return bad(res, 'No encontrado', 404);
@@ -1391,25 +1262,20 @@ app.post('/api/documentos/aceptar/:token', async (req, res) => {
   await pool.query('update tickets set actualizado=now() where id=$1', [a.ticket_id]);
   ok(res, { ok: true });
 });
-
 /* ---------------- Calendario: configuración (staff) ---------------- */
-
 app.get('/api/calendario-config', requireStaff, async (req, res) => {
   const c = await getConfig();
   const creds = credencialesGoogle();
   ok(res, { config: c.calendario_config || {}, edificios: c.calendario_edificios || [], googleServiceEmail: creds ? creds.client_email : null });
 });
-
 app.put('/api/calendario-config', requireStaff, async (req, res) => {
   await pool.query('update configuracion set calendario_config=$1 where id=1', [JSON.stringify(req.body.config || {})]);
   ok(res, { ok: true });
 });
-
 app.put('/api/calendario-edificios', requireStaff, async (req, res) => {
   await pool.query('update configuracion set calendario_edificios=$1 where id=1', [req.body.edificios || []]);
   ok(res, { ok: true });
 });
-
 app.post('/api/calendario-config/probar', requireStaff, async (req, res) => {
   try {
     const c = await getConfig();
@@ -1419,14 +1285,11 @@ app.post('/api/calendario-config/probar', requireStaff, async (req, res) => {
     ok(res, { ok: true, nombre: data.summary });
   } catch (e) { bad(res, e.message); }
 });
-
 app.get('/api/citas', requireStaff, async (req, res) => {
   const citas = (await pool.query(`select * from citas where fecha_hora >= now() - interval '1 day' order by fecha_hora asc`)).rows;
   ok(res, citas);
 });
-
 /* ---------------- Notificaciones a Telegram ---------------- */
-
 async function enviarTelegramForzado(chatId, texto, threadId) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('Falta configurar TELEGRAM_BOT_TOKEN en el servidor.');
@@ -1439,7 +1302,6 @@ async function enviarTelegramForzado(chatId, texto, threadId) {
   if (!data.ok) throw new Error(data.description || 'Error desconocido al enviar a Telegram.');
   return data;
 }
-
 async function enviarTelegram(texto, threadId) {
   try {
     const c = await getConfig();
@@ -1451,7 +1313,6 @@ async function enviarTelegram(texto, threadId) {
     return false;
   }
 }
-
 // Crea un tema (sub-chat) nuevo dentro del grupo para un ticket. Si falla (permisos, temas
 // no habilitados, etc.) devuelve null y el resto del sistema sigue funcionando sin tema dedicado.
 async function crearTemaTelegramParaTicket(chatId, numero, asunto) {
@@ -1468,11 +1329,9 @@ async function crearTemaTelegramParaTicket(chatId, numero, asunto) {
     return data.result.message_thread_id;
   } catch (e) { console.error('Error creando tema de Telegram:', e.message); return null; }
 }
-
 async function notificarTelegramNuevoTicket(ticket, baseUrl) {
   const textoCompleto = `${ticket.asunto} ${ticket.cuerpoResumen || ''}`.toLowerCase();
   if (textoCompleto.includes('reserva')) return; // los tickets de reserva no se avisan por Telegram
-
   const link = baseUrl ? `${baseUrl}/?ticket=${ticket.id}` : '';
   const resumen = (ticket.cuerpoResumen || '').slice(0, 220);
   const mensaje =
@@ -1483,7 +1342,6 @@ async function notificarTelegramNuevoTicket(ticket, baseUrl) {
     (link ? `\n\n👉 <a href="${link}">Abrir en el sistema</a>` : '');
   await enviarTelegram(mensaje);
 }
-
 // Envía un mensaje de Telegram a un chat privado específico (no al grupo general)
 async function enviarTelegramA(chatId, texto) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -1497,7 +1355,6 @@ async function enviarTelegramA(chatId, texto) {
     return !!data.ok;
   } catch (e) { console.error('Error enviando Telegram privado:', e.message); return false; }
 }
-
 // Igual que enviarTelegramA, pero además recuerda a qué ticket corresponde ese mensaje puntual,
 // para que si el técnico lo responde citándolo (Responder), el sistema sepa a qué ticket se refiere.
 async function enviarTelegramARegistrado(chatId, texto, ticketId) {
@@ -1518,7 +1375,6 @@ async function enviarTelegramARegistrado(chatId, texto, ticketId) {
     return !!data.ok;
   } catch (e) { console.error('Error enviando Telegram privado:', e.message); return false; }
 }
-
 // Revisa mensajes privados nuevos que le llegaron al bot, para vincular la cuenta de quien mandó su código
 // Responde un ticket exactamente como si se hiciera desde la plataforma: mensaje saliente,
 // cambio de estado, aviso de asignación si estaba libre, y envío real por correo al cliente.
@@ -1526,7 +1382,6 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
   const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return { ok: false, error: 'No encontré ningún ticket con ese número.' };
   const staff = (await pool.query('select nombre, apellido, firma_html from usuarios where id=$1', [staffId])).rows[0];
-
   if (!t.asignado_a) {
     await pool.query('update tickets set asignado_a=$1 where id=$2', [staffId, ticketId]);
     const ccsAsig = await collectTicketCCs(ticketId);
@@ -1534,7 +1389,6 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`, [ticketId, 'Notificación automática', msgAsig]);
     await enviarEmailReal({ to: t.remitente_email, cc: ccsAsig, subject: `[${t.numero}] ${t.asunto}`, text: msgAsig, esAutomatico: true });
   }
-
   const firmaHtml = staff.firma_html || '';
   await pool.query(
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, firma_html) values ($1,'saliente',$2,$3,$4)`,
@@ -1542,21 +1396,31 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
   );
   if (t.estado === 'Abierto') await pool.query(`update tickets set estado='En progreso' where id=$1`, [ticketId]);
   await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [ticketId]);
-
   const ccs = await collectTicketCCs(ticketId);
   const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, html: htmlBody });
   return { ok: true, numero: t.numero };
 }
-
+// NOTA (fix bucle Telegram, 25/08/2026): agregamos un candado (telegramPollingEnCurso), igual al que
+// ya tenía revisarCasillaReal, para que nunca puedan correr dos revisiones de Telegram al mismo tiempo
+// (por ejemplo si durante un redeploy quedan dos instancias del servidor activas unos segundos).
+// Sin este candado, dos ejecuciones simultáneas podían leer el mismo offset guardado, recibir el mismo
+// update de Telegram, y procesar/responder la misma respuesta dos veces (el bucle del aviso "✅ Respuesta
+// enviada al cliente..."). También agregamos el chequeo de c.telegram_activo, que antes faltaba: esta
+// función corría siempre sin importar el interruptor de Configuración.
+let telegramPollingEnCurso = false;
 async function revisarTelegramUpdates() {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) return;
+  if (telegramPollingEnCurso) return;
+  telegramPollingEnCurso = true;
   try {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
     const c = await getConfig();
+    if (!c.telegram_activo) return;
     const offset = (c.telegram_ultimo_update_id || 0) + 1;
     const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=0`);
     const data = await r.json();
+    console.log(`[DIAGNOSTICO] offset usado=${offset}, guardado_en_bd=${c.telegram_ultimo_update_id}, cantidad_recibida=${data.result ? data.result.length : 0}, ids_recibidos=${data.result ? data.result.map(u => u.update_id).join(',') : '-'}`);
     if (!data.ok || !data.result || !data.result.length) return;
     let maxId = c.telegram_ultimo_update_id || 0;
     for (const update of data.result) {
@@ -1567,7 +1431,6 @@ async function revisarTelegramUpdates() {
         const msg = update.message;
         if (!msg || !msg.text || !msg.chat || msg.chat.type !== 'private' || (msg.from && msg.from.is_bot)) continue;
         const texto = msg.text.trim();
-
         // 1) ¿Es un código de vinculación?
         const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [texto.toUpperCase()])).rows[0];
         if (usuario) {
@@ -1575,13 +1438,11 @@ async function revisarTelegramUpdates() {
           await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. Vas a recibir acá tus avisos, y para responder un ticket alcanza con mantener presionado ese aviso y elegir "Responder" (sin necesitar escribir el número).`);
           continue;
         }
-
         const staffRow = (await pool.query('select id from usuarios where telegram_chat_id=$1', [String(msg.chat.id)])).rows[0];
         if (!staffRow) {
           await enviarTelegramA(msg.chat.id, '⚠️ Tu Telegram todavía no está vinculado a ningún usuario del sistema. Generá tu código desde "Mi perfil" primero.');
           continue;
         }
-
         // 2) ¿Está respondiendo (citando) el aviso de un ticket puntual?
         let ticketId = null;
         let cuerpoRespuesta = texto;
@@ -1592,7 +1453,6 @@ async function revisarTelegramUpdates() {
           )).rows[0];
           if (rel) ticketId = rel.ticket_id;
         }
-
         // 3) Si no citó nada reconocible, ¿escribió el número a mano? formato: T-2026-13973 mensaje
         if (!ticketId) {
           const m = texto.match(/^#?\s*(T-\d{4}-\d+)[:\s-]+([\s\S]+)$/i);
@@ -1603,12 +1463,11 @@ async function revisarTelegramUpdates() {
             cuerpoRespuesta = m[2].trim();
           }
         }
-
         if (!ticketId) {
           await enviarTelegramA(msg.chat.id, 'No reconocí a qué ticket te referís. Mantené presionado el aviso de ese ticket → "Responder", o escribí el número seguido de tu mensaje:\nT-2026-0001 tu mensaje de respuesta');
           continue;
         }
-
+        console.log(`[DIAGNOSTICO] Procesando respuesta de ticket. update_id=${update.update_id}, ticketId=${ticketId}, texto="${cuerpoRespuesta.slice(0,50)}"`);
         const resultado = await responderTicketViaTelegram(ticketId, staffRow.id, cuerpoRespuesta);
         await enviarTelegramA(msg.chat.id, resultado.ok ? `✅ Respuesta enviada al cliente del ticket ${resultado.numero}.` : `⚠️ ${resultado.error}`);
       } catch (eInterno) {
@@ -1616,8 +1475,8 @@ async function revisarTelegramUpdates() {
       }
     }
   } catch (e) { console.error('Error revisando mensajes de Telegram:', e.message); }
+  finally { telegramPollingEnCurso = false; }
 }
-
 // Recorre los tickets asignados sin actividad reciente y manda recordatorios (y escala al grupo si corresponde)
 async function revisarSeguimientoTickets() {
   try {
@@ -1626,7 +1485,6 @@ async function revisarSeguimientoTickets() {
     const diasRecordatorio = c.seguimiento_dias_recordatorio || 2;
     const diasEscalar = c.seguimiento_dias_escalar || 0; // 0 = escalada desactivada
     const repetirDias = c.seguimiento_repetir_dias || diasRecordatorio;
-
     const stale = (await pool.query(
       `select id, numero, asunto, remitente_nombre, asignado_a, actualizado, ultimo_recordatorio, ultima_escalada
        from tickets
@@ -1635,16 +1493,13 @@ async function revisarSeguimientoTickets() {
       [diasRecordatorio]
     )).rows;
     if (!stale.length) return;
-
     const usuarios = (await pool.query('select id, nombre, telegram_chat_id from usuarios')).rows;
     const ahora = Date.now();
     const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
-
     for (const t of stale) {
       const diasSinActividad = Math.floor((ahora - new Date(t.actualizado).getTime()) / 86400000);
       const link = baseUrl ? `${baseUrl}/?ticket=${t.id}` : '';
       const agente = usuarios.find(u => u.id === t.asignado_a);
-
       const necesitaRecordatorio = !t.ultimo_recordatorio || Math.floor((ahora - new Date(t.ultimo_recordatorio).getTime()) / 86400000) >= repetirDias;
       if (necesitaRecordatorio) {
         if (agente && agente.telegram_chat_id) {
@@ -1659,7 +1514,6 @@ async function revisarSeguimientoTickets() {
         }
         await pool.query('update tickets set ultimo_recordatorio=now() where id=$1', [t.id]);
       }
-
       if (diasEscalar > 0 && diasSinActividad >= diasEscalar) {
         const necesitaEscalada = !t.ultima_escalada || Math.floor((ahora - new Date(t.ultima_escalada).getTime()) / 86400000) >= repetirDias;
         if (necesitaEscalada) {
@@ -1671,7 +1525,6 @@ async function revisarSeguimientoTickets() {
     }
   } catch (e) { console.error('Error en seguimiento de tickets:', e.message); }
 }
-
 // Después de la hora configurada, manda al grupo de Telegram un mensaje por cada ticket sin asignar.
 // Se repite todos los días, pero como mucho una vez por día.
 async function revisarRecordatorioDiarioSinAsignar() {
@@ -1679,21 +1532,17 @@ async function revisarRecordatorioDiarioSinAsignar() {
     const c = await getConfig();
     if (c.recordatorio_sin_asignar_activo === false) return;
     if (!c.telegram_activo || !c.telegram_chat_id) return;
-
     const horaConfigurada = c.recordatorio_sin_asignar_hora || '18:00';
     const horaActual = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Montevideo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
     if (horaActual < horaConfigurada) return;
-
     const hoyStr = fechaMontevideoStr(new Date());
     const ultimoStr = c.recordatorio_sin_asignar_ultimo ? new Date(c.recordatorio_sin_asignar_ultimo).toISOString().slice(0, 10) : null;
     if (ultimoStr === hoyStr) return;
-
     const candidatos = (await pool.query(
       `select id, numero, asunto, remitente_nombre from tickets
        where asignado_a is null and estado not in ('Resuelto','Cerrado')
        order by creado asc`
     )).rows.filter(t => !(t.asunto || '').toLowerCase().includes('reserva'));
-
     if (candidatos.length) {
       const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
       await enviarTelegram(`📋 <b>Recordatorio de fin del día</b>\nHay ${candidatos.length} ticket(s) sin asignar:`);
@@ -1706,25 +1555,20 @@ async function revisarRecordatorioDiarioSinAsignar() {
     await pool.query('update configuracion set recordatorio_sin_asignar_ultimo=$1 where id=1', [hoyStr]);
   } catch (e) { console.error('Error en recordatorio diario de sin asignar:', e.message); }
 }
-
 function escapeHtmlSrv(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-
 /* ---------------- Portal de cliente ---------------- */
-
 app.get('/api/portal/tickets', requireCliente, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.session.clienteId])).rows;
   ok(res, tickets);
 });
-
 app.get('/api/portal/tickets/:id', requireCliente, async (req, res) => {
   const t = await ticketConMensajes(req.params.id);
   if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
   t.mensajes = t.mensajes.filter(m => m.tipo !== 'nota');
   ok(res, t);
 });
-
 app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) => {
   const id = req.params.id;
   const cuerpo = (req.body.cuerpo || '').trim();
@@ -1743,14 +1587,11 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
 });
-
 /* ---------------- Recepción real de correo (IMAP) ---------------- */
-
 function esFinDeSemanaUruguay() {
   const dia = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(new Date());
   return dia === 'Sat' || dia === 'Sun';
 }
-
 async function aplicarAvisoFinDeSemana(ticketId) {
   if (!esFinDeSemanaUruguay()) return;
   const cfg = await getConfig();
@@ -1770,7 +1611,6 @@ async function aplicarAvisoFinDeSemana(ticketId) {
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
-
 // Lunes a viernes, fuera del horario laboral configurado (ej: antes de las 09:00 o desde las 18:00)
 function esFueraDeHorarioLaboral(cfg) {
   const dia = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Montevideo', weekday: 'short' }).format(new Date());
@@ -1780,7 +1620,6 @@ function esFueraDeHorarioLaboral(cfg) {
   const cierre = cfg.aviso_fuera_horario_fin || '18:00';
   return horaActual < apertura || horaActual >= cierre;
 }
-
 async function aplicarAvisoFueraHorario(ticketId) {
   const cfg = await getConfig();
   if (cfg.aviso_fuera_horario_activo === false) return;
@@ -1800,12 +1639,10 @@ async function aplicarAvisoFueraHorario(ticketId) {
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
-
 function extraerNumeroTicket(asunto) {
   const m = (asunto || '').match(/\[?(T-\d{4}-\d+)\]?/i);
   return m ? m[1].toUpperCase() : null;
 }
-
 function recortarCitas(texto) {
   const lineas = texto.split('\n');
   let corte = -1;
@@ -1825,7 +1662,6 @@ function recortarCitas(texto) {
   while (resultado.length && /^[-_]{3,}$/.test(resultado[resultado.length - 1].trim())) resultado.pop();
   return resultado.join('\n').trim();
 }
-
 async function procesarCorreoEntrante(parsed) {
   const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0] : null;
   if (!fromAddr) return;
@@ -1843,7 +1679,6 @@ async function procesarCorreoEntrante(parsed) {
     cuerpo = '(mensaje sin texto)';
   }
   const numeroDetectado = extraerNumeroTicket(asunto);
-
   const adjuntosCrudos = [];
   for (const a of (parsed.attachments || [])) {
     if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
@@ -1874,12 +1709,10 @@ async function procesarCorreoEntrante(parsed) {
     }
     if (cambio) await pool.query('update mensajes set cuerpo_html=$1 where id=$2', [htmlCorregido, mensajeId]);
   }
-
   let ticket = null;
   if (numeroDetectado) {
     ticket = (await pool.query('select * from tickets where numero=$1', [numeroDetectado])).rows[0];
   }
-
   if (ticket) {
     const adjuntos = await subirAdjuntosCrudos(ticket.id);
     const rm = await pool.query(
@@ -1917,7 +1750,6 @@ async function procesarCorreoEntrante(parsed) {
     await notificarTelegramNuevoTicket({ id: ticketId, numero, asunto, remitenteNombre, remitenteEmail, cuerpoResumen: cuerpo }, baseUrlAuto);
   }
 }
-
 let pollingEnCurso = false;
 async function revisarCasillaReal() {
   if (pollingEnCurso) return;
@@ -1927,7 +1759,6 @@ async function revisarCasillaReal() {
     if (!cfg.correo_activo || !cfg.imap_host || !cfg.imap_usuario || !cfg.imap_pass_enc) return;
     const pass = decrypt(cfg.imap_pass_enc);
     if (!pass) return;
-
     const client = new ImapFlow({
       host: cfg.imap_host, port: cfg.imap_port || 993, secure: true,
       auth: { user: cfg.imap_usuario, pass }, logger: false
@@ -1958,37 +1789,28 @@ async function revisarCasillaReal() {
     pollingEnCurso = false;
   }
 }
-
 // Revisa la casilla apenas arranca el servidor, y después cada 60 segundos
 setTimeout(revisarCasillaReal, 8000);
 setInterval(revisarCasillaReal, 60 * 1000);
-
 setTimeout(revisarTelegramUpdates, 5000);
 setInterval(revisarTelegramUpdates, 60 * 1000);
-
 setTimeout(revisarSeguimientoTickets, 20000);
 setInterval(revisarSeguimientoTickets, 30 * 60 * 1000);
-
 setTimeout(ejecutarRespaldoProgramado, 40000);
 setInterval(ejecutarRespaldoProgramado, 6 * 60 * 60 * 1000);
-
 setTimeout(revisarRecordatorioDiarioSinAsignar, 25000);
 setInterval(revisarRecordatorioDiarioSinAsignar, 15 * 60 * 1000);
-
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
-
 app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
   if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
   const { ticketId, mensajeId, adjuntoId } = req.params;
   const t = (await pool.query('select cliente_id from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return res.status(404).json({ error: 'No encontrado' });
   if (req.session.type === 'cliente' && t.cliente_id !== req.session.clienteId) return res.status(403).json({ error: 'No autorizado' });
-
   const m = (await pool.query('select adjuntos from mensajes where id=$1 and ticket_id=$2', [mensajeId, ticketId])).rows[0];
   if (!m) return res.status(404).json({ error: 'No encontrado' });
   const adj = (m.adjuntos || []).find(a => a.id === adjuntoId);
   if (!adj || !adj.path) return res.status(404).json({ error: 'Adjunto no encontrado' });
-
   try {
     const upstream = await descargarArchivoStorage(adj.path);
     const buf = Buffer.from(await upstream.arrayBuffer());
@@ -1999,17 +1821,13 @@ app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
 /* ---------------- Fallback ---------------- */
-
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'No encontrado' });
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ error: 'Error interno del servidor' });
 });
-
 app.listen(PORT, () => console.log(`Ticketera escuchando en el puerto ${PORT}`));
