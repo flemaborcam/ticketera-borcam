@@ -1363,12 +1363,13 @@ function renderPerfil() {
       <div class="reply-actions" style="margin-top:12px;"><button type="button" class="btn btn-primary" onclick="saveFirma()">Guardar firma</button></div>
     </div>
     <div class="card card-narrow" style="margin-top:18px;">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Recordatorios por Telegram</div>
+      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Telegram: recordatorios y respuestas</div>
       ${u.telegram_chat_id ? `
-        <div class="hint-text" style="margin-bottom:12px;color:var(--stamp-green);font-weight:600;">✅ Tu Telegram ya está vinculado. Vas a recibir ahí los recordatorios de tickets asignados que estén parados hace varios días.</div>
+        <div class="hint-text" style="margin-bottom:12px;color:var(--stamp-green);font-weight:600;">✅ Tu Telegram ya está vinculado.</div>
+        <div class="hint-text" style="margin-bottom:12px;">Recibís ahí, por privado, el aviso cuando tomás un ticket y los recordatorios de los que llevan varios días sin atender. Para responderle al cliente, simplemente mantené presionado ese aviso y elegí <strong>"Responder"</strong> — no hace falta escribir ningún número, el sistema reconoce a qué ticket corresponde por el mensaje que citaste. (Si preferís escribir el número a mano igual funciona: <strong>T-2026-0001 tu mensaje</strong>). Esa respuesta le llega al cliente exactamente igual que si la hubieras escrito desde la plataforma.</div>
         <button type="button" class="btn btn-ghost btn-block" onclick="desvincularTelegram()">Desvincular Telegram</button>
       ` : `
-        <div class="hint-text" style="margin-bottom:12px;">Vinculá tu Telegram para recibir avisos privados si un ticket asignado a vos lleva varios días sin actividad.</div>
+        <div class="hint-text" style="margin-bottom:12px;">Vinculá tu Telegram para recibir avisos privados de tickets sin atender, y para poder responder tickets directamente por Telegram sin necesidad de entrar a la plataforma.</div>
         <button type="button" class="btn btn-primary btn-block" onclick="generarCodigoTelegram()">Generar código para vincular</button>
         <div id="codigo-telegram" style="margin-top:10px;"></div>
       `}
