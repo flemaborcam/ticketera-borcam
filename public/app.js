@@ -756,6 +756,15 @@ async function probarTelegram() {
   } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
 }
 
+async function probarSeguimiento() {
+  const el = document.getElementById('resultado-seguimiento');
+  if (el) el.innerHTML = '<span class="hint-text">Ejecutando revisión…</span>';
+  try {
+    await api('POST', '/api/configuracion/probar-seguimiento');
+    if (el) el.innerHTML = `<span style="color:var(--stamp-green);font-weight:600;">Listo, revisión ejecutada ✓ (si correspondía algún aviso, ya se mandó)</span>`;
+  } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
+}
+
 async function eliminarTodosLosTickets() {
   const escrito = prompt('Esto borra TODOS los tickets del sistema, sin excepción, y no se puede deshacer.\n\nEscribí ELIMINAR (en mayúsculas) para confirmar:');
   if (escrito !== 'ELIMINAR') { if (escrito !== null) showToast('No se eliminó nada: el texto no coincidía.'); return; }
@@ -1472,6 +1481,11 @@ function renderConfiguracion() {
       <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
         <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
         <div id="resultado-telegram" style="margin-top:8px;"></div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" class="btn btn-ghost btn-block" onclick="probarSeguimiento()">Ejecutar revisión de seguimiento ahora (prueba)</button>
+        <div class="hint-text" style="margin-top:6px;">Fuerza la revisión al instante, sin esperar los 30 minutos habituales. Útil solo para probar.</div>
+        <div id="resultado-seguimiento" style="margin-top:8px;"></div>
       </div>
       ${currentUser().es_superadmin ? `
       <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
