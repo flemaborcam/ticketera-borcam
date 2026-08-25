@@ -671,8 +671,14 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: mensaje, esAutomatico: true });
 
   if (staff.telegram_chat_id) {
+    const ultimoCliente = (await pool.query(
+      `select cuerpo from mensajes where ticket_id=$1 and tipo='entrante' order by fecha desc limit 1`, [id]
+    )).rows[0];
+    const consulta = ultimoCliente ? ultimoCliente.cuerpo.replace(/\s+/g, ' ').trim().slice(0, 400) : '';
     await enviarTelegramARegistrado(staff.telegram_chat_id,
-      `✅ <b>Tomaste el ticket ${escapeHtmlSrv(t.numero)}</b>\n${escapeHtmlSrv(t.asunto)}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}\n\nPara responderlo, respondé (Responder) este mismo mensaje con tu respuesta.`,
+      `✅ <b>Tomaste el ticket ${escapeHtmlSrv(t.numero)}</b>\n${escapeHtmlSrv(t.asunto)}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}` +
+      (consulta ? `\n\n"${escapeHtmlSrv(consulta)}${ultimoCliente.cuerpo.length > 400 ? '…' : ''}"` : '') +
+      `\n\nPara responderlo, respondé (Responder) este mismo mensaje con tu respuesta.`,
       id
     );
   }
@@ -1637,7 +1643,13 @@ async function revisarSeguimientoTickets() {
       const necesitaRecordatorio = !t.ultimo_recordatorio || Math.floor((ahora - new Date(t.ultimo_recordatorio).getTime()) / 86400000) >= repetirDias;
       if (necesitaRecordatorio) {
         if (agente && agente.telegram_chat_id) {
-          const msg = `⏰ <b>Recordatorio de ticket</b>\nEl ticket #${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}" está asignado a vos y no tiene actividad hace ${diasSinActividad} día(s).\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}\n\nRespondé (Responder) este mensaje con tu respuesta para el cliente.`;
+          const ultimoCliente = (await pool.query(
+            `select cuerpo from mensajes where ticket_id=$1 and tipo='entrante' order by fecha desc limit 1`, [t.id]
+          )).rows[0];
+          const consulta = ultimoCliente ? ultimoCliente.cuerpo.replace(/\s+/g, ' ').trim().slice(0, 400) : '';
+          const msg = `⏰ <b>Recordatorio de ticket</b>\nEl ticket #${escapeHtmlSrv(t.numero)} "${escapeHtmlSrv(t.asunto)}" está asignado a vos y no tiene actividad hace ${diasSinActividad} día(s).\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}` +
+            (consulta ? `\n\n"${escapeHtmlSrv(consulta)}${ultimoCliente.cuerpo.length > 400 ? '…' : ''}"` : '') +
+            `${link ? `\n\n👉 <a href="${link}">Abrir ticket</a>` : ''}\n\nRespondé (Responder) este mensaje con tu respuesta para el cliente.`;
           await enviarTelegramARegistrado(agente.telegram_chat_id, msg, t.id);
         }
         await pool.query('update tickets set ultimo_recordatorio=now() where id=$1', [t.id]);
