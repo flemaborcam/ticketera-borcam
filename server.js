@@ -1417,12 +1417,18 @@ async function revisarTelegramUpdates() {
     if (!token) return;
     const c = await getConfig();
     if (!c.telegram_activo) return;
-    const offset = (c.telegram_ultimo_update_id || 0) + 1;
+    // NOTA (fix bucle Telegram #2, 25/08/2026): la columna telegram_ultimo_update_id es bigint en
+    // Postgres, y la librería pg la devuelve como TEXTO (string), no como número, para no perder
+    // precisión. Sin el Number(...) de acá abajo, "814322746" + 1 hacía una concatenación de texto
+    // ("8143227461") en vez de una suma real (814322747). Ese offset corrupto nunca coincidía con
+    // ningún update real de Telegram, así que Telegram nunca confirmaba nada y reenviaba para
+    // siempre el mismo lote de mensajes viejos sin procesar.
+    const offset = (Number(c.telegram_ultimo_update_id) || 0) + 1;
     const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=0`);
     const data = await r.json();
     console.log(`[DIAGNOSTICO] offset usado=${offset}, guardado_en_bd=${c.telegram_ultimo_update_id}, cantidad_recibida=${data.result ? data.result.length : 0}, ids_recibidos=${data.result ? data.result.map(u => u.update_id).join(',') : '-'}`);
     if (!data.ok || !data.result || !data.result.length) return;
-    let maxId = c.telegram_ultimo_update_id || 0;
+    let maxId = Number(c.telegram_ultimo_update_id) || 0;
     for (const update of data.result) {
       if (update.update_id > maxId) maxId = update.update_id;
       // Guardamos el avance ANTES de procesar: si algo falla abajo, nunca reprocesamos el mismo mensaje en bucle.
