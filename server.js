@@ -1041,6 +1041,13 @@ app.post('/api/configuracion/probar-telegram', requireStaff, async (req, res) =>
   } catch (e) { bad(res, e.message); }
 });
 
+app.post('/api/configuracion/probar-seguimiento', requireStaff, async (req, res) => {
+  try {
+    await revisarSeguimientoTickets();
+    ok(res, { ok: true });
+  } catch (e) { bad(res, e.message); }
+});
+
 app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
   const c = await getConfig();
   const resultado = { imap: { ok: false, error: null }, smtp: { ok: false, error: null } };
