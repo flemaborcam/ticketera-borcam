@@ -1561,55 +1561,60 @@ async function revisarTelegramUpdates() {
     let maxId = c.telegram_ultimo_update_id || 0;
     for (const update of data.result) {
       if (update.update_id > maxId) maxId = update.update_id;
-      const msg = update.message;
-      if (!msg || !msg.text || !msg.chat || msg.chat.type !== 'private' || (msg.from && msg.from.is_bot)) continue;
-      const texto = msg.text.trim();
+      // Guardamos el avance ANTES de procesar: si algo falla abajo, nunca reprocesamos el mismo mensaje en bucle.
+      await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
+      try {
+        const msg = update.message;
+        if (!msg || !msg.text || !msg.chat || msg.chat.type !== 'private' || (msg.from && msg.from.is_bot)) continue;
+        const texto = msg.text.trim();
 
-      // 1) ¿Es un código de vinculación?
-      const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [texto.toUpperCase()])).rows[0];
-      if (usuario) {
-        await pool.query('update usuarios set telegram_chat_id=$1, telegram_link_code=null where id=$2', [String(msg.chat.id), usuario.id]);
-        await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. Vas a recibir acá tus avisos, y para responder un ticket alcanza con mantener presionado ese aviso y elegir "Responder" (sin necesitar escribir el número).`);
-        continue;
-      }
-
-      const staffRow = (await pool.query('select id from usuarios where telegram_chat_id=$1', [String(msg.chat.id)])).rows[0];
-      if (!staffRow) {
-        await enviarTelegramA(msg.chat.id, '⚠️ Tu Telegram todavía no está vinculado a ningún usuario del sistema. Generá tu código desde "Mi perfil" primero.');
-        continue;
-      }
-
-      // 2) ¿Está respondiendo (citando) el aviso de un ticket puntual?
-      let ticketId = null;
-      let cuerpoRespuesta = texto;
-      if (msg.reply_to_message) {
-        const rel = (await pool.query(
-          'select ticket_id from telegram_notificaciones_ticket where chat_id=$1 and message_id=$2',
-          [String(msg.chat.id), msg.reply_to_message.message_id]
-        )).rows[0];
-        if (rel) ticketId = rel.ticket_id;
-      }
-
-      // 3) Si no citó nada reconocible, ¿escribió el número a mano? formato: T-2026-13973 mensaje
-      if (!ticketId) {
-        const m = texto.match(/^#?\s*(T-\d{4}-\d+)[:\s-]+([\s\S]+)$/i);
-        if (m) {
-          const ticketRow = (await pool.query('select id from tickets where numero=$1', [m[1].toUpperCase()])).rows[0];
-          if (!ticketRow) { await enviarTelegramA(msg.chat.id, `⚠️ No encontré ningún ticket con el número ${m[1].toUpperCase()}.`); continue; }
-          ticketId = ticketRow.id;
-          cuerpoRespuesta = m[2].trim();
+        // 1) ¿Es un código de vinculación?
+        const usuario = (await pool.query('select id, nombre from usuarios where telegram_link_code=$1', [texto.toUpperCase()])).rows[0];
+        if (usuario) {
+          await pool.query('update usuarios set telegram_chat_id=$1, telegram_link_code=null where id=$2', [String(msg.chat.id), usuario.id]);
+          await enviarTelegramA(msg.chat.id, `✅ ¡Listo, ${usuario.nombre}! Ya vinculamos tu Telegram. Vas a recibir acá tus avisos, y para responder un ticket alcanza con mantener presionado ese aviso y elegir "Responder" (sin necesitar escribir el número).`);
+          continue;
         }
-      }
 
-      if (!ticketId) {
-        await enviarTelegramA(msg.chat.id, 'No reconocí a qué ticket te referís. Mantené presionado el aviso de ese ticket → "Responder", o escribí el número seguido de tu mensaje:\nT-2026-0001 tu mensaje de respuesta');
-        continue;
-      }
+        const staffRow = (await pool.query('select id from usuarios where telegram_chat_id=$1', [String(msg.chat.id)])).rows[0];
+        if (!staffRow) {
+          await enviarTelegramA(msg.chat.id, '⚠️ Tu Telegram todavía no está vinculado a ningún usuario del sistema. Generá tu código desde "Mi perfil" primero.');
+          continue;
+        }
 
-      const resultado = await responderTicketViaTelegram(ticketId, staffRow.id, cuerpoRespuesta);
-      await enviarTelegramA(msg.chat.id, resultado.ok ? `✅ Respuesta enviada al cliente del ticket ${resultado.numero}.` : `⚠️ ${resultado.error}`);
+        // 2) ¿Está respondiendo (citando) el aviso de un ticket puntual?
+        let ticketId = null;
+        let cuerpoRespuesta = texto;
+        if (msg.reply_to_message) {
+          const rel = (await pool.query(
+            'select ticket_id from telegram_notificaciones_ticket where chat_id=$1 and message_id=$2',
+            [String(msg.chat.id), msg.reply_to_message.message_id]
+          )).rows[0];
+          if (rel) ticketId = rel.ticket_id;
+        }
+
+        // 3) Si no citó nada reconocible, ¿escribió el número a mano? formato: T-2026-13973 mensaje
+        if (!ticketId) {
+          const m = texto.match(/^#?\s*(T-\d{4}-\d+)[:\s-]+([\s\S]+)$/i);
+          if (m) {
+            const ticketRow = (await pool.query('select id from tickets where numero=$1', [m[1].toUpperCase()])).rows[0];
+            if (!ticketRow) { await enviarTelegramA(msg.chat.id, `⚠️ No encontré ningún ticket con el número ${m[1].toUpperCase()}.`); continue; }
+            ticketId = ticketRow.id;
+            cuerpoRespuesta = m[2].trim();
+          }
+        }
+
+        if (!ticketId) {
+          await enviarTelegramA(msg.chat.id, 'No reconocí a qué ticket te referís. Mantené presionado el aviso de ese ticket → "Responder", o escribí el número seguido de tu mensaje:\nT-2026-0001 tu mensaje de respuesta');
+          continue;
+        }
+
+        const resultado = await responderTicketViaTelegram(ticketId, staffRow.id, cuerpoRespuesta);
+        await enviarTelegramA(msg.chat.id, resultado.ok ? `✅ Respuesta enviada al cliente del ticket ${resultado.numero}.` : `⚠️ ${resultado.error}`);
+      } catch (eInterno) {
+        console.error('Error procesando un mensaje de Telegram puntual (se saltea, no se reintenta):', eInterno.message);
+      }
     }
-    await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
   } catch (e) { console.error('Error revisando mensajes de Telegram:', e.message); }
 }
 
