@@ -1606,9 +1606,12 @@ function renderTagsAvisoStockBajo() {
     if (e.restante_vehicular <= TAGS_STOCK_MINIMO) bajos.push(`${e.edificio} (vehiculares: ${e.restante_vehicular})`);
   });
   if (!bajos.length) return '';
+  // Se limita la altura del aviso (con scroll interno) para que la lista de edificios en 0 no estire
+  // toda la página y empuje el menú lateral fuera de la pantalla cuando hay muchos casos a la vez.
   return `<div class="card card-narrow" style="max-width:100%;border-color:var(--stamp-red-tint);margin-bottom:14px;">
-    <strong style="color:var(--stamp-red);">⚠️ Stock bajo de tags</strong>
-    <div class="hint-text" style="margin-top:4px;">Quedan ${TAGS_STOCK_MINIMO} unidades o menos en: ${bajos.map(b => escapeHtml(b)).join(' · ')}. Hay que cargar nuevos tags al lote.</div>
+    <strong style="color:var(--stamp-red);">⚠️ Stock bajo de tags (${bajos.length})</strong>
+    <div class="hint-text" style="margin-top:4px;max-height:90px;overflow-y:auto;">Quedan ${TAGS_STOCK_MINIMO} unidades o menos en: ${bajos.map(b => escapeHtml(b)).join(' · ')}.</div>
+    <div class="hint-text" style="margin-top:4px;">Hay que cargar nuevos tags al lote.</div>
   </div>`;
 }
 function cambiarTagsTab(t) { state.tagsTab = t; render(); actualizarCostoTags(); }
