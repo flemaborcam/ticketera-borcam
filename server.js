@@ -34,6 +34,56 @@ async function descargarArchivoStorage(path) {
   if (!r.ok) throw new Error('No se pudo descargar el archivo.');
   return r;
 }
+// Lista los archivos guardados bajo un prefijo (por ejemplo, la carpeta de un ticket: su id).
+async function listarArchivosStorage(prefix) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return [];
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/list/${BUCKET_ADJUNTOS}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix: prefix || '', limit: 1000, offset: 0 })
+  });
+  if (!r.ok) throw new Error('No se pudo listar Storage (' + (await r.text()) + ')');
+  return await r.json();
+}
+// Borra una lista de archivos (rutas completas dentro del bucket) de una sola vez.
+async function eliminarArchivosStorage(paths) {
+  if (!paths || !paths.length || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) return;
+  const r = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET_ADJUNTOS}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`, apikey: SUPABASE_SERVICE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: paths })
+  });
+  if (!r.ok) throw new Error('No se pudieron borrar archivos de Storage (' + (await r.text()) + ')');
+}
+// Borra todos los adjuntos de un ticket puntual (su carpeta completa en Storage). Nunca frena el borrado
+// del ticket si Storage no está configurado o falla: solo lo avisa por log.
+async function eliminarAdjuntosDeTicket(ticketId) {
+  try {
+    const archivos = await listarArchivosStorage(String(ticketId));
+    const paths = (archivos || []).filter(a => a && a.name).map(a => `${ticketId}/${a.name}`);
+    if (paths.length) await eliminarArchivosStorage(paths);
+  } catch (e) { console.error(`No se pudieron borrar los adjuntos del ticket ${ticketId} en Storage:`, e.message); }
+}
+// Recorre las carpetas de Storage (una por ticket) y borra las que ya no correspondan a ningún ticket
+// existente: son adjuntos que quedaron huérfanos de tickets borrados antes de este cambio.
+async function limpiarAdjuntosHuerfanos() {
+  const carpetas = await listarArchivosStorage('');
+  let carpetasEliminadas = 0, archivosEliminados = 0;
+  for (const carpeta of carpetas || []) {
+    if (!carpeta || !carpeta.name || carpeta.id !== null) continue; // solo carpetas (los archivos sueltos en la raíz no deberían existir)
+    const ticketId = carpeta.name;
+    const existe = (await pool.query('select id from tickets where id=$1', [ticketId])).rows[0];
+    if (existe) continue;
+    const archivos = await listarArchivosStorage(ticketId);
+    const paths = (archivos || []).filter(a => a && a.name).map(a => `${ticketId}/${a.name}`);
+    if (paths.length) {
+      await eliminarArchivosStorage(paths);
+      archivosEliminados += paths.length;
+      carpetasEliminadas++;
+    }
+  }
+  return { carpetasEliminadas, archivosEliminados };
+}
 /* ---------------- Google Calendar (cuenta de servicio) ---------------- */
 function credencialesGoogle() {
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '';
@@ -591,8 +641,30 @@ async function ejecutarRespaldoProgramado() {
   } catch (e) { console.error('Error generando respaldo automático:', e.message); }
 }
 app.delete('/api/tickets', requireStaff, requireSuperadmin, async (req, res) => {
+  const idsPrevios = (await pool.query('select id from tickets')).rows.map(t => t.id);
   const r = await pool.query('delete from tickets');
+  for (const id of idsPrevios) await eliminarAdjuntosDeTicket(id);
   ok(res, { ok: true, eliminados: r.rowCount });
+});
+// Borra tickets ya resueltos/cerrados con más de X días desde su última actividad (para liberar espacio
+// de a poco sin tener que borrarlos uno por uno). Junto con cada ticket se borran sus adjuntos en Storage.
+app.post('/api/tickets/limpiar-antiguos', requireStaff, requireSuperadmin, async (req, res) => {
+  const dias = Math.max(1, Number(req.body.dias) || 60);
+  const viejos = (await pool.query(
+    `select id from tickets where estado in ('Resuelto','Cerrado') and actualizado < now() - ($1 || ' days')::interval`,
+    [dias]
+  )).rows;
+  for (const t of viejos) await eliminarAdjuntosDeTicket(t.id);
+  if (viejos.length) await pool.query('delete from tickets where id = any($1)', [viejos.map(t => t.id)]);
+  ok(res, { eliminados: viejos.length });
+});
+// Limpia adjuntos que quedaron sueltos en Storage de tickets que ya no existen (por ejemplo, borrados
+// antes de que el borrado limpiara Storage automáticamente).
+app.post('/api/storage/limpiar-huerfanos', requireStaff, requireSuperadmin, async (req, res) => {
+  try {
+    const r = await limpiarAdjuntosHuerfanos();
+    ok(res, r);
+  } catch (e) { bad(res, 'No se pudo limpiar Storage: ' + e.message); }
 });
 // Reinicia el marcador de IMAP para que la próxima revisión vuelva a bajar TODA la casilla desde cero.
 app.post('/api/configuracion/reiniciar-imap', requireStaff, requireSuperadmin, async (req, res) => {
@@ -618,6 +690,7 @@ app.post('/api/configuracion/saltar-al-final-imap', requireStaff, requireSuperad
   } catch (e) { bad(res, e.message); }
 });
 app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
+  await eliminarAdjuntosDeTicket(req.params.id);
   await pool.query('delete from tickets where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
