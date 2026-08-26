@@ -768,6 +768,39 @@ app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   await pool.query('delete from clientes where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
+/* ---------------- Newsletter ---------------- */
+// Manda un mismo mensaje (texto + adjuntos opcionales) a varios destinatarios a la vez, uno por uno
+// (nunca como CC/BCC juntos), para no exponer las direcciones de unos a otros.
+app.post('/api/newsletter/enviar', requireStaff, async (req, res) => {
+  const { destinatarios, asunto, cuerpo, adjuntos } = req.body;
+  if (!Array.isArray(destinatarios) || !destinatarios.length) return bad(res, 'Agregá al menos un destinatario.');
+  if (!asunto || !asunto.trim()) return bad(res, 'Falta el asunto.');
+  if (!cuerpo || !cuerpo.trim()) return bad(res, 'Falta el mensaje.');
+  if (destinatarios.length > 300) return bad(res, 'Máximo 300 destinatarios por envío.');
+  const cfg = await getConfig();
+  const transport = await getSmtpTransport(cfg);
+  if (!transport) return bad(res, 'El envío real de correo no está activado, o falta configurar el SMTP en Configuración → Correo.');
+  const attachmentsForMail = (adjuntos || []).map(a => {
+    const base64 = (a.dataUrl || '').split(',')[1] || '';
+    return { filename: a.nombre, content: base64, encoding: 'base64' };
+  });
+  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
+  let enviados = 0;
+  const errores = [];
+  for (const d of destinatarios) {
+    const to = (d && d.email || '').trim();
+    if (!to) continue;
+    try {
+      await transport.sendMail({
+        from: `"${cfg.casilla_nombre || 'Soporte'}" <${cfg.smtp_usuario}>`,
+        to, subject: asunto, text: cuerpo, html: htmlBody,
+        attachments: attachmentsForMail.length ? attachmentsForMail : undefined
+      });
+      enviados++;
+    } catch (e) { errores.push(`${to}: ${e.message}`); }
+  }
+  ok(res, { enviados, total: destinatarios.length, errores });
+});
 /* ---------------- Usuarios (staff) ---------------- */
 async function requireSuperadmin(req, res, next) {
   if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
