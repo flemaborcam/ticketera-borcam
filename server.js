@@ -464,7 +464,17 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   const id = req.params.id;
   if (categoria !== undefined) await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, id]);
   if (prioridad !== undefined) await pool.query('update tickets set prioridad=$1, actualizado=now() where id=$2', [prioridad, id]);
-  if (asignadoA !== undefined) await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [asignadoA || null, id]);
+  if (asignadoA !== undefined) {
+    if (asignadoA) {
+      // Reasignar desde el desplegable "Asignado a" tiene que hacer exactamente lo mismo que "Tomar
+      // ticket" (avisarle al cliente, avisarle al técnico por Telegram, sacar el botón del grupo si
+      // corresponde) — antes solo cambiaba el campo en la base y por eso parecía que "no pasaba nada".
+      const actual = (await pool.query('select asignado_a from tickets where id=$1', [id])).rows[0];
+      if (!actual || String(actual.asignado_a) !== String(asignadoA)) await asignarTicket(id, asignadoA);
+    } else {
+      await pool.query('update tickets set asignado_a=null, actualizado=now() where id=$1', [id]);
+    }
+  }
   if (clienteId !== undefined) await pool.query('update tickets set cliente_id=$1, actualizado=now() where id=$2', [clienteId || null, id]);
   if (estado !== undefined) await aplicarCambioEstado(id, estado);
   const ticket = await ticketConMensajes(id);
@@ -1689,12 +1699,17 @@ async function procesarCallbackTomarTicket(cb) {
       });
     } catch (e) { console.error('Error respondiendo callback de Telegram:', e.message); }
   }
+  console.log(`[DIAGNOSTICO] callback_query recibido de telegram_user_id=${cb.from && cb.from.id}, data="${cb.data}"`);
   const m = (cb.data || '').match(/^tomar:(.+)$/);
   if (!m) { await responder('Acción no reconocida.'); return; }
   const ticketId = m[1];
   try {
     const staffRow = (await pool.query('select id, nombre, apellido from usuarios where telegram_chat_id=$1', [String(cb.from.id)])).rows[0];
-    if (!staffRow) { await responder('Tu Telegram todavía no está vinculado a ningún usuario del sistema. Vinculalo primero desde "Mi perfil".', true); return; }
+    if (!staffRow) {
+      console.log(`[DIAGNOSTICO] callback_query: telegram_user_id=${cb.from.id} no tiene ningún usuario vinculado.`);
+      await responder('Tu Telegram todavía no está vinculado a ningún usuario del sistema. Vinculalo primero desde "Mi perfil".', true);
+      return;
+    }
     const t = (await pool.query('select asignado_a from tickets where id=$1', [ticketId])).rows[0];
     if (!t) { await responder('No encontré ese ticket (puede que ya se haya borrado).', true); return; }
     if (t.asignado_a) {
@@ -1704,6 +1719,7 @@ async function procesarCallbackTomarTicket(cb) {
       return;
     }
     await asignarTicket(ticketId, staffRow.id);
+    console.log(`[DIAGNOSTICO] callback_query: ticket ${ticketId} asignado a ${staffRow.nombre} ${staffRow.apellido} desde Telegram.`);
     await responder(`✅ ¡Listo ${staffRow.nombre}, lo tomaste!`);
   } catch (e) {
     console.error('Error procesando el botón de Tomar ticket de Telegram:', e.message);
@@ -1920,6 +1936,9 @@ async function aplicarAvisoFinDeSemana(ticketId) {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fin de semana',$2,true)`,
     [ticketId, mensaje]
   );
+  // El aviso automático ya "contestó" al cliente: si no lo apagamos acá, el ticket queda marcado para
+  // siempre como "Respondió el cliente" aunque el sistema ya le haya avisado.
+  await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
@@ -1948,6 +1967,9 @@ async function aplicarAvisoFueraHorario(ticketId) {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fuera de horario',$2,true)`,
     [ticketId, mensaje]
   );
+  // Igual que en el aviso de fin de semana: el aviso automático ya "contestó" al cliente, así que
+  // sacamos la marca de "Respondió el cliente" para que no quede pegada para siempre.
+  await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
