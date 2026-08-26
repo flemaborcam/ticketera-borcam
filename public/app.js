@@ -1431,11 +1431,9 @@ function setConfigTab(v) { state.configTab = v; render(); }
 
 function renderNewsletterChips() {
   if (!state.newsletterDestinatarios.length) return '<div class="hint-text">Todavía no agregaste destinatarios.</div>';
-  return `<div class="chip-list">${state.newsletterDestinatarios.map(d => `
-    <span class="chip ${d.esCliente ? 'chip-cliente' : ''}">
-      ${d.esCliente ? '&#128100; ' : ''}${escapeHtml(d.nombre ? d.nombre + ' — ' : '')}${escapeHtml(d.email)}
-      <button type="button" onclick="removerDestinatarioNewsletter('${d.email.replace(/'/g, "\\'")}')">&times;</button>
-    </span>`).join('')}</div>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;">${state.newsletterDestinatarios.map(d => `
+    <span class="tag tag-cat" style="gap:6px;padding:6px 10px;">${d.esCliente ? '&#128100; ' : ''}${escapeHtml(d.nombre ? d.nombre + ' — ' : '')}${escapeHtml(d.email)}
+    <button type="button" onclick="removerDestinatarioNewsletter('${d.email.replace(/'/g, "\\'")}')" style="border:none;background:none;cursor:pointer;color:var(--stamp-red);font-weight:700;padding:0 0 0 4px;">&times;</button></span>`).join('')}</div>`;
 }
 function refreshNewsletterChips() {
   const el = document.getElementById('newsletter-destinatarios');
@@ -1460,10 +1458,9 @@ function newsletterInputKeydown(ev) {
 }
 function renderNewsletterAdjuntosChips() {
   if (!state.newsletterAdjuntos.length) return '';
-  return `<div class="chip-list">${state.newsletterAdjuntos.map(a => `
-    <span class="chip">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <small>(${fmtSize(a.size)})</small>
-      <button type="button" onclick="removeNewsletterAttachment('${a.id}')">&times;</button>
-    </span>`).join('')}</div>`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">${state.newsletterAdjuntos.map(a => `
+    <span class="tag tag-cat" style="gap:6px;padding:6px 10px;">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span>
+    <button type="button" onclick="removeNewsletterAttachment('${a.id}')" style="border:none;background:none;cursor:pointer;color:var(--stamp-red);font-weight:700;padding:0 0 0 4px;">&times;</button></span>`).join('')}</div>`;
 }
 function refreshNewsletterAdjuntos() {
   const el = document.getElementById('newsletter-adjuntos');
@@ -1515,22 +1512,28 @@ async function enviarNewsletter() {
 function renderNewsletter() {
   const opcionesClientes = cache.clientes.filter(g => g.correo).map(g => `<option value="${escapeHtml(g.correo)}">${escapeHtml(g.nombre)}</option>`).join('');
   return `<div class="page-head"><div><h1>Newsletter</h1><div class="sub">Enviá un correo a varios destinatarios a la vez, con texto e imágenes</div></div></div>
-    <div class="card">
-      <label>Destinatarios</label>
-      <div class="hint-text">Escribí un email y presioná Enter para agregarlo. Si coincide con un cliente cargado, se va a marcar automáticamente.</div>
-      <input type="text" list="newsletter-clientes-list" placeholder="nombre@correo.com" onkeydown="newsletterInputKeydown(event)" style="margin-top:8px;">
-      <datalist id="newsletter-clientes-list">${opcionesClientes}</datalist>
-      <div id="newsletter-destinatarios" style="margin-top:10px;">${renderNewsletterChips()}</div>
+    <div class="card card-narrow" style="max-width:560px;">
+      ${configSectionHead('📰', 'Destinatarios', 'Escribí un email y presioná Enter (o coma) para agregarlo. Si coincide con un cliente cargado, se marca automáticamente.')}
+      <div class="field">
+        <label>Agregar destinatario</label>
+        <input type="text" list="newsletter-clientes-list" placeholder="nombre@correo.com" onkeydown="newsletterInputKeydown(event)">
+        <datalist id="newsletter-clientes-list">${opcionesClientes}</datalist>
+      </div>
+      <div id="newsletter-destinatarios" style="margin-top:6px;">${renderNewsletterChips()}</div>
     </div>
-    <div class="card" style="margin-top:16px;">
-      <label>Asunto</label>
-      <input type="text" id="newsletter-asunto" placeholder="Asunto del correo">
-      <label style="margin-top:12px;">Mensaje</label>
-      <textarea id="newsletter-cuerpo" rows="8" placeholder="Escribí el mensaje..."></textarea>
-      <label style="margin-top:12px;">Imágenes / adjuntos</label>
-      <input type="file" multiple accept="image/*,application/pdf" onchange="addNewsletterAttachments(this)">
-      <div id="newsletter-adjuntos" style="margin-top:8px;">${renderNewsletterAdjuntosChips()}</div>
-      <button type="button" id="newsletter-enviar-btn" class="btn-primary" style="margin-top:16px;" onclick="enviarNewsletter()">Enviar newsletter</button>
+    <div class="card card-narrow" style="max-width:560px;margin-top:16px;">
+      ${configSectionHead('✉️', 'Mensaje', '')}
+      <div class="field"><label>Asunto</label><input type="text" id="newsletter-asunto" placeholder="Asunto del correo"></div>
+      <div class="field"><label>Mensaje</label><textarea id="newsletter-cuerpo" rows="8" placeholder="Escribí el mensaje..."></textarea></div>
+      <div class="field">
+        <label>Imágenes / adjuntos</label>
+        <input type="file" multiple accept="image/*,application/pdf" onchange="addNewsletterAttachments(this)">
+        <div class="hint-text">Imágenes o PDF, máx. 20 MB cada uno.</div>
+        <div id="newsletter-adjuntos">${renderNewsletterAdjuntosChips()}</div>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+        <button type="button" id="newsletter-enviar-btn" class="btn btn-primary btn-block" onclick="enviarNewsletter()">Enviar newsletter</button>
+      </div>
     </div>`;
 }
 
