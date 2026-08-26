@@ -905,6 +905,7 @@ function navItems(activeView) {
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
+    { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
   items.push(
@@ -1567,6 +1568,174 @@ function renderNewsletter() {
     </div>`;
 }
 
+/* ---------------- Tags de acceso (edificios / pedidos) ---------------- */
+async function renderTagsAsync() {
+  if (!state.tagsTab) state.tagsTab = 'nuevo';
+  const [edificios, pedidos] = await Promise.all([
+    api('GET', '/api/tags/edificios').catch(() => []),
+    api('GET', '/api/tags/pedidos').catch(() => [])
+  ]);
+  cache.tagsEdificios = edificios; cache.tagsPedidos = pedidos;
+  return renderTags();
+}
+function renderTags() {
+  const tab = state.tagsTab || 'nuevo';
+  const esSuper = currentUser().es_superadmin;
+  const tabs = [
+    { v: 'nuevo', label: 'Nuevo pedido' }, { v: 'pedidos', label: 'Pedidos pendientes' },
+    { v: 'historial', label: 'Historial' },
+  ];
+  if (esSuper) tabs.push({ v: 'edificios', label: 'Edificios' });
+  const tabsHtml = tabs.map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarTagsTab('${t.v}')">${t.label}</button>`).join('');
+  let body = '';
+  if (tab === 'nuevo') body = renderTagsNuevo();
+  else if (tab === 'pedidos') body = renderTagsPedidos();
+  else if (tab === 'historial') body = renderTagsHistorial();
+  else if (tab === 'edificios') body = renderTagsEdificios();
+  return `<div class="page-head"><div><h1>Tags</h1><div class="sub">Control de stock y entrega de tags de acceso por edificio</div></div></div>
+    <div class="reply-tabs">${tabsHtml}</div>
+    ${body}`;
+}
+function cambiarTagsTab(t) { state.tagsTab = t; render(); }
+function renderTagsNuevo() {
+  const edificios = cache.tagsEdificios || [];
+  const opciones = edificios.map(e => `<option value="${escapeHtml(e.edificio)}">${escapeHtml(e.edificio)}</option>`).join('');
+  return `<div class="card card-narrow" style="max-width:560px;">
+    ${configSectionHead('🏷️', 'Ingresar pedido', 'Al guardar se descuenta automáticamente del stock disponible de ese edificio.')}
+    <div class="field"><label>Cliente</label><input type="text" id="tags-cliente" placeholder="Nombre del cliente"></div>
+    <div class="field"><label>Edificio</label>
+      <input type="text" id="tags-edificio" list="tags-edificios-list" placeholder="Elegí un edificio">
+      <datalist id="tags-edificios-list">${opciones}</datalist>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Torre</label><input type="text" id="tags-torre" placeholder="Torre"></div>
+      <div class="field"><label>Unidad</label><input type="text" id="tags-unidad" placeholder="Unidad"></div>
+    </div>
+    <div class="field"><label>Tipo de tags</label>
+      <select id="tags-tipo"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cantidad</label><input type="number" id="tags-cantidad" min="1" placeholder="Cantidad"></div>
+      <div class="field"><label>Costo (opcional)</label><input type="number" id="tags-costo" step="0.01" placeholder="Costo"></div>
+    </div>
+    <div class="field"><label>Ticket (opcional)</label><input type="text" id="tags-ticket" placeholder="Número de ticket"></div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+      <button type="button" class="btn btn-primary btn-block" onclick="guardarPedidoTags()">Guardar pedido</button>
+    </div>
+  </div>`;
+}
+async function guardarPedidoTags() {
+  const nombreCliente = document.getElementById('tags-cliente').value.trim();
+  const edificio = document.getElementById('tags-edificio').value.trim();
+  const torre = document.getElementById('tags-torre').value.trim();
+  const unidad = document.getElementById('tags-unidad').value.trim();
+  const tipoTags = document.getElementById('tags-tipo').value;
+  const cantidadTags = Number(document.getElementById('tags-cantidad').value);
+  const costo = document.getElementById('tags-costo').value;
+  const ticket = document.getElementById('tags-ticket').value.trim();
+  if (!nombreCliente || !edificio || !cantidadTags) { showToast('Completá cliente, edificio y cantidad.'); return; }
+  try {
+    await api('POST', '/api/tags/pedidos', { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket });
+    showToast('Pedido guardado.');
+    state.tagsTab = 'pedidos';
+    render();
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  } catch (e) { showToast(e.message); }
+}
+function renderTagsPedidos() {
+  const pendientes = (cache.tagsPedidos || []).filter(p => !p.entregado);
+  if (!pendientes.length) return `<div class="empty-state">No hay pedidos pendientes.</div>`;
+  const filas = pendientes.map(p => `<tr>
+    <td>${escapeHtml(p.ticket || '')}</td><td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.edificio || '')}</td>
+    <td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td><td>${p.costo != null ? p.costo : ''}</td>
+    <td><button class="btn btn-sm" onclick="marcarEntregadoTags(${p.id})">Marcar entregado</button>
+    ${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarPedidoTags(${p.id})">Eliminar</button>` : ''}</td>
+  </tr>`).join('');
+  return `<div class="card"><table class="reportes-table">
+    <thead><tr><th>Ticket</th><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Costo</th><th>Acción</th></tr></thead>
+    <tbody>${filas}</tbody></table></div>`;
+}
+async function marcarEntregadoTags(id) {
+  const tagNum = prompt('Número de tag entregado:');
+  if (tagNum === null) return;
+  if (!tagNum.trim()) { showToast('Ingresá un número de tag válido.'); return; }
+  try {
+    await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum: tagNum.trim() });
+    showToast('Marcado como entregado.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  } catch (e) { showToast(e.message); }
+}
+async function eliminarPedidoTags(id) {
+  if (!confirm('¿Eliminar este pedido?')) return;
+  try {
+    await api('DELETE', `/api/tags/pedidos/${id}`);
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  } catch (e) { showToast(e.message); }
+}
+function renderTagsHistorial() {
+  const entregados = (cache.tagsPedidos || []).filter(p => p.entregado);
+  if (!entregados.length) return `<div class="empty-state">Todavía no hay tags entregados.</div>`;
+  const filas = entregados.map(p => `<tr>
+    <td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td>
+    <td>${escapeHtml(p.tag_num || '')}</td><td>${p.fecha_entrega ? new Date(p.fecha_entrega).toLocaleString('es-AR') : ''}</td>
+  </tr>`).join('');
+  return `<div class="card"><table class="reportes-table">
+    <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
+    <tbody>${filas}</tbody></table></div>`;
+}
+function renderTagsEdificios() {
+  const edificios = cache.tagsEdificios || [];
+  const filas = edificios.map(e => `<tr>
+    <td>${escapeHtml(e.edificio)}</td>
+    <td>${e.restante_peatonal} / ${e.cantidad_peatonal}</td>
+    <td>${e.restante_vehicular} / ${e.cantidad_vehicular}</td>
+    <td><button class="btn btn-sm" onclick="editarEdificioTags(${e.id}, '${e.edificio.replace(/'/g, "\\'")}', ${e.cantidad_peatonal}, ${e.cantidad_vehicular})">Editar</button>
+    <button class="btn btn-sm btn-danger" onclick="eliminarEdificioTags(${e.id})">Eliminar</button></td>
+  </tr>`).join('');
+  return `<div class="card card-narrow" style="max-width:560px;">
+    ${configSectionHead('🏢', 'Agregar / actualizar edificio', 'Si el edificio ya existe, se actualiza su stock total.')}
+    <div class="field"><label>Edificio</label><input type="text" id="tags-nuevo-edificio" placeholder="Nombre del edificio"></div>
+    <div class="field-row">
+      <div class="field"><label>Peatonales (total)</label><input type="number" id="tags-nuevo-peatonal" min="0" value="0"></div>
+      <div class="field"><label>Vehiculares (total)</label><input type="number" id="tags-nuevo-vehicular" min="0" value="0"></div>
+    </div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+      <button type="button" class="btn btn-primary btn-block" onclick="guardarEdificioTags()">Guardar edificio</button>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px;"><table class="reportes-table">
+    <thead><tr><th>Edificio</th><th>Peatonales (disp./total)</th><th>Vehiculares (disp./total)</th><th>Acción</th></tr></thead>
+    <tbody>${filas}</tbody></table></div>`;
+}
+async function guardarEdificioTags() {
+  const edificio = document.getElementById('tags-nuevo-edificio').value.trim();
+  const cantidadPeatonal = document.getElementById('tags-nuevo-peatonal').value;
+  const cantidadVehicular = document.getElementById('tags-nuevo-vehicular').value;
+  if (!edificio) { showToast('Falta el nombre del edificio.'); return; }
+  try {
+    await api('POST', '/api/tags/edificios', { edificio, cantidadPeatonal, cantidadVehicular });
+    showToast('Edificio guardado.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  } catch (e) { showToast(e.message); }
+}
+function editarEdificioTags(id, edificio, peatonal, vehicular) {
+  const p = prompt(`Cantidad total de tags peatonales en ${edificio}:`, peatonal);
+  if (p === null) return;
+  const v = prompt(`Cantidad total de tags vehiculares en ${edificio}:`, vehicular);
+  if (v === null) return;
+  api('PUT', `/api/tags/edificios/${id}`, { cantidadPeatonal: Number(p) || 0, cantidadVehicular: Number(v) || 0 }).then(() => {
+    showToast('Edificio actualizado.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  }).catch(e => showToast(e.message));
+}
+async function eliminarEdificioTags(id) {
+  if (!confirm('¿Eliminar este edificio del control de stock?')) return;
+  try {
+    await api('DELETE', `/api/tags/edificios/${id}`);
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+  } catch (e) { showToast(e.message); }
+}
+
 /* ---------------- Estadísticas / reportes de productividad (solo Superadmin) ---------------- */
 
 function calcularRangoPreset(preset) {
@@ -2131,6 +2300,7 @@ function render() {
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'estadisticas') inner = renderEstadisticas();
+  else if (state.view === 'tags') { inner = '<div class="empty-state">Cargando…</div>'; renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; }); }
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
   app.innerHTML = renderShell(inner);
