@@ -109,6 +109,8 @@ const pool = new Pool({
     ? false
     : { rejectUnauthorized: false }
 });
+// Migración automática: agrega la columna de nombre de contacto si todavía no existe (no rompe nada si ya está).
+pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -729,7 +731,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
 });
 /* ---------------- Clientes ---------------- */
 app.get('/api/clientes', requireStaff, async (req, res) => {
-  const clientes = (await pool.query('select id,nombre,direccion,telefono,correo,rol,(portal_password_hash is not null) as tiene_portal from clientes order by nombre')).rows;
+  const clientes = (await pool.query('select id,nombre,direccion,telefono,correo,rol,contacto_nombre,(portal_password_hash is not null) as tiene_portal from clientes order by nombre')).rows;
   ok(res, clientes);
 });
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
@@ -737,28 +739,28 @@ app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   ok(res, tickets);
 });
 app.post('/api/clientes', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre } = req.body;
   if (!nombre) return bad(res, 'Falta el nombre del cliente.');
   const hash = portalPassword ? bcrypt.hashSync(portalPassword, 10) : null;
   const r = await pool.query(
-    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash)
-     values ($1,$2,$3,$4,$5,$6) returning id`,
-    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash]
+    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre)
+     values ($1,$2,$3,$4,$5,$6,$7) returning id`,
+    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim()]
   );
   ok(res, { id: r.rows[0].id });
 });
 app.put('/api/clientes/:id', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre } = req.body;
   if (portalPassword) {
     const hash = bcrypt.hashSync(portalPassword, 10);
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6 where id=$7`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7 where id=$8`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), req.params.id]
     );
   } else {
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5 where id=$6`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6 where id=$7`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), req.params.id]
     );
   }
   ok(res, { ok: true });
