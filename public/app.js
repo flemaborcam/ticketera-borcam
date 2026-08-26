@@ -68,7 +68,7 @@ async function loadStaffData() {
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
-  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, tienePortal: c.tiene_portal }));
+  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal }));
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
@@ -331,11 +331,11 @@ function openEditarGrupoModal(id) { state.modal = 'editar-grupo'; state.editGrup
 async function submitGrupo(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
-  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), portalPassword: (fd.get('portalPassword') || '').trim() };
+  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim() };
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, tienePortal: c.tiene_portal }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal }));
     state.modal = null;
     render();
   } catch (e) { showToast(e.message); }
@@ -1184,7 +1184,7 @@ function renderGrupos() {
       <div class="stub-body"><div class="stub-top"><div class="stub-asunto">${escapeHtml(g.nombre)}</div></div>
         <div class="stub-remitente">${[g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         ${g.direccion ? `<div class="stub-snippet">${escapeHtml(g.direccion)}</div>` : ''}
-        ${g.rol ? `<div class="stub-meta"><span class="tag tag-cliente">${escapeHtml(g.rol)}</span></div>` : ''}
+        ${g.rolCliente ? `<div class="stub-meta"><span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span></div>` : ''}
       </div></button>`).join('');
   const list = cache.clientes.length ? `<div class="stub-list">${rows}</div>` : `<div class="empty-state"><div class="big">Todavía no hay clientes</div><div>Dá de alta un cliente para agrupar sus tickets.</div></div>`;
   return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Listado de clientes, cada uno con sus propios tickets</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>${list}`;
@@ -1201,7 +1201,7 @@ async function renderGrupoDetailAsync(id) {
       <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
         <div class="ticket-from">${[g.direccion, g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div></div>
-        ${g.rol ? `<div class="stamp stamp-abierto">${escapeHtml(g.rol)}</div>` : ''}</div>
+        ${g.rolCliente ? `<div class="stamp stamp-abierto">${escapeHtml(g.rolCliente)}</div>` : ''}</div>
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line-strong);">
         <button class="btn btn-ghost" onclick="openEditarGrupoModal('${g.id}')">Editar cliente</button>
         <button class="btn btn-danger" onclick="deleteGrupo('${g.id}')">Eliminar</button></div>
@@ -1779,6 +1779,7 @@ function renderGrupoModal() {
       <div class="field"><label>Nombre de cliente</label><input name="nombre" value="${g ? escapeHtml(g.nombre) : ''}" required></div>
       <div class="field"><label>Dirección</label><input name="direccion" value="${g ? escapeHtml(g.direccion || '') : ''}"></div>
       <div class="field"><label>Correo electrónico</label><input name="correo" type="email" value="${g ? escapeHtml(g.correo || '') : ''}"></div>
+      <div class="field"><label>Rol</label><select name="rolCliente"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
       <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
