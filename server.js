@@ -161,6 +161,7 @@ const pool = new Pool({
 });
 // Migración automática: agrega la columna de nombre de contacto si todavía no existe (no rompe nada si ya está).
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
+pool.query('alter table telegram_notificaciones_ticket add column if not exists es_grupo boolean default false').catch(e => console.error('No se pudo migrar es_grupo:', e.message));
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -694,31 +695,38 @@ app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
   await pool.query('delete from tickets where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
-app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
-  const id = req.params.id;
-  const staff = (await pool.query('select nombre, apellido, telegram_chat_id from usuarios where id=$1', [req.session.userId])).rows[0];
-  await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [req.session.userId, id]);
-  const t = (await pool.query('select numero, asunto, remitente_nombre, remitente_email from tickets where id=$1', [id])).rows[0];
-  const ccs = await collectTicketCCs(id);
+// Asigna un ticket a un técnico: manda el aviso automático al cliente, le avisa al técnico por Telegram
+// si tiene su cuenta vinculada, y le saca el botón "Tomar ticket" al aviso del grupo si lo tenía.
+// La usan tanto el endpoint web /tomar como el botón de Telegram (ver procesarCallbackTomarTicket).
+async function asignarTicket(ticketId, staffId) {
+  const staff = (await pool.query('select nombre, apellido, telegram_chat_id from usuarios where id=$1', [staffId])).rows[0];
+  await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [staffId, ticketId]);
+  const t = (await pool.query('select numero, asunto, remitente_nombre, remitente_email from tickets where id=$1', [ticketId])).rows[0];
+  const ccs = await collectTicketCCs(ticketId);
   const mensaje = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
   await pool.query(
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
-    [id, 'Notificación automática', mensaje]
+    [ticketId, 'Notificación automática', mensaje]
   );
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: mensaje, esAutomatico: true });
   if (staff.telegram_chat_id) {
     const ultimoCliente = (await pool.query(
-      `select cuerpo from mensajes where ticket_id=$1 and tipo='entrante' order by fecha desc limit 1`, [id]
+      `select cuerpo from mensajes where ticket_id=$1 and tipo='entrante' order by fecha desc limit 1`, [ticketId]
     )).rows[0];
     const consulta = ultimoCliente ? ultimoCliente.cuerpo.replace(/\s+/g, ' ').trim().slice(0, 400) : '';
     await enviarTelegramARegistrado(staff.telegram_chat_id,
       `✅ <b>Tomaste el ticket ${escapeHtmlSrv(t.numero)}</b>\n${escapeHtmlSrv(t.asunto)}\nCliente: ${escapeHtmlSrv(t.remitente_nombre)}` +
       (consulta ? `\n\n"${escapeHtmlSrv(consulta)}${ultimoCliente.cuerpo.length > 400 ? '…' : ''}"` : '') +
       `\n\nPara responderlo, respondé (Responder) este mismo mensaje con tu respuesta.`,
-      id
+      ticketId
     );
   }
-  ok(res, await ticketConMensajes(id));
+  await actualizarBotonTomarEnGrupo(ticketId, `${staff.nombre} ${staff.apellido}`);
+  return { staff, t };
+}
+app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
+  await asignarTicket(req.params.id, req.session.userId);
+  ok(res, await ticketConMensajes(req.params.id));
 });
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const id = req.params.id;
@@ -1420,17 +1428,59 @@ app.get('/api/citas', requireStaff, async (req, res) => {
   ok(res, citas);
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
-async function enviarTelegramForzado(chatId, texto, threadId) {
+async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('Falta configurar TELEGRAM_BOT_TOKEN en el servidor.');
   if (!chatId) throw new Error('Falta el Chat ID del grupo de Telegram.');
   const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true, ...(threadId ? { message_thread_id: threadId } : {}) })
+    body: JSON.stringify({ chat_id: chatId, text: texto, parse_mode: 'HTML', disable_web_page_preview: true, ...(threadId ? { message_thread_id: threadId } : {}), ...(replyMarkup ? { reply_markup: replyMarkup } : {}) })
   });
   const data = await r.json();
   if (!data.ok) throw new Error(data.description || 'Error desconocido al enviar a Telegram.');
   return data;
+}
+// Igual que enviarTelegram (al grupo), pero le agrega un botón "Tomar ticket" y guarda a qué mensaje
+// corresponde, para poder sacarle el botón después (ver actualizarBotonTomarEnGrupo).
+async function enviarTelegramGrupoConBoton(texto, ticketId) {
+  try {
+    const c = await getConfig();
+    if (!c.telegram_activo || !c.telegram_chat_id) return false;
+    const data = await enviarTelegramForzado(c.telegram_chat_id, texto, null, {
+      inline_keyboard: [[{ text: '✅ Tomar ticket', callback_data: `tomar:${ticketId}` }]]
+    });
+    if (data.ok && data.result) {
+      await pool.query(
+        `insert into telegram_notificaciones_ticket (chat_id, message_id, ticket_id, es_grupo) values ($1,$2,$3,true)`,
+        [String(c.telegram_chat_id), data.result.message_id, ticketId]
+      );
+    }
+    return true;
+  } catch (e) {
+    console.error('Error enviando a Telegram:', e.message);
+    return false;
+  }
+}
+// Cuando un ticket se toma (desde la web o desde el botón de Telegram), le saca el botón "Tomar ticket"
+// al aviso que se mandó al grupo y avisa ahí mismo quién lo tomó, para que no lo tome otro por error.
+async function actualizarBotonTomarEnGrupo(ticketId, staffNombreCompleto) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  try {
+    const filas = (await pool.query('select chat_id, message_id from telegram_notificaciones_ticket where ticket_id=$1 and es_grupo=true', [ticketId])).rows;
+    for (const f of filas) {
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: f.chat_id, message_id: f.message_id, reply_markup: { inline_keyboard: [] } })
+        });
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: f.chat_id, text: `✅ Tomado por ${staffNombreCompleto}.`, reply_to_message_id: f.message_id })
+        });
+      } catch (eInterno) { console.error('No se pudo actualizar un aviso puntual de Telegram tras tomar el ticket:', eInterno.message); }
+    }
+  } catch (e) { console.error('No se pudo actualizar el botón de Telegram tras tomar el ticket:', e.message); }
 }
 async function enviarTelegram(texto, threadId) {
   try {
@@ -1470,7 +1520,7 @@ async function notificarTelegramNuevoTicket(ticket, baseUrl) {
     `<b>De:</b> ${escapeHtmlSrv(ticket.remitenteNombre)} (${escapeHtmlSrv(ticket.remitenteEmail)})\n\n` +
     `${escapeHtmlSrv(resumen)}${(ticket.cuerpoResumen || '').length > 220 ? '…' : ''}` +
     (link ? `\n\n👉 <a href="${link}">Abrir en el sistema</a>` : '');
-  await enviarTelegram(mensaje);
+  await enviarTelegramGrupoConBoton(mensaje, ticket.id);
 }
 // Envía un mensaje de Telegram a un chat privado específico (no al grupo general)
 async function enviarTelegramA(chatId, texto) {
@@ -1538,6 +1588,40 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
 // update de Telegram, y procesar/responder la misma respuesta dos veces (el bucle del aviso "✅ Respuesta
 // enviada al cliente..."). También agregamos el chequeo de c.telegram_activo, que antes faltaba: esta
 // función corría siempre sin importar el interruptor de Configuración.
+// Procesa un click en el botón "✅ Tomar ticket" del aviso del grupo: identifica al técnico por su
+// Telegram vinculado, chequea que el ticket siga libre, y si todo está bien lo asigna (mismo camino
+// que tomarlo desde la web). Siempre le contesta al que clickeó con un aviso (popup) de Telegram.
+async function procesarCallbackTomarTicket(cb) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  async function responder(texto, showAlert) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cb.id, text: texto, show_alert: !!showAlert })
+      });
+    } catch (e) { console.error('Error respondiendo callback de Telegram:', e.message); }
+  }
+  const m = (cb.data || '').match(/^tomar:(.+)$/);
+  if (!m) { await responder('Acción no reconocida.'); return; }
+  const ticketId = m[1];
+  try {
+    const staffRow = (await pool.query('select id, nombre, apellido from usuarios where telegram_chat_id=$1', [String(cb.from.id)])).rows[0];
+    if (!staffRow) { await responder('Tu Telegram todavía no está vinculado a ningún usuario del sistema. Vinculalo primero desde "Mi perfil".', true); return; }
+    const t = (await pool.query('select asignado_a from tickets where id=$1', [ticketId])).rows[0];
+    if (!t) { await responder('No encontré ese ticket (puede que ya se haya borrado).', true); return; }
+    if (t.asignado_a) {
+      if (String(t.asignado_a) === String(staffRow.id)) { await responder('Vos ya habías tomado este ticket.'); return; }
+      const otro = (await pool.query('select nombre, apellido from usuarios where id=$1', [t.asignado_a])).rows[0];
+      await responder(`Ya lo había tomado ${otro ? otro.nombre + ' ' + otro.apellido : 'otro técnico'}.`, true);
+      return;
+    }
+    await asignarTicket(ticketId, staffRow.id);
+    await responder(`✅ ¡Listo ${staffRow.nombre}, lo tomaste!`);
+  } catch (e) {
+    console.error('Error procesando el botón de Tomar ticket de Telegram:', e.message);
+    await responder('Ocurrió un error al tomar el ticket. Probá desde la plataforma.', true);
+  }
+}
 let telegramPollingEnCurso = false;
 async function revisarTelegramUpdates() {
   if (telegramPollingEnCurso) return;
@@ -1564,6 +1648,10 @@ async function revisarTelegramUpdates() {
       // Guardamos el avance ANTES de procesar: si algo falla abajo, nunca reprocesamos el mismo mensaje en bucle.
       await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
       try {
+        if (update.callback_query) {
+          await procesarCallbackTomarTicket(update.callback_query);
+          continue;
+        }
         const msg = update.message;
         if (!msg || !msg.text || !msg.chat || msg.chat.type !== 'private' || (msg.from && msg.from.is_bot)) continue;
         const texto = msg.text.trim();
