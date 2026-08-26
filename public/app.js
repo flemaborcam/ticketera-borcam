@@ -812,6 +812,29 @@ async function saltarAlFinalImap() {
   } catch (e) { showToast(e.message); }
 }
 
+async function limpiarTicketsAntiguos() {
+  const mesesStr = prompt('¿A partir de cuántos meses sin actividad querés borrar tickets ya Resueltos o Cerrados? (los que sigan Abiertos, En progreso o Esperando al Cliente nunca se tocan)', '2');
+  if (mesesStr === null) return;
+  const meses = Number(mesesStr);
+  if (!meses || meses <= 0) { showToast('Ingresá un número de meses válido.'); return; }
+  const dias = Math.round(meses * 30);
+  if (!confirm(`Esto borra definitivamente todos los tickets Resueltos o Cerrados con más de ${meses} mes(es) sin actividad, junto con sus adjuntos. No se puede deshacer. ¿Continuar?`)) return;
+  try {
+    const r = await api('POST', '/api/tickets/limpiar-antiguos', { dias });
+    showToast(`${r.eliminados} ticket${r.eliminados === 1 ? '' : 's'} antiguo${r.eliminados === 1 ? '' : 's'} eliminado${r.eliminados === 1 ? '' : 's'}.`);
+    cache.tickets = (await api('GET', '/api/tickets')).map(mapTicket);
+    if (state.view === 'dashboard') render();
+  } catch (e) { showToast(e.message); }
+}
+
+async function limpiarAdjuntosHuerfanos() {
+  if (!confirm('Esto busca en Storage archivos adjuntos que quedaron sueltos de tickets ya borrados (de antes de este cambio) y los elimina para liberar espacio. No afecta a ningún ticket que siga existiendo. ¿Continuar?')) return;
+  try {
+    const r = await api('POST', '/api/storage/limpiar-huerfanos');
+    showToast(`Se liberaron ${r.archivosEliminados} archivo${r.archivosEliminados === 1 ? '' : 's'} de ${r.carpetasEliminadas} ticket${r.carpetasEliminadas === 1 ? '' : 's'} ya borrado${r.carpetasEliminadas === 1 ? '' : 's'}.`);
+  } catch (e) { showToast(e.message); }
+}
+
 async function descargarRespaldoAhora() {
   try {
     const r = await fetch('/api/respaldo/descargar', { credentials: 'same-origin' });
@@ -1667,6 +1690,11 @@ function renderConfiguracion() {
       <button type="button" class="btn btn-danger btn-block" onclick="eliminarTodosLosTickets()">Eliminar TODOS los tickets</button>
       <button type="button" class="btn btn-ghost btn-block" style="margin-top:10px;" onclick="saltarAlFinalImap()">Saltar al final de la casilla (recomendado, solo procesa lo nuevo)</button>
       <button type="button" class="btn btn-danger btn-block" style="margin-top:10px;" onclick="reiniciarImap()">Reprocesar toda la casilla de correo desde cero</button>
+
+      <div style="font-weight:600;font-size:13.5px;margin:18px 0 8px;padding-top:14px;border-top:1px dashed var(--line-strong);">Liberar espacio de almacenamiento</div>
+      <div class="hint-text" style="margin-bottom:10px;">Al borrar un ticket (arriba o desde el propio ticket), sus adjuntos ya se borran solos de Storage. Marcar un ticket como Resuelto o Cerrado NO libera espacio por sí solo — para eso hay que borrarlo.</div>
+      <button type="button" class="btn btn-danger btn-block" onclick="limpiarTicketsAntiguos()">Borrar tickets Resueltos/Cerrados antiguos (elegís desde cuántos meses)</button>
+      <button type="button" class="btn btn-ghost btn-block" style="margin-top:10px;" onclick="limpiarAdjuntosHuerfanos()">Limpiar adjuntos huérfanos en Storage (de tickets ya borrados antes de este cambio)</button>
     </div>` : ''}`;
 }
 
