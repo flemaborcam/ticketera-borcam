@@ -1596,7 +1596,17 @@ function renderTags() {
     <div class="reply-tabs">${tabsHtml}</div>
     ${body}`;
 }
-function cambiarTagsTab(t) { state.tagsTab = t; render(); }
+function cambiarTagsTab(t) { state.tagsTab = t; render(); actualizarCostoTags(); }
+const PRECIOS_TAGS_UYU = { peatonales: 250, vehiculares: 350 };
+function actualizarCostoTags() {
+  const tipoEl = document.getElementById('tags-tipo');
+  const cantEl = document.getElementById('tags-cantidad');
+  const costoEl = document.getElementById('tags-costo');
+  if (!tipoEl || !cantEl || !costoEl) return;
+  const precioUnitario = tipoEl.value.toLowerCase().startsWith('peat') ? PRECIOS_TAGS_UYU.peatonales : PRECIOS_TAGS_UYU.vehiculares;
+  const cantidad = Number(cantEl.value) || 0;
+  costoEl.value = (precioUnitario * cantidad).toFixed(2);
+}
 function renderTagsNuevo() {
   const edificios = cache.tagsEdificios || [];
   const opciones = edificios.map(e => `<option value="${escapeHtml(e.edificio)}">${escapeHtml(e.edificio)}</option>`).join('');
@@ -1612,12 +1622,13 @@ function renderTagsNuevo() {
       <div class="field"><label>Unidad</label><input type="text" id="tags-unidad" placeholder="Unidad"></div>
     </div>
     <div class="field"><label>Tipo de tags</label>
-      <select id="tags-tipo"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
+      <select id="tags-tipo" onchange="actualizarCostoTags()"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
     </div>
     <div class="field-row">
-      <div class="field"><label>Cantidad</label><input type="number" id="tags-cantidad" min="1" placeholder="Cantidad"></div>
-      <div class="field"><label>Costo (opcional)</label><input type="number" id="tags-costo" step="0.01" placeholder="Costo"></div>
+      <div class="field"><label>Cantidad</label><input type="number" id="tags-cantidad" min="1" placeholder="Cantidad" oninput="actualizarCostoTags()"></div>
+      <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
     </div>
+    <div class="hint-text">Tags peatonales: $250 c/u · Tags vehiculares: $350 c/u. El costo se calcula solo según el tipo y la cantidad.</div>
     <div class="field"><label>Ticket (opcional)</label><input type="text" id="tags-ticket" placeholder="Número de ticket"></div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
       <button type="button" class="btn btn-primary btn-block" onclick="guardarPedidoTags()">Guardar pedido</button>
@@ -1639,7 +1650,7 @@ async function guardarPedidoTags() {
     showToast('Pedido guardado.');
     state.tagsTab = 'pedidos';
     render();
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
 function renderTagsPedidos() {
@@ -1662,14 +1673,14 @@ async function marcarEntregadoTags(id) {
   try {
     await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum: tagNum.trim() });
     showToast('Marcado como entregado.');
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
 async function eliminarPedidoTags(id) {
   if (!confirm('¿Eliminar este pedido?')) return;
   try {
     await api('DELETE', `/api/tags/pedidos/${id}`);
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
 function renderTagsHistorial() {
@@ -1715,7 +1726,7 @@ async function guardarEdificioTags() {
   try {
     await api('POST', '/api/tags/edificios', { edificio, cantidadPeatonal, cantidadVehicular });
     showToast('Edificio guardado.');
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
 function editarEdificioTags(id, edificio, peatonal, vehicular) {
@@ -1725,14 +1736,14 @@ function editarEdificioTags(id, edificio, peatonal, vehicular) {
   if (v === null) return;
   api('PUT', `/api/tags/edificios/${id}`, { cantidadPeatonal: Number(p) || 0, cantidadVehicular: Number(v) || 0 }).then(() => {
     showToast('Edificio actualizado.');
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   }).catch(e => showToast(e.message));
 }
 async function eliminarEdificioTags(id) {
   if (!confirm('¿Eliminar este edificio del control de stock?')) return;
   try {
     await api('DELETE', `/api/tags/edificios/${id}`);
-    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; });
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
 
@@ -2300,7 +2311,7 @@ function render() {
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'estadisticas') inner = renderEstadisticas();
-  else if (state.view === 'tags') { inner = '<div class="empty-state">Cargando…</div>'; renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') el.innerHTML = html; }); }
+  else if (state.view === 'tags') { inner = '<div class="empty-state">Cargando…</div>'; renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } }); }
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
   app.innerHTML = renderShell(inner);
