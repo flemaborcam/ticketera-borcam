@@ -18,7 +18,8 @@ let state = {
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
-  filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1
+  filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1,
+  newsletterDestinatarios: [], newsletterAdjuntos: []
 };
 
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
@@ -877,7 +878,7 @@ function navItems(activeView) {
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
-    { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
+    { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
   ];
@@ -1426,6 +1427,113 @@ function renderConfigTabs() {
 }
 function setConfigTab(v) { state.configTab = v; render(); }
 
+/* ---------------- Newsletter ---------------- */
+
+function renderNewsletterChips() {
+  if (!state.newsletterDestinatarios.length) return '<div class="hint-text">Todavía no agregaste destinatarios.</div>';
+  return `<div class="chip-list">${state.newsletterDestinatarios.map(d => `
+    <span class="chip ${d.esCliente ? 'chip-cliente' : ''}">
+      ${d.esCliente ? '&#128100; ' : ''}${escapeHtml(d.nombre ? d.nombre + ' — ' : '')}${escapeHtml(d.email)}
+      <button type="button" onclick="removerDestinatarioNewsletter('${d.email.replace(/'/g, "\\'")}')">&times;</button>
+    </span>`).join('')}</div>`;
+}
+function refreshNewsletterChips() {
+  const el = document.getElementById('newsletter-destinatarios');
+  if (el) el.innerHTML = renderNewsletterChips();
+}
+function agregarDestinatarioNewsletter(inputEl) {
+  const raw = (inputEl.value || '').trim().toLowerCase();
+  inputEl.value = '';
+  if (!raw) return;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) { showToast('Ingresá un email válido.'); return; }
+  if (state.newsletterDestinatarios.some(d => d.email === raw)) { showToast('Ese destinatario ya fue agregado.'); return; }
+  const cliente = cache.clientes.find(g => (g.correo || '').trim().toLowerCase() === raw);
+  state.newsletterDestinatarios.push({ email: raw, esCliente: !!cliente, nombre: cliente ? cliente.nombre : '' });
+  refreshNewsletterChips();
+}
+function removerDestinatarioNewsletter(email) {
+  state.newsletterDestinatarios = state.newsletterDestinatarios.filter(d => d.email !== email);
+  refreshNewsletterChips();
+}
+function newsletterInputKeydown(ev) {
+  if (ev.key === 'Enter' || ev.key === ',') { ev.preventDefault(); agregarDestinatarioNewsletter(ev.target); }
+}
+function renderNewsletterAdjuntosChips() {
+  if (!state.newsletterAdjuntos.length) return '';
+  return `<div class="chip-list">${state.newsletterAdjuntos.map(a => `
+    <span class="chip">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <small>(${fmtSize(a.size)})</small>
+      <button type="button" onclick="removeNewsletterAttachment('${a.id}')">&times;</button>
+    </span>`).join('')}</div>`;
+}
+function refreshNewsletterAdjuntos() {
+  const el = document.getElementById('newsletter-adjuntos');
+  if (el) el.innerHTML = renderNewsletterAdjuntosChips();
+}
+function addNewsletterAttachments(input) {
+  Array.from(input.files || []).forEach(file => {
+    if (file.size > ATTACH_MAX_BYTES) { showToast(`"${file.name}" pesa demasiado (máx. 20 MB).`); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      state.newsletterAdjuntos.push({ id: uid(), nombre: file.name, tipo: tipoAdjunto(file.type || ''), size: file.size, dataUrl: reader.result });
+      refreshNewsletterAdjuntos();
+    };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+function removeNewsletterAttachment(id) {
+  state.newsletterAdjuntos = state.newsletterAdjuntos.filter(a => a.id !== id);
+  refreshNewsletterAdjuntos();
+}
+async function enviarNewsletter() {
+  const asunto = (document.getElementById('newsletter-asunto') || {}).value || '';
+  const cuerpo = (document.getElementById('newsletter-cuerpo') || {}).value || '';
+  if (!state.newsletterDestinatarios.length) { showToast('Agregá al menos un destinatario.'); return; }
+  if (!asunto.trim()) { showToast('Falta el asunto.'); return; }
+  if (!cuerpo.trim()) { showToast('Falta el mensaje.'); return; }
+  const btn = document.getElementById('newsletter-enviar-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando…'; }
+  try {
+    const r = await api('POST', '/api/newsletter/enviar', {
+      destinatarios: state.newsletterDestinatarios.map(d => ({ email: d.email })),
+      asunto: asunto.trim(),
+      cuerpo,
+      adjuntos: state.newsletterAdjuntos.map(a => ({ nombre: a.nombre, dataUrl: a.dataUrl }))
+    });
+    showToast(`Enviado a ${r.enviados} de ${r.total} destinatarios.${r.errores && r.errores.length ? ' Errores: ' + r.errores.join(' | ') : ''}`);
+    if (!r.errores || !r.errores.length) {
+      state.newsletterDestinatarios = [];
+      state.newsletterAdjuntos = [];
+      render();
+    }
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Enviar newsletter'; }
+  }
+}
+function renderNewsletter() {
+  const opcionesClientes = cache.clientes.filter(g => g.correo).map(g => `<option value="${escapeHtml(g.correo)}">${escapeHtml(g.nombre)}</option>`).join('');
+  return `<div class="page-head"><div><h1>Newsletter</h1><div class="sub">Enviá un correo a varios destinatarios a la vez, con texto e imágenes</div></div></div>
+    <div class="card">
+      <label>Destinatarios</label>
+      <div class="hint-text">Escribí un email y presioná Enter para agregarlo. Si coincide con un cliente cargado, se va a marcar automáticamente.</div>
+      <input type="text" list="newsletter-clientes-list" placeholder="nombre@correo.com" onkeydown="newsletterInputKeydown(event)" style="margin-top:8px;">
+      <datalist id="newsletter-clientes-list">${opcionesClientes}</datalist>
+      <div id="newsletter-destinatarios" style="margin-top:10px;">${renderNewsletterChips()}</div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <label>Asunto</label>
+      <input type="text" id="newsletter-asunto" placeholder="Asunto del correo">
+      <label style="margin-top:12px;">Mensaje</label>
+      <textarea id="newsletter-cuerpo" rows="8" placeholder="Escribí el mensaje..."></textarea>
+      <label style="margin-top:12px;">Imágenes / adjuntos</label>
+      <input type="file" multiple accept="image/*,application/pdf" onchange="addNewsletterAttachments(this)">
+      <div id="newsletter-adjuntos" style="margin-top:8px;">${renderNewsletterAdjuntosChips()}</div>
+      <button type="button" id="newsletter-enviar-btn" class="btn-primary" style="margin-top:16px;" onclick="enviarNewsletter()">Enviar newsletter</button>
+    </div>`;
+}
+
 function renderConfiguracion() {
   const c = cache.configuracion;
   const tab = state.configTab || 'correo';
@@ -1792,6 +1900,7 @@ function render() {
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
+  else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
   app.innerHTML = renderShell(inner);
