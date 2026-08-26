@@ -328,6 +328,28 @@ app.post('/api/auth/register', async (req, res) => {
   req.session.userId = r.rows[0].id;
   ok(res, { type: 'staff' });
 });
+// Registro público de un cliente (portal): a diferencia de /api/clientes (que exige ser staff),
+// este endpoint lo puede usar cualquiera con el link de registro, para que el técnico no tenga
+// que dar de alta él mismo a cada cliente.
+app.post('/api/auth/register-cliente', async (req, res) => {
+  const { nombre, direccion, telefono, correo, rol, password } = req.body;
+  if (!nombre || !correo || !rol || !password) return bad(res, 'Completá todos los campos obligatorios.');
+  if (password.length < 6) return bad(res, 'La contraseña debe tener al menos 6 caracteres.');
+  const correoNorm = correo.trim().toLowerCase();
+  const existeStaff = (await pool.query('select id from usuarios where lower(email)=$1', [correoNorm])).rows[0];
+  if (existeStaff) return bad(res, 'Ese correo ya está registrado como usuario del sistema.');
+  const existeCliente = (await pool.query('select id from clientes where lower(correo)=$1', [correoNorm])).rows[0];
+  if (existeCliente) return bad(res, 'Ya existe un cliente registrado con ese correo. Si ya tenías cuenta, iniciá sesión.');
+  const hash = bcrypt.hashSync(password, 10);
+  const r = await pool.query(
+    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash)
+     values ($1,$2,$3,$4,$5,$6) returning id`,
+    [nombre.trim(), (direccion || '').trim(), (telefono || '').trim(), correoNorm, rol, hash]
+  );
+  req.session.type = 'cliente';
+  req.session.clienteId = r.rows[0].id;
+  ok(res, { type: 'cliente' });
+});
 app.post('/api/auth/logout', (req, res) => {
   req.session = null;
   ok(res, { ok: true });
