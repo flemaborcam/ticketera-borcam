@@ -892,6 +892,93 @@ async function requireSuperadmin(req, res, next) {
   if (!u || !u.es_superadmin) return bad(res, 'Solo un Superadmin puede hacer esto.', 403);
   next();
 }
+/* ---------------- Reportes de productividad (solo Superadmin) ---------------- */
+// Arma el reporte de rendimiento del equipo para un rango de fechas: números generales del sistema,
+// el detalle de cada usuario (para poder sacar el reporte individual de cualquiera, incluido uno mismo),
+// y una serie de los últimos 6 meses para el gráfico de evolución.
+app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
+  try {
+    const hasta = req.query.hasta ? new Date(req.query.hasta + 'T23:59:59') : new Date();
+    const desde = req.query.desde ? new Date(req.query.desde + 'T00:00:00') : new Date(hasta.getFullYear(), hasta.getMonth(), 1);
+
+    const recibidos = (await pool.query('select count(*) from tickets where creado between $1 and $2', [desde, hasta])).rows[0].count;
+    const resueltos = (await pool.query(
+      `select count(*) from tickets where estado in ('Resuelto','Cerrado') and actualizado between $1 and $2`, [desde, hasta]
+    )).rows[0].count;
+    const sinAsignar = (await pool.query(
+      `select count(*) from tickets where asignado_a is null and estado not in ('Resuelto','Cerrado')`
+    )).rows[0].count;
+    const abiertosActuales = (await pool.query(
+      `select count(*) from tickets where estado not in ('Resuelto','Cerrado')`
+    )).rows[0].count;
+    const primeraRespuestaGeneral = (await pool.query(
+      `select avg(extract(epoch from (primera.fecha - t.creado))/3600) as horas
+       from tickets t
+       join lateral (select fecha from mensajes m where m.ticket_id=t.id and m.tipo='saliente' order by m.fecha asc limit 1) primera on true
+       where t.creado between $1 and $2`, [desde, hasta]
+    )).rows[0].horas;
+    const resolucionGeneral = (await pool.query(
+      `select avg(extract(epoch from (actualizado - creado))/3600) as horas
+       from tickets where estado in ('Resuelto','Cerrado') and actualizado between $1 and $2`, [desde, hasta]
+    )).rows[0].horas;
+
+    const usuarios = (await pool.query('select id, nombre, apellido, cargo from usuarios order by nombre')).rows;
+    const porUsuario = [];
+    for (const u of usuarios) {
+      const nombreCompleto = `${u.nombre} ${u.apellido}`;
+      const tk = (await pool.query(
+        `select
+           count(*) filter (where creado between $2 and $3) as asignados,
+           count(*) filter (where estado in ('Resuelto','Cerrado') and actualizado between $2 and $3) as resueltos
+         from tickets where asignado_a = $1`, [u.id, desde, hasta]
+      )).rows[0];
+      const mensajesEnviados = (await pool.query(
+        `select count(*) from mensajes where tipo='saliente' and autor=$1 and fecha between $2 and $3`,
+        [nombreCompleto, desde, hasta]
+      )).rows[0].count;
+      const primeraResp = (await pool.query(
+        `select avg(extract(epoch from (primera.fecha - t.creado))/3600) as horas
+         from tickets t
+         join lateral (select fecha from mensajes m where m.ticket_id=t.id and m.tipo='saliente' order by m.fecha asc limit 1) primera on true
+         where t.asignado_a=$1 and t.creado between $2 and $3`, [u.id, desde, hasta]
+      )).rows[0].horas;
+      const resolucion = (await pool.query(
+        `select avg(extract(epoch from (t.actualizado - t.creado))/3600) as horas
+         from tickets t where t.asignado_a=$1 and t.estado in ('Resuelto','Cerrado') and t.actualizado between $2 and $3`,
+        [u.id, desde, hasta]
+      )).rows[0].horas;
+      porUsuario.push({
+        id: u.id, nombre: u.nombre, apellido: u.apellido, cargo: u.cargo || '',
+        ticketsAsignados: Number(tk.asignados) || 0,
+        ticketsResueltos: Number(tk.resueltos) || 0,
+        mensajesEnviados: Number(mensajesEnviados) || 0,
+        promedioPrimeraRespuestaHoras: primeraResp ? Number(primeraResp) : null,
+        promedioResolucionHoras: resolucion ? Number(resolucion) : null
+      });
+    }
+
+    const evolucion = (await pool.query(
+      `select to_char(date_trunc('month', creado), 'YYYY-MM') as mes,
+         count(*) as recibidos,
+         count(*) filter (where estado in ('Resuelto','Cerrado')) as resueltos
+       from tickets
+       where creado >= date_trunc('month', now()) - interval '5 months'
+       group by 1 order by 1`
+    )).rows.map(r => ({ mes: r.mes, recibidos: Number(r.recibidos), resueltos: Number(r.resueltos) }));
+
+    ok(res, {
+      rango: { desde: desde.toISOString().slice(0, 10), hasta: hasta.toISOString().slice(0, 10) },
+      general: {
+        recibidos: Number(recibidos), resueltos: Number(resueltos),
+        sinAsignar: Number(sinAsignar), abiertosActuales: Number(abiertosActuales),
+        promedioPrimeraRespuestaHoras: primeraRespuestaGeneral ? Number(primeraRespuestaGeneral) : null,
+        promedioResolucionHoras: resolucionGeneral ? Number(resolucionGeneral) : null
+      },
+      porUsuario,
+      evolucion
+    });
+  } catch (e) { bad(res, 'No se pudo armar el reporte: ' + e.message); }
+});
 app.get('/api/usuarios', requireStaff, async (req, res) => {
   const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin from usuarios order by nombre')).rows;
   ok(res, usuarios);
