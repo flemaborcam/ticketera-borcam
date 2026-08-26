@@ -1629,8 +1629,10 @@ function renderTagsNuevo() {
     ${configSectionHead('🏷️', 'Ingresar pedido', 'Al guardar se descuenta automáticamente del stock disponible de ese edificio.')}
     <div class="field"><label>Cliente</label><input type="text" id="tags-cliente" placeholder="Nombre del cliente"></div>
     <div class="field"><label>Edificio</label>
-      <input type="text" id="tags-edificio" list="tags-edificios-list" placeholder="Elegí un edificio">
-      <datalist id="tags-edificios-list">${opciones}</datalist>
+      <select id="tags-edificio">
+        <option value="">-- Seleccioná un edificio --</option>
+        ${opciones}
+      </select>
     </div>
     <div class="field-row">
       <div class="field"><label>Torre</label><input type="text" id="tags-torre" placeholder="Torre"></div>
