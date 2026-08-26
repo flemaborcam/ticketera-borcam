@@ -125,6 +125,24 @@ async function handleRegister(ev) {
   return false;
 }
 
+async function handleRegisterCliente(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const password = fd.get('password'), password2 = fd.get('password2');
+  if (password !== password2) { state.regError = 'Las contraseñas no coinciden.'; render(); return false; }
+  try {
+    await api('POST', '/api/auth/register-cliente', {
+      nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'),
+      correo: fd.get('correo'), rol: fd.get('rol'), password
+    });
+    const me = await api('GET', '/api/auth/me');
+    session = me.session; state.regError = ''; state.view = 'cliente-dashboard';
+    await loadClienteTickets();
+  } catch (e) { state.regError = e.message; }
+  render();
+  return false;
+}
+
 async function logout() {
   await api('POST', '/api/auth/logout');
   session = null; state.view = 'login'; state.authView = 'login';
@@ -1699,14 +1717,46 @@ function renderAuth() {
         ${state.authError ? `<div class="error-text">${escapeHtml(state.authError)}</div>` : ''}
         <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
       </form>
-      <div class="auth-toggle">¿No tenés cuenta? <button onclick="goAuth('register')">Registrate</button></div>
+      <div class="auth-toggle">¿No tenés cuenta? <button onclick="goAuth('register-choice')">Registrate</button></div>
       </div>
     </div></div>`;
+  }
+  if (mode === 'register-choice') {
+    return `<div class="auth-wrap"><div class="auth-card">
+      <div class="auth-card-brand">${logoSvg('white')}</div>
+      <div class="auth-card-body">
+      <h1>Crear cuenta</h1><p class="sub">Contanos primero quién sos, así te llevamos al formulario correcto.</p>
+      <button type="button" class="btn btn-primary btn-block" style="margin-bottom:12px;" onclick="goAuth('register-cliente')">Soy cliente</button>
+      <div class="hint-text" style="margin:-6px 0 14px;">Para ver tus tickets y responder consultas del servicio técnico.</div>
+      <button type="button" class="btn btn-ghost btn-block" onclick="goAuth('register')">Soy empleado de Borcam</button>
+      <div class="hint-text" style="margin-top:6px;">Para gestionar tickets desde la plataforma interna.</div>
+      <div class="auth-toggle">¿Ya tenés cuenta? <button onclick="goAuth('login')">Iniciar sesión</button></div>
+      </div>
+    </div></div>`;
+  }
+  if (mode === 'register-cliente') {
+    const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio']).map(r => `<option value="${r}">${r}</option>`).join('');
+    return `<div class="auth-wrap"><div class="auth-card">
+    <div class="auth-card-brand">${logoSvg('white')}</div>
+    <div class="auth-card-body">
+    <h1>Crear cuenta de cliente</h1><p class="sub">Registrate para ver y responder tus tickets desde el portal.</p>
+    <form onsubmit="return handleRegisterCliente(event)">
+      <div class="field"><label>Nombre</label><input name="nombre" required></div>
+      <div class="field"><label>Dirección</label><input name="direccion"></div>
+      <div class="field-row"><div class="field"><label>Teléfono</label><input name="telefono"></div><div class="field"><label>Correo electrónico</label><input name="correo" type="email" required></div></div>
+      <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled selected>Elegí un rol</option>${rolOptions}</select></div>
+      <div class="field-row"><div class="field"><label>Contraseña</label><input name="password" type="password" required></div><div class="field"><label>Repetir contraseña</label><input name="password2" type="password" required></div></div>
+      ${state.regError ? `<div class="error-text">${escapeHtml(state.regError)}</div>` : ''}
+      <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
+    </form>
+    <div class="auth-toggle"><button onclick="goAuth('register-choice')">&larr; Volver</button> · ¿Ya tenés cuenta? <button onclick="goAuth('login')">Iniciar sesión</button></div>
+    </div>
+  </div></div>`;
   }
   return `<div class="auth-wrap"><div class="auth-card">
     <div class="auth-card-brand">${logoSvg('white')}</div>
     <div class="auth-card-body">
-    <h1>Crear cuenta</h1><p class="sub">Registrate para gestionar tickets.</p>
+    <h1>Crear cuenta de empleado</h1><p class="sub">Registrate para gestionar tickets.</p>
     <form onsubmit="return handleRegister(event)">
       <div class="field-row"><div class="field"><label>Nombre</label><input name="nombre" required></div><div class="field"><label>Apellido</label><input name="apellido" required></div></div>
       <div class="field"><label>Teléfono</label><input name="telefono"></div>
@@ -1716,7 +1766,7 @@ function renderAuth() {
       ${state.regError ? `<div class="error-text">${escapeHtml(state.regError)}</div>` : ''}
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
     </form>
-    <div class="auth-toggle">¿Ya tenés cuenta? <button onclick="goAuth('login')">Iniciar sesión</button></div>
+    <div class="auth-toggle"><button onclick="goAuth('register-choice')">&larr; Volver</button> · ¿Ya tenés cuenta? <button onclick="goAuth('login')">Iniciar sesión</button></div>
     </div>
   </div></div>`;
 }
