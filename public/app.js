@@ -152,7 +152,7 @@ async function logout() {
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
 function go(view) {
-  if (state.view === 'dashboard' && view !== 'dashboard') state.selectedTickets.clear();
+  if ((state.view === 'dashboard' || state.view === 'reservas') && view !== state.view) state.selectedTickets.clear();
   state.view = view;
   render();
 }
@@ -999,7 +999,7 @@ function renderReservas() {
 
   const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filtersReservas.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filtersReservas.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
-  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, false)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva".</div></div>`;
+  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva".</div></div>`;
 
   const paginacion = todos.length > TICKETS_POR_PAGINA ? `
     <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px;">
@@ -1015,6 +1015,7 @@ function renderReservas() {
       <select onchange="setFilterReservas('prioridad', this.value)">${prioOptions}</select>
       <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filtersReservas.search)}" onkeydown="if(event.key==='Enter'){ setFilterReservas('search', this.value); }" onsearch="setFilterReservas('search', this.value)">
     </div>
+    ${state.selectedTickets.size ? renderBulkActionBar() : ''}
     ${list}
     ${paginacion}`;
 }
