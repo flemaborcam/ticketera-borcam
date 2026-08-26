@@ -163,6 +163,29 @@ const pool = new Pool({
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
 pool.query('alter table clientes add column if not exists rol_cliente text').catch(e => console.error('No se pudo migrar rol_cliente:', e.message));
 pool.query('alter table telegram_notificaciones_ticket add column if not exists es_grupo boolean default false').catch(e => console.error('No se pudo migrar es_grupo:', e.message));
+// Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
+pool.query(`create table if not exists edificios_tags (
+  id serial primary key,
+  edificio text unique not null,
+  cantidad_peatonal integer not null default 0,
+  cantidad_vehicular integer not null default 0
+)`).catch(e => console.error('No se pudo crear edificios_tags:', e.message));
+pool.query(`create table if not exists tags_pedidos (
+  id serial primary key,
+  nombre_cliente text not null,
+  edificio text,
+  torre text,
+  unidad text,
+  tipo_tags text,
+  cantidad_tags integer not null,
+  entregado boolean not null default false,
+  costo numeric,
+  ticket text,
+  tag_num text,
+  creado_por text,
+  fecha_pedido timestamptz not null default now(),
+  fecha_entrega timestamptz
+)`).catch(e => console.error('No se pudo crear tags_pedidos:', e.message));
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -894,6 +917,106 @@ app.post('/api/newsletter/enviar', requireStaff, async (req, res) => {
     } catch (e) { errores.push(`${to}: ${e.message}`); }
   }
   ok(res, { enviados, total: destinatarios.length, errores });
+});
+/* ---------------- Tags de acceso (edificios / pedidos) ---------------- */
+app.get('/api/tags/edificios', requireStaff, async (req, res) => {
+  // Se calcula el stock realmente disponible (total menos lo comprometido en pedidos aún no entregados),
+  // a diferencia del sistema viejo que calculaba este dato y después no lo usaba (siempre devolvía el total).
+  const edificios = (await pool.query('select * from edificios_tags order by edificio asc')).rows;
+  const comprometido = (await pool.query(
+    `select edificio, tipo_tags, sum(cantidad_tags)::int as cantidad
+     from tags_pedidos where entregado=false group by edificio, tipo_tags`
+  )).rows;
+  const resultado = edificios.map(e => {
+    const compP = comprometido.find(c => c.edificio === e.edificio && (c.tipo_tags || '').toLowerCase().startsWith('peat'));
+    const compV = comprometido.find(c => c.edificio === e.edificio && (c.tipo_tags || '').toLowerCase().startsWith('veh'));
+    return {
+      ...e,
+      restante_peatonal: e.cantidad_peatonal - (compP ? compP.cantidad : 0),
+      restante_vehicular: e.cantidad_vehicular - (compV ? compV.cantidad : 0)
+    };
+  });
+  ok(res, resultado);
+});
+app.post('/api/tags/edificios', requireStaff, requireSuperadmin, async (req, res) => {
+  const { edificio, cantidadPeatonal, cantidadVehicular } = req.body;
+  if (!edificio || !edificio.trim()) return bad(res, 'Falta el nombre del edificio.');
+  const r = await pool.query(
+    `insert into edificios_tags (edificio, cantidad_peatonal, cantidad_vehicular) values ($1,$2,$3)
+     on conflict (edificio) do update set cantidad_peatonal=$2, cantidad_vehicular=$3
+     returning *`,
+    [edificio.trim(), Number(cantidadPeatonal) || 0, Number(cantidadVehicular) || 0]
+  );
+  ok(res, r.rows[0]);
+});
+app.put('/api/tags/edificios/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  const { cantidadPeatonal, cantidadVehicular } = req.body;
+  const r = await pool.query(
+    'update edificios_tags set cantidad_peatonal=$1, cantidad_vehicular=$2 where id=$3 returning *',
+    [Number(cantidadPeatonal) || 0, Number(cantidadVehicular) || 0, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Edificio no encontrado.');
+  ok(res, r.rows[0]);
+});
+app.delete('/api/tags/edificios/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  await pool.query('delete from edificios_tags where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+app.get('/api/tags/pedidos', requireStaff, async (req, res) => {
+  const pedidos = (await pool.query('select * from tags_pedidos order by fecha_pedido desc')).rows;
+  ok(res, pedidos);
+});
+app.post('/api/tags/pedidos', requireStaff, async (req, res) => {
+  const { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket } = req.body;
+  if (!nombreCliente || !nombreCliente.trim()) return bad(res, 'Falta el nombre del cliente.');
+  if (!edificio || !edificio.trim()) return bad(res, 'Falta el edificio.');
+  const cantidad = Number(cantidadTags);
+  if (!cantidad || cantidad <= 0) return bad(res, 'La cantidad tiene que ser mayor a 0.');
+  const columna = (tipoTags || '').toLowerCase().startsWith('peat') ? 'cantidad_peatonal' : 'cantidad_vehicular';
+  const usuario = req.session && req.session.usuario;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const edif = (await client.query(`select * from edificios_tags where edificio=$1 for update`, [edificio.trim()])).rows[0];
+    if (!edif) { await client.query('ROLLBACK'); return bad(res, 'El edificio no está registrado en el stock de Tags.'); }
+    const comprometido = (await client.query(
+      `select coalesce(sum(cantidad_tags),0)::int as total from tags_pedidos
+       where entregado=false and edificio=$1 and lower(tipo_tags) like $2`,
+      [edificio.trim(), columna === 'cantidad_peatonal' ? 'peat%' : 'veh%']
+    )).rows[0].total;
+    const disponible = edif[columna] - comprometido;
+    if (disponible < cantidad) {
+      await client.query('ROLLBACK');
+      return bad(res, `Stock insuficiente en ${edificio}: quedan ${disponible} tag(s) disponibles de ese tipo.`);
+    }
+    const r = await client.query(
+      `insert into tags_pedidos (nombre_cliente, edificio, torre, unidad, tipo_tags, cantidad_tags, costo, ticket, creado_por)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
+      [nombreCliente.trim(), edificio.trim(), torre || null, unidad || null, tipoTags || null, cantidad, costo || null, ticket || null,
+        usuario ? `${usuario.nombre} ${usuario.apellido}` : null]
+    );
+    await client.query('COMMIT');
+    ok(res, r.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    bad(res, 'Error al registrar el pedido: ' + e.message);
+  } finally {
+    client.release();
+  }
+});
+app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
+  const { tagNum } = req.body;
+  if (!tagNum || !String(tagNum).trim()) return bad(res, 'Falta el número de tag entregado.');
+  const r = await pool.query(
+    `update tags_pedidos set entregado=true, fecha_entrega=now(), tag_num=$1 where id=$2 returning *`,
+    [String(tagNum).trim(), req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Pedido no encontrado.');
+  ok(res, r.rows[0]);
+});
+app.delete('/api/tags/pedidos/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  await pool.query('delete from tags_pedidos where id=$1', [req.params.id]);
+  ok(res, { ok: true });
 });
 /* ---------------- Usuarios (staff) ---------------- */
 async function requireSuperadmin(req, res, next) {
