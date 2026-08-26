@@ -19,7 +19,9 @@ let state = {
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
   filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1,
-  newsletterDestinatarios: [], newsletterAdjuntos: []
+  newsletterDestinatarios: [], newsletterAdjuntos: [],
+  reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
+  reportesDesde: '', reportesHasta: ''
 };
 
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
@@ -155,6 +157,7 @@ function go(view) {
   if ((state.view === 'dashboard' || state.view === 'reservas') && view !== state.view) state.selectedTickets.clear();
   state.view = view;
   render();
+  if (view === 'estadisticas' && !state.reportes && !state.reportesCargando) cargarReportes();
 }
 
 function toggleSeleccionTicket(id, checked) {
@@ -902,9 +905,12 @@ function navItems(activeView) {
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
-    { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
-    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
   ];
+  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
+  items.push(
+    { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
+    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
+  );
   return items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
 }
 function renderShell(inner) {
@@ -1561,6 +1567,194 @@ function renderNewsletter() {
     </div>`;
 }
 
+/* ---------------- Estadísticas / reportes de productividad (solo Superadmin) ---------------- */
+
+function calcularRangoPreset(preset) {
+  const hoy = new Date();
+  const y = hoy.getFullYear(), m = hoy.getMonth();
+  const fmt = d => d.toISOString().slice(0, 10);
+  if (preset === 'mes-pasado') return { desde: fmt(new Date(y, m - 1, 1)), hasta: fmt(new Date(y, m, 0)) };
+  if (preset === 'ultimos-3-meses') return { desde: fmt(new Date(y, m - 2, 1)), hasta: fmt(hoy) };
+  if (preset === 'ultimos-6-meses') return { desde: fmt(new Date(y, m - 5, 1)), hasta: fmt(hoy) };
+  return { desde: fmt(new Date(y, m, 1)), hasta: fmt(hoy) }; // este-mes
+}
+async function cargarReportes() {
+  state.reportesCargando = true; render();
+  let desde, hasta;
+  if (state.reportesRango === 'personalizado') {
+    desde = state.reportesDesde; hasta = state.reportesHasta;
+    if (!desde || !hasta) { showToast('Elegí las dos fechas del período.'); state.reportesCargando = false; render(); return; }
+  } else {
+    const r = calcularRangoPreset(state.reportesRango);
+    desde = r.desde; hasta = r.hasta;
+  }
+  try {
+    state.reportes = await api('GET', `/api/reportes?desde=${desde}&hasta=${hasta}`);
+  } catch (e) { showToast(e.message); }
+  state.reportesCargando = false;
+  render();
+}
+function setReportesRango(v) { state.reportesRango = v; if (v !== 'personalizado') cargarReportes(); else render(); }
+function setReportesFechaPersonalizada(campo, v) { state[campo] = v; }
+function setReportesUsuario(v) { state.reportesUsuario = v; render(); }
+function fmtHoras(h) {
+  if (h === null || h === undefined) return '—';
+  if (h < 1) return Math.round(h * 60) + ' min';
+  if (h < 48) return h.toFixed(1) + ' h';
+  return (h / 24).toFixed(1) + ' d';
+}
+function fmtDateShort(iso) { return new Date(iso).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
+function pctReporte(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+function kpiCard(label, value) {
+  return `<div class="kpi-tile"><div class="v">${value}</div><div class="l">${escapeHtml(label)}</div></div>`;
+}
+function barChartSvg(datos) {
+  if (!datos.length || datos.every(d => d.value === 0)) return '<div class="hint-text">Sin tickets resueltos en este período.</div>';
+  const max = Math.max(1, ...datos.map(d => d.value));
+  const barH = 26, gap = 12, leftW = 150, chartW = 380;
+  const height = datos.length * (barH + gap) + gap;
+  const bars = datos.map((d, i) => {
+    const y = gap + i * (barH + gap);
+    const w = Math.max(2, Math.round((d.value / max) * chartW));
+    const label = d.label.length > 22 ? d.label.slice(0, 21) + '…' : d.label;
+    return `<text x="0" y="${y + barH / 2 + 4}" font-size="12.5" fill="#1a2233">${escapeHtml(label)}</text>
+      <rect x="${leftW}" y="${y}" width="${w}" height="${barH}" rx="5" fill="#1E56C7"></rect>
+      <text x="${leftW + w + 8}" y="${y + barH / 2 + 4}" font-size="12.5" font-weight="600" fill="#1a2233">${d.value}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${leftW + chartW + 50} ${height}" style="width:100%;height:auto;max-width:620px;display:block;">${bars}</svg>`;
+}
+function lineChartSvg(serie) {
+  if (!serie.length) return '<div class="hint-text">Sin datos suficientes.</div>';
+  const w = 640, h = 220, padL = 30, padB = 26, padT = 14, padR = 10;
+  const max = Math.max(1, ...serie.map(s => Math.max(s.recibidos, s.resueltos)));
+  const stepX = serie.length > 1 ? (w - padL - padR) / (serie.length - 1) : 0;
+  const x = i => padL + i * stepX;
+  const y = v => padT + (h - padT - padB) * (1 - v / max);
+  const pathFor = key => serie.map((s, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(s[key]).toFixed(1)}`).join(' ');
+  const gridLines = [0, 0.25, 0.5, 0.75, 1].map(f => {
+    const yy = padT + (h - padT - padB) * (1 - f);
+    return `<line x1="${padL}" y1="${yy}" x2="${w - padR}" y2="${yy}" stroke="#e4e8ef" stroke-width="1"></line>`;
+  }).join('');
+  const labels = serie.map((s, i) => `<text x="${x(i)}" y="${h - 6}" font-size="11" text-anchor="middle" fill="#6b7280">${escapeHtml(s.mes.slice(5))}/${escapeHtml(s.mes.slice(2, 4))}</text>`).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;max-width:680px;display:block;">
+      ${gridLines}
+      <path d="${pathFor('recibidos')}" fill="none" stroke="#8aa4c8" stroke-width="2.5"></path>
+      <path d="${pathFor('resueltos')}" fill="none" stroke="#1E56C7" stroke-width="2.5"></path>
+      ${labels}
+    </svg>
+    <div style="display:flex;gap:16px;margin-top:8px;font-size:12.5px;">
+      <span><span style="display:inline-block;width:10px;height:10px;background:#8aa4c8;border-radius:2px;margin-right:6px;"></span>Recibidos</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#1E56C7;border-radius:2px;margin-right:6px;"></span>Resueltos</span>
+    </div>`;
+}
+function renderEstadisticas() {
+  const rangoOpts = [
+    ['este-mes', 'Este mes'], ['mes-pasado', 'Mes pasado'], ['ultimos-3-meses', 'Últimos 3 meses'],
+    ['ultimos-6-meses', 'Últimos 6 meses'], ['personalizado', 'Personalizado']
+  ].map(([v, l]) => `<option value="${v}" ${state.reportesRango === v ? 'selected' : ''}>${l}</option>`).join('');
+  const usuarioOpts = `<option value="todos" ${state.reportesUsuario === 'todos' ? 'selected' : ''}>Todo el equipo</option>` +
+    (state.reportes ? state.reportes.porUsuario.map(u => `<option value="${u.id}" ${state.reportesUsuario === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}${u.id === currentUser().id ? ' (Yo)' : ''}</option>`).join('') : '');
+  const filtros = `<div class="filters no-print">
+      <select onchange="setReportesRango(this.value)">${rangoOpts}</select>
+      ${state.reportesRango === 'personalizado' ? `
+        <input type="date" value="${escapeHtml(state.reportesDesde)}" onchange="setReportesFechaPersonalizada('reportesDesde', this.value)">
+        <input type="date" value="${escapeHtml(state.reportesHasta)}" onchange="setReportesFechaPersonalizada('reportesHasta', this.value)">
+        <button class="btn btn-ghost" onclick="cargarReportes()">Aplicar</button>` : ''}
+      <select onchange="setReportesUsuario(this.value)">${usuarioOpts}</select>
+      <button class="btn btn-primary" onclick="window.print()">🖨️ Exportar PDF</button>
+    </div>`;
+  const estilos = `<style>
+      @media print {
+        .sidebar, .topbar, .bottomnav, .no-print { display:none !important; }
+        .main { margin:0 !important; }
+        .report-print-head { display:block !important; }
+        .card { box-shadow:none !important; border:1px solid #ddd !important; break-inside:avoid; }
+      }
+      .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+      .kpi-tile { border:1px solid var(--line-strong); border-radius:var(--radius); padding:14px; }
+      .kpi-tile .v { font-family:var(--font-display); font-weight:700; font-size:22px; }
+      .kpi-tile .l { font-size:12px; color:var(--ink-soft); margin-top:2px; }
+      .reportes-table { width:100%; border-collapse:collapse; font-size:13px; }
+      .reportes-table th, .reportes-table td { padding:9px 10px; border-bottom:1px solid var(--line-strong); }
+      .reportes-table th { text-align:left; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); }
+      .report-print-head { display:none; margin-bottom:18px; }
+    </style>`;
+  if (state.reportesCargando || !state.reportes) {
+    return `${estilos}<div class="page-head"><div><h1>Estadísticas</h1><div class="sub">Rendimiento del equipo</div></div></div>${filtros}<div class="empty-state">Cargando reporte…</div>`;
+  }
+  const r = state.reportes;
+  const rangoTexto = `${fmtDateShort(r.rango.desde)} — ${fmtDateShort(r.rango.hasta)}`;
+  if (state.reportesUsuario !== 'todos') {
+    const u = r.porUsuario.find(x => x.id === state.reportesUsuario);
+    if (!u) { state.reportesUsuario = 'todos'; return renderEstadisticas(); }
+    return `${estilos}
+      <div class="page-head"><div><h1>Estadísticas</h1><div class="sub">Reporte individual — ${rangoTexto}</div></div></div>
+      ${filtros}
+      <div class="report-print-head"><h2 style="font-family:var(--font-display);">Reporte de productividad — ${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</h2>
+        <div class="hint-text">Período: ${rangoTexto} · Emitido: ${fmtDateShort(new Date().toISOString())}</div></div>
+      <div class="card" style="margin-bottom:18px;">
+        <div style="font-family:var(--font-display);font-weight:700;font-size:20px;">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</div>
+        <div class="hint-text" style="margin-bottom:16px;">${escapeHtml(u.cargo || '')}</div>
+        <div class="kpi-grid">
+          ${kpiCard('Tickets atendidos', u.ticketsAsignados)}
+          ${kpiCard('Resueltos/Cerrados', u.ticketsResueltos)}
+          ${kpiCard('% resueltos', pctReporte(u.ticketsResueltos, u.ticketsAsignados) + '%')}
+          ${kpiCard('Mensajes enviados', u.mensajesEnviados)}
+          ${kpiCard('Prom. 1ra respuesta', fmtHoras(u.promedioPrimeraRespuestaHoras))}
+          ${kpiCard('Prom. resolución', fmtHoras(u.promedioResolucionHoras))}
+        </div>
+      </div>
+      <div class="card">
+        <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución del equipo — últimos 6 meses</div>
+        ${lineChartSvg(r.evolucion)}
+      </div>`;
+  }
+  const ordenado = [...r.porUsuario].sort((a, b) => b.ticketsResueltos - a.ticketsResueltos);
+  const ranking = ordenado.map(u => ({ label: `${u.nombre} ${u.apellido}`, value: u.ticketsResueltos }));
+  const filas = ordenado.map(u => `<tr>
+      <td>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}${u.id === currentUser().id ? ' <span class="hint-text">(Yo)</span>' : ''}</td>
+      <td style="text-align:center;">${u.ticketsAsignados}</td>
+      <td style="text-align:center;">${u.ticketsResueltos}</td>
+      <td style="text-align:center;">${pctReporte(u.ticketsResueltos, u.ticketsAsignados)}%</td>
+      <td style="text-align:center;">${u.mensajesEnviados}</td>
+      <td style="text-align:center;">${fmtHoras(u.promedioPrimeraRespuestaHoras)}</td>
+      <td style="text-align:center;">${fmtHoras(u.promedioResolucionHoras)}</td>
+    </tr>`).join('');
+  return `${estilos}
+    <div class="page-head"><div><h1>Estadísticas</h1><div class="sub">Rendimiento del equipo — ${rangoTexto}</div></div></div>
+    ${filtros}
+    <div class="report-print-head"><h2 style="font-family:var(--font-display);">Reporte de productividad del equipo</h2>
+      <div class="hint-text">Período: ${rangoTexto} · Emitido: ${fmtDateShort(new Date().toISOString())}</div></div>
+    <div class="card" style="margin-bottom:18px;">
+      <div class="kpi-grid">
+        ${kpiCard('Tickets recibidos', r.general.recibidos)}
+        ${kpiCard('Resueltos/Cerrados', r.general.resueltos)}
+        ${kpiCard('% resueltos', pctReporte(r.general.resueltos, r.general.recibidos) + '%')}
+        ${kpiCard('Sin asignar (hoy)', r.general.sinAsignar)}
+        ${kpiCard('Abiertos actuales', r.general.abiertosActuales)}
+        ${kpiCard('Prom. 1ra respuesta', fmtHoras(r.general.promedioPrimeraRespuestaHoras))}
+        ${kpiCard('Prom. resolución', fmtHoras(r.general.promedioResolucionHoras))}
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Tickets resueltos por técnico</div>
+      ${barChartSvg(ranking)}
+    </div>
+    <div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución mensual — recibidos vs. resueltos</div>
+      ${lineChartSvg(r.evolucion)}
+    </div>
+    <div class="card">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Detalle por usuario</div>
+      <div style="overflow-x:auto;">
+      <table class="reportes-table">
+        <thead><tr><th>Usuario</th><th style="text-align:center;">Atendidos</th><th style="text-align:center;">Resueltos</th><th style="text-align:center;">% resueltos</th><th style="text-align:center;">Mensajes</th><th style="text-align:center;">1ra respuesta</th><th style="text-align:center;">Resolución</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
 function renderConfiguracion() {
   const c = cache.configuracion;
   const tab = state.configTab || 'correo';
@@ -1936,6 +2130,7 @@ function render() {
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
+  else if (state.view === 'estadisticas') inner = renderEstadisticas();
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
   app.innerHTML = renderShell(inner);
