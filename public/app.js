@@ -1385,13 +1385,39 @@ function renderPerfil() {
     </div>`;
 }
 
+function configSectionHead(icon, title, hint) {
+  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <span style="font-size:18px;line-height:1;">${icon}</span>
+      <span style="font-family:var(--font-display);font-weight:600;font-size:16.5px;">${title}</span>
+    </div>
+    ${hint ? `<div class="hint-text" style="margin-bottom:16px;">${hint}</div>` : '<div style="margin-bottom:12px;"></div>'}`;
+}
+
+function renderConfigTabs() {
+  const tabs = [
+    { v: 'correo', label: '📧 Correo' },
+    { v: 'telegram', label: '✈️ Telegram' },
+    { v: 'notificaciones', label: '🔔 Notificaciones al cliente' },
+    { v: 'respaldo', label: '💾 Respaldo' },
+  ];
+  if (currentUser().es_superadmin) tabs.push({ v: 'peligro', label: '⚠️ Zona de peligro' });
+  const activa = state.configTab || 'correo';
+  return `<div class="reply-tabs" style="flex-wrap:wrap;width:auto;">
+    ${tabs.map(t => `<button type="button" class="reply-tab ${activa === t.v ? 'active' : ''}" onclick="setConfigTab('${t.v}')">${t.label}</button>`).join('')}
+  </div>`;
+}
+function setConfigTab(v) { state.configTab = v; render(); }
+
 function renderConfiguracion() {
   const c = cache.configuracion;
-  return `<div class="page-head"><div><h1>Configuración</h1><div class="sub">Ajustes generales del sistema</div></div></div>
-    <div class="card card-narrow" style="max-width:560px;">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Casilla de correo de soporte</div>
-      <div class="hint-text" style="margin-bottom:16px;">Conectá tu casilla real para que reciba correos y cree tickets solos, y para que las respuestas le lleguen de verdad al cliente.</div>
-      <form onsubmit="return submitConfiguracion(event)">
+  const tab = state.configTab || 'correo';
+  return `<div class="page-head"><div><h1>Configuración</h1><div class="sub">Ajustes generales del sistema, agrupados por tema</div></div></div>
+    ${renderConfigTabs()}
+    <div style="height:16px;"></div>
+    <form onsubmit="return submitConfiguracion(event)">
+
+      <div class="card card-narrow" style="max-width:560px;${tab === 'correo' ? '' : 'display:none;'}">
+        ${configSectionHead('📧', 'Casilla de correo de soporte', 'Conectá tu casilla real para que reciba correos y cree tickets solos, y para que las respuestas le lleguen de verdad al cliente.')}
         <div class="field"><label>Correo electrónico de la casilla</label><input name="casillaEmail" type="email" value="${escapeHtml(c.casillaEmail || '')}" placeholder="tickets@borcam.com.uy" required></div>
         <div class="field"><label>Nombre para mostrar</label><input name="casillaNombre" value="${escapeHtml(c.casillaNombre || '')}" placeholder="Ej: Mesa de Soporte"></div>
 
@@ -1415,29 +1441,14 @@ function renderConfiguracion() {
         <div class="field"><label>Usuario</label><input name="smtpUsuario" value="${escapeHtml(c.smtpUsuario || '')}" placeholder="tickets@borcam.com.uy"></div>
         <div class="field"><label>Contraseña</label><input name="smtpPassword" type="password" placeholder="${c.tieneSmtpPassword ? 'Dejar en blanco para no cambiarla' : 'Contraseña del correo'}"></div>
 
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Aviso automático de fin de semana</div>
-        <div class="hint-text" style="margin-bottom:10px;">Los sábados y domingos, cuando llega un mensaje nuevo, el sistema responde solo con este texto (una vez por día por ticket).</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
-          <input type="checkbox" name="avisoFindeActivo" ${c.avisoFindeActivo !== false ? 'checked' : ''}> Activar aviso de fin de semana
-        </label>
-        <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFindeMensaje">${escapeHtml(c.avisoFindeMensaje || '')}</textarea></div>
-
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Aviso automático fuera de horario (días hábiles)</div>
-        <div class="hint-text" style="margin-bottom:10px;">De lunes a viernes, fuera del horario que definas acá, el sistema responde solo con este texto (una vez por día por ticket). Los fines de semana los cubre el aviso de arriba, no este.</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
-          <input type="checkbox" name="avisoFueraHorarioActivo" ${c.avisoFueraHorarioActivo !== false ? 'checked' : ''}> Activar aviso fuera de horario
-        </label>
-        <div class="field-row">
-          <div class="field"><label>Horario de atención desde</label><input type="time" name="avisoFueraHorarioInicio" value="${c.avisoFueraHorarioInicio || '09:00'}"></div>
-          <div class="field"><label>Hasta</label><input type="time" name="avisoFueraHorarioFin" value="${c.avisoFueraHorarioFin || '18:00'}"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión de correo</button>
+          <div id="resultado-prueba" style="margin-top:8px;"></div>
         </div>
-        <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFueraHorarioMensaje">${escapeHtml(c.avisoFueraHorarioMensaje || '')}</textarea></div>
+      </div>
 
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Notificaciones en Telegram</div>
-        <div class="hint-text" style="margin-bottom:10px;">
-          Cada vez que llega un ticket nuevo (no en respuestas posteriores), se manda un aviso a un grupo de Telegram con un resumen y un enlace para abrirlo. Los tickets que contengan la palabra "reserva" no se avisan por acá.
-          ${c.telegramConfiguradoServidor ? '' : '<br><strong style="color:var(--stamp-red);">Falta configurar el bot en el servidor (variable TELEGRAM_BOT_TOKEN).</strong>'}
-        </div>
+      <div class="card card-narrow" style="max-width:560px;${tab === 'telegram' ? '' : 'display:none;'}">
+        ${configSectionHead('✈️', 'Notificaciones en Telegram', `Cada vez que llega un ticket nuevo (no en respuestas posteriores), se manda un aviso a un grupo de Telegram con un resumen y un enlace para abrirlo. Los tickets que contengan la palabra "reserva" no se avisan por acá.${c.telegramConfiguradoServidor ? '' : '<br><strong style="color:var(--stamp-red);">Falta configurar el bot en el servidor (variable TELEGRAM_BOT_TOKEN).</strong>'}`)}
         <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
           <input type="checkbox" name="telegramActivo" ${c.telegramActivo ? 'checked' : ''}> Activar notificaciones en Telegram
         </label>
@@ -1461,8 +1472,38 @@ function renderConfiguracion() {
         </div>
         <div class="field"><label>Escalar al grupo de Telegram a los (días) — 0 para desactivar</label><input type="number" name="seguimientoDiasEscalar" min="0" value="${c.seguimientoDiasEscalar || 0}"></div>
 
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Respaldo automático del sistema</div>
-        <div class="hint-text" style="margin-bottom:10px;">Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración). No incluye los archivos adjuntos en sí ni contraseñas.</div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
+          <div id="resultado-telegram" style="margin-top:8px;"></div>
+        </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <button type="button" class="btn btn-ghost btn-block" onclick="probarSeguimiento()">Ejecutar revisión de seguimiento ahora (prueba)</button>
+          <div class="hint-text" style="margin-top:6px;">Fuerza la revisión al instante, sin esperar los 30 minutos habituales. Útil solo para probar.</div>
+          <div id="resultado-seguimiento" style="margin-top:8px;"></div>
+        </div>
+      </div>
+
+      <div class="card card-narrow" style="max-width:560px;${tab === 'notificaciones' ? '' : 'display:none;'}">
+        ${configSectionHead('🔔', 'Aviso automático de fin de semana', 'Los sábados y domingos, cuando llega un mensaje nuevo, el sistema responde solo con este texto (una vez por día por ticket).')}
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="avisoFindeActivo" ${c.avisoFindeActivo !== false ? 'checked' : ''}> Activar aviso de fin de semana
+        </label>
+        <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFindeMensaje">${escapeHtml(c.avisoFindeMensaje || '')}</textarea></div>
+
+        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Aviso automático fuera de horario (días hábiles)</div>
+        <div class="hint-text" style="margin-bottom:10px;">De lunes a viernes, fuera del horario que definas acá, el sistema responde solo con este texto (una vez por día por ticket). Los fines de semana los cubre el aviso de arriba, no este.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+          <input type="checkbox" name="avisoFueraHorarioActivo" ${c.avisoFueraHorarioActivo !== false ? 'checked' : ''}> Activar aviso fuera de horario
+        </label>
+        <div class="field-row">
+          <div class="field"><label>Horario de atención desde</label><input type="time" name="avisoFueraHorarioInicio" value="${c.avisoFueraHorarioInicio || '09:00'}"></div>
+          <div class="field"><label>Hasta</label><input type="time" name="avisoFueraHorarioFin" value="${c.avisoFueraHorarioFin || '18:00'}"></div>
+        </div>
+        <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFueraHorarioMensaje">${escapeHtml(c.avisoFueraHorarioMensaje || '')}</textarea></div>
+      </div>
+
+      <div class="card card-narrow" style="max-width:560px;${tab === 'respaldo' ? '' : 'display:none;'}">
+        ${configSectionHead('💾', 'Respaldo automático del sistema', 'Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración). No incluye los archivos adjuntos en sí ni contraseñas.')}
         <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
           <input type="checkbox" name="respaldoActivo" ${c.respaldoActivo ? 'checked' : ''}> Enviarme un respaldo automático por correo
         </label>
@@ -1472,36 +1513,28 @@ function renderConfiguracion() {
         </div>
         ${c.respaldoUltimo ? `<div class="hint-text" style="margin-top:-6px;">Último respaldo enviado: ${new Date(c.respaldoUltimo).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short' })}</div>` : ''}
 
-        <button type="submit" class="btn btn-primary btn-block" style="margin-top:12px;">Guardar configuración</button>
-      </form>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreo()">Probar conexión de correo</button>
-        <div id="resultado-prueba" style="margin-top:8px;"></div>
+        ${currentUser().es_superadmin ? `
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo ahora</button>
+        </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <label style="font-weight:600;font-size:13px;color:var(--stamp-red);display:block;margin-bottom:6px;">Restaurar desde un archivo de respaldo</label>
+          <div class="hint-text" style="margin-bottom:8px;">Borra TODOS los datos actuales y los reemplaza por los del archivo. Usar solo en una recuperación real.</div>
+          <input type="file" id="input-restaurar" accept="application/json">
+          <button type="button" class="btn btn-danger btn-block" style="margin-top:8px;" onclick="restaurarRespaldo()">Restaurar este archivo</button>
+        </div>` : ''}
       </div>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="probarTelegram()">Enviar mensaje de prueba a Telegram</button>
-        <div id="resultado-telegram" style="margin-top:8px;"></div>
+
+      <div class="card card-narrow" style="max-width:560px;margin-top:0;">
+        <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
+        <div class="hint-text" style="margin-top:8px;text-align:center;">Guarda los cambios de todas las pestañas de arriba a la vez.</div>
       </div>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="probarSeguimiento()">Ejecutar revisión de seguimiento ahora (prueba)</button>
-        <div class="hint-text" style="margin-top:6px;">Fuerza la revisión al instante, sin esperar los 30 minutos habituales. Útil solo para probar.</div>
-        <div id="resultado-seguimiento" style="margin-top:8px;"></div>
-      </div>
-      ${currentUser().es_superadmin ? `
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo ahora</button>
-      </div>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <label style="font-weight:600;font-size:13px;color:var(--stamp-red);display:block;margin-bottom:6px;">Restaurar desde un archivo de respaldo</label>
-        <div class="hint-text" style="margin-bottom:8px;">Borra TODOS los datos actuales y los reemplaza por los del archivo. Usar solo en una recuperación real.</div>
-        <input type="file" id="input-restaurar" accept="application/json">
-        <button type="button" class="btn btn-danger btn-block" style="margin-top:8px;" onclick="restaurarRespaldo()">Restaurar este archivo</button>
-      </div>` : ''}
-    </div>
+    </form>
+
     ${currentUser().es_superadmin ? `
-    <div class="card card-narrow" style="max-width:560px;margin-top:18px;border-color:var(--stamp-red-tint);">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;color:var(--stamp-red);">Zona de peligro</div>
-      <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer. Solo visible para Superadmin.</div>
+    <div class="card card-narrow" style="max-width:560px;margin-top:18px;border-color:var(--stamp-red-tint);${tab === 'peligro' ? '' : 'display:none;'}">
+      ${configSectionHead('⚠️', 'Zona de peligro', 'Solo visible para Superadmin.')}
+      <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer.</div>
       <button type="button" class="btn btn-danger btn-block" onclick="eliminarTodosLosTickets()">Eliminar TODOS los tickets</button>
       <button type="button" class="btn btn-ghost btn-block" style="margin-top:10px;" onclick="saltarAlFinalImap()">Saltar al final de la casilla (recomendado, solo procesa lo nuevo)</button>
       <button type="button" class="btn btn-danger btn-block" style="margin-top:10px;" onclick="reiniciarImap()">Reprocesar toda la casilla de correo desde cero</button>
