@@ -1593,8 +1593,23 @@ function renderTags() {
   else if (tab === 'historial') body = renderTagsHistorial();
   else if (tab === 'edificios') body = renderTagsEdificios();
   return `<div class="page-head"><div><h1>Tags</h1><div class="sub">Control de stock y entrega de tags de acceso por edificio</div></div></div>
+    ${renderTagsAvisoStockBajo()}
     <div class="reply-tabs">${tabsHtml}</div>
     ${body}`;
+}
+const TAGS_STOCK_MINIMO = 10;
+function renderTagsAvisoStockBajo() {
+  const edificios = cache.tagsEdificios || [];
+  const bajos = [];
+  edificios.forEach(e => {
+    if (e.restante_peatonal <= TAGS_STOCK_MINIMO) bajos.push(`${e.edificio} (peatonales: ${e.restante_peatonal})`);
+    if (e.restante_vehicular <= TAGS_STOCK_MINIMO) bajos.push(`${e.edificio} (vehiculares: ${e.restante_vehicular})`);
+  });
+  if (!bajos.length) return '';
+  return `<div class="card card-narrow" style="max-width:100%;border-color:var(--stamp-red-tint);margin-bottom:14px;">
+    <strong style="color:var(--stamp-red);">⚠️ Stock bajo de tags</strong>
+    <div class="hint-text" style="margin-top:4px;">Quedan ${TAGS_STOCK_MINIMO} unidades o menos en: ${bajos.map(b => escapeHtml(b)).join(' · ')}. Hay que cargar nuevos tags al lote.</div>
+  </div>`;
 }
 function cambiarTagsTab(t) { state.tagsTab = t; render(); actualizarCostoTags(); }
 const PRECIOS_TAGS_UYU = { peatonales: 250, vehiculares: 350 };
@@ -1698,8 +1713,8 @@ function renderTagsEdificios() {
   const edificios = cache.tagsEdificios || [];
   const filas = edificios.map(e => `<tr>
     <td>${escapeHtml(e.edificio)}</td>
-    <td>${e.restante_peatonal} / ${e.cantidad_peatonal}</td>
-    <td>${e.restante_vehicular} / ${e.cantidad_vehicular}</td>
+    <td>${e.restante_peatonal} / ${e.cantidad_peatonal} ${e.restante_peatonal <= TAGS_STOCK_MINIMO ? '<span style="color:var(--stamp-red);font-weight:700;">⚠️</span>' : ''}</td>
+    <td>${e.restante_vehicular} / ${e.cantidad_vehicular} ${e.restante_vehicular <= TAGS_STOCK_MINIMO ? '<span style="color:var(--stamp-red);font-weight:700;">⚠️</span>' : ''}</td>
     <td><button class="btn btn-sm" onclick="editarEdificioTags(${e.id}, '${e.edificio.replace(/'/g, "\\'")}', ${e.cantidad_peatonal}, ${e.cantidad_vehicular})">Editar</button>
     <button class="btn btn-sm btn-danger" onclick="eliminarEdificioTags(${e.id})">Eliminar</button></td>
   </tr>`).join('');
