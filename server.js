@@ -759,8 +759,18 @@ async function asignarTicket(ticketId, staffId) {
   return { staff, t };
 }
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
-  await asignarTicket(req.params.id, req.session.userId);
-  ok(res, await ticketConMensajes(req.params.id));
+  const id = req.params.id;
+  // Mismo chequeo que ya hacía el botón de Telegram: si alguien ya lo tomó (por ejemplo, lo
+  // reasignaron desde el desplegable "Asignado a" mientras este usuario tenía la pantalla abierta),
+  // "Tomar ticket" no debe pisarlo — antes lo hacía sin avisar, dejando el ticket en quien tocara el botón último.
+  const actual = (await pool.query('select asignado_a from tickets where id=$1', [id])).rows[0];
+  if (!actual) return bad(res, 'Ticket no encontrado.', 404);
+  if (actual.asignado_a && String(actual.asignado_a) !== String(req.session.userId)) {
+    const otro = (await pool.query('select nombre, apellido from usuarios where id=$1', [actual.asignado_a])).rows[0];
+    return bad(res, `Ya lo había tomado ${otro ? otro.nombre + ' ' + otro.apellido : 'otro técnico'}.`);
+  }
+  await asignarTicket(id, req.session.userId);
+  ok(res, await ticketConMensajes(id));
 });
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const id = req.params.id;
