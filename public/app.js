@@ -238,9 +238,15 @@ async function updateTicketField(id, field, value) {
   render();
 }
 async function tomarTicket(id) {
-  await api('POST', '/api/tickets/' + id + '/tomar');
-  await refreshTicket(id);
-  render();
+  try {
+    await api('POST', '/api/tickets/' + id + '/tomar');
+    await refreshTicket(id);
+    render();
+  } catch (e) {
+    showToast(e.message);
+    await refreshTicket(id);
+    render();
+  }
 }
 
 async function eliminarTicket(id) {
