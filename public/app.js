@@ -990,6 +990,54 @@ function renderBulkActionBar() {
 function esTicketDeReserva(t) {
   return t.asunto.toLowerCase().includes('reserva');
 }
+/* ---------------- Agendar reserva (.ics) ----------------
+   Bloque autocontenido: no toca ninguna otra parte del sistema ni crea tablas nuevas.
+   Se puede sacar en cualquier momento borrando este bloque y su llamada en renderTicket(). */
+function renderReservaCalendario(t) {
+  const ahora = new Date(Date.now() + 60 * 60000); // por defecto, dentro de una hora
+  const fechaDefault = ahora.toISOString().slice(0, 10);
+  const horaDefault = ahora.toTimeString().slice(0, 5);
+  return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
+    ${configSectionHead('📅', 'Agendar esta reserva', 'Generá un archivo .ics con la fecha y hora que seleccionás, para abrirlo con tu app de calendario (One Calendar, Outlook, Google Calendar, etc.).')}
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input type="date" id="reserva-ics-fecha" value="${fechaDefault}"></div>
+      <div class="field"><label>Hora</label><input type="time" id="reserva-ics-hora" value="${horaDefault}"></div>
+    </div>
+    <div class="field"><label>Duración (minutos)</label><input type="number" id="reserva-ics-duracion" min="15" step="15" value="60"></div>
+    <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="descargarIcsReserva('${t.id}')">📅 Descargar evento (.ics)</button></div>
+  </div>`;
+}
+function descargarIcsReserva(id) {
+  const t = cache.tickets.find(x => x.id === id);
+  if (!t) return;
+  const fecha = document.getElementById('reserva-ics-fecha').value;
+  const hora = document.getElementById('reserva-ics-hora').value;
+  const duracion = Number(document.getElementById('reserva-ics-duracion').value) || 60;
+  if (!fecha || !hora) { showToast('Elegí fecha y hora.'); return; }
+  const inicio = new Date(`${fecha}T${hora}:00`);
+  if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return; }
+  const fin = new Date(inicio.getTime() + duracion * 60000);
+  const toIcsUtc = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const escapeIcs = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  const descripcion = `Ticket ${t.numero}\\nCliente: ${t.remitenteNombre} (${t.remitenteEmail})`;
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ticketera Borcam//Reservas//ES', 'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:reserva-${t.id}-${Date.now()}@ticketera-borcam`,
+    `DTSTAMP:${toIcsUtc(new Date())}`,
+    `DTSTART:${toIcsUtc(inicio)}`,
+    `DTEND:${toIcsUtc(fin)}`,
+    `SUMMARY:${escapeIcs(t.asunto)}`,
+    `DESCRIPTION:${escapeIcs(descripcion)}`,
+    'END:VEVENT', 'END:VCALENDAR'
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `reserva-${t.numero}.ics`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function filteredReservas() {
   const f = state.filtersReservas;
   return cache.tickets
@@ -1165,6 +1213,7 @@ function renderTicket(id) {
         <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
       </div>
     </div>
+    ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
     ${renderAceptacionesTicket(t)}
     <div class="thread">${thread}</div>
     <div class="reply-box">
