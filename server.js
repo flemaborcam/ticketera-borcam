@@ -980,6 +980,7 @@ app.post('/api/tags/pedidos', requireStaff, async (req, res) => {
   const { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket } = req.body;
   if (!nombreCliente || !nombreCliente.trim()) return bad(res, 'Falta el nombre del cliente.');
   if (!edificio || !edificio.trim()) return bad(res, 'Falta el edificio.');
+  if (!ticket || !ticket.trim()) return bad(res, 'Falta el número de ticket.');
   const cantidad = Number(cantidadTags);
   if (!cantidad || cantidad <= 0) return bad(res, 'La cantidad tiene que ser mayor a 0.');
   const columna = (tipoTags || '').toLowerCase().startsWith('peat') ? 'cantidad_peatonal' : 'cantidad_vehicular';
@@ -1022,7 +1023,30 @@ app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
     [String(tagNum).trim(), req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'Pedido no encontrado.');
-  ok(res, r.rows[0]);
+  const pedido = r.rows[0];
+  // Al entregar el tag, se cierra solo el ticket asociado (si el número cargado coincide con uno real):
+  // se manda la respuesta de cierre al cliente y se pasa el estado a Resuelto.
+  if (pedido.ticket) {
+    try {
+      const t = (await pool.query('select * from tickets where numero=$1', [pedido.ticket.trim()])).rows[0];
+      if (t) {
+        const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+        const cuerpo = 'El tag ya fue retirado por el cliente. Se cierra la incidencia. Que tenga buenos días.';
+        const cc = await collectTicketCCs(t.id);
+        await pool.query(
+          `insert into mensajes (ticket_id, tipo, autor, cuerpo, cc) values ($1,'saliente',$2,$3,$4)`,
+          [t.id, `${staff.nombre} ${staff.apellido}`, cuerpo, cc]
+        );
+        await enviarEmailReal({
+          to: t.remitente_email, cc, subject: `[${t.numero}] ${t.asunto}`,
+          text: cuerpo, html: `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo}</div>`
+        });
+        await aplicarCambioEstado(t.id, 'Resuelto');
+        await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [t.id]);
+      }
+    } catch (e) { console.error('No se pudo cerrar el ticket asociado al tag entregado:', e.message); }
+  }
+  ok(res, pedido);
 });
 app.delete('/api/tags/pedidos/:id', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('delete from tags_pedidos where id=$1', [req.params.id]);
