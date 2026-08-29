@@ -155,6 +155,7 @@ async function logout() {
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
 function go(view) {
   if ((state.view === 'dashboard' || state.view === 'reservas') && view !== state.view) state.selectedTickets.clear();
+  if (view === 'tags' && state.view !== 'tags') state.tagsPrecarga = null; // al entrar por el menú normal, sin datos precargados de un ticket
   state.view = view;
   render();
   if (view === 'estadisticas' && !state.reportes && !state.reportesCargando) cargarReportes();
@@ -1048,6 +1049,17 @@ function descargarIcsReserva(id) {
     prefijoArchivo: 'reserva'
   });
 }
+// Atajo "🏷️ Pedido de Tag" desde la ficha del ticket: te lleva directo a Tags → Nuevo pedido
+// con el número de ticket (y el nombre del solicitante) ya cargados.
+function irAPedidoDeTagDesdeTicket(ticketId) {
+  const t = cache.tickets.find(x => x.id === ticketId);
+  if (!t) return;
+  state.tagsPrecarga = { ticket: t.numero, cliente: t.remitenteNombre || '' };
+  state.tagsTab = 'nuevo';
+  state.view = 'tags';
+  render();
+  renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
+}
 /* ---------------- Agendar servicio técnico (botón + modal, cualquier ticket) ----------------
    Igual de autocontenido que el bloque de Reservas: no toca la base de datos, se puede sacar
    borrando este bloque, la llamada al botón en renderTicket() y la línea en renderActiveModal(). */
@@ -1251,6 +1263,7 @@ function renderTicket(id) {
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
           ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
           <button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>
+          <button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>
           <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
         </div>
       </div>
@@ -1732,9 +1745,11 @@ function actualizarCostoTags() {
 function renderTagsNuevo() {
   const edificios = cache.tagsEdificios || [];
   const opciones = edificios.map(e => `<option value="${escapeHtml(e.edificio)}">${escapeHtml(e.edificio)}</option>`).join('');
+  const precarga = state.tagsPrecarga || {};
   return `<div class="card card-narrow" style="max-width:560px;">
     ${configSectionHead('🏷️', 'Ingresar pedido', 'Al guardar se descuenta automáticamente del stock disponible de ese edificio.')}
-    <div class="field"><label>Cliente</label><input type="text" id="tags-cliente" placeholder="Nombre del cliente"></div>
+    ${precarga.ticket ? `<div class="hint-text" style="margin-bottom:10px;">Datos precargados desde el ticket ${escapeHtml(precarga.ticket)}.</div>` : ''}
+    <div class="field"><label>Cliente</label><input type="text" id="tags-cliente" placeholder="Nombre del cliente" value="${escapeHtml(precarga.cliente || '')}"></div>
     <div class="field"><label>Edificio</label>
       <select id="tags-edificio">
         <option value="">-- Seleccioná un edificio --</option>
@@ -1753,7 +1768,7 @@ function renderTagsNuevo() {
       <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
     </div>
     <div class="hint-text">Tags peatonales: $250 c/u · Tags vehiculares: $350 c/u. El costo se calcula solo según el tipo y la cantidad.</div>
-    <div class="field"><label>Ticket</label><input type="text" id="tags-ticket" placeholder="Número de ticket (ej: T-2026-0001)" required></div>
+    <div class="field"><label>Ticket</label><input type="text" id="tags-ticket" placeholder="Número de ticket (ej: T-2026-0001)" value="${escapeHtml(precarga.ticket || '')}" required></div>
     <div class="hint-text">Al marcar el pedido como entregado, este ticket se cierra solo (pasa a Resuelto) con una respuesta automática al cliente.</div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
       <button type="button" class="btn btn-primary btn-block" onclick="guardarPedidoTags()">Guardar pedido</button>
@@ -1773,6 +1788,7 @@ async function guardarPedidoTags() {
   if (!ticket) { showToast('Falta el número de ticket.'); return; }
   try {
     await api('POST', '/api/tags/pedidos', { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket });
+    state.tagsPrecarga = null;
     showToast('Pedido guardado.');
     state.tagsTab = 'pedidos';
     render();
