@@ -796,6 +796,14 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     await aplicarAvisoFueraHorario(id);
   } else {
     const staff = (await pool.query('select * from usuarios where id=$1', [req.session.userId])).rows[0];
+    // Si el ticket no tenía a nadie asignado y alguien responde directamente (sin pasar por "Tomar
+    // ticket" ni por el desplegable "Asignado A"), se lo asignamos solo a quien está respondiendo.
+    // Antes esto no pasaba: un ticket podía quedar "sin asignar" para siempre aunque ya lo estuviera
+    // atendiendo alguien, y encima el botón "Tomar ticket" de Telegram seguía activo para cualquiera.
+    if (!t.asignado_a) {
+      await pool.query('update tickets set asignado_a=$1 where id=$2', [req.session.userId, id]);
+      await actualizarBotonTomarEnGrupo(id, `${staff.nombre} ${staff.apellido}`);
+    }
     const firmaHtml = (incluirFirma && staff.firma_html) ? staff.firma_html : '';
     const adjuntosProcesados = [];
     for (const a of (adjuntos || [])) {
