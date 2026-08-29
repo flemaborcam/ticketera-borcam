@@ -1753,7 +1753,8 @@ function renderTagsNuevo() {
       <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
     </div>
     <div class="hint-text">Tags peatonales: $250 c/u · Tags vehiculares: $350 c/u. El costo se calcula solo según el tipo y la cantidad.</div>
-    <div class="field"><label>Ticket (opcional)</label><input type="text" id="tags-ticket" placeholder="Número de ticket"></div>
+    <div class="field"><label>Ticket</label><input type="text" id="tags-ticket" placeholder="Número de ticket (ej: T-2026-0001)" required></div>
+    <div class="hint-text">Al marcar el pedido como entregado, este ticket se cierra solo (pasa a Resuelto) con una respuesta automática al cliente.</div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
       <button type="button" class="btn btn-primary btn-block" onclick="guardarPedidoTags()">Guardar pedido</button>
     </div>
@@ -1769,6 +1770,7 @@ async function guardarPedidoTags() {
   const costo = document.getElementById('tags-costo').value;
   const ticket = document.getElementById('tags-ticket').value.trim();
   if (!nombreCliente || !edificio || !cantidadTags) { showToast('Completá cliente, edificio y cantidad.'); return; }
+  if (!ticket) { showToast('Falta el número de ticket.'); return; }
   try {
     await api('POST', '/api/tags/pedidos', { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket });
     showToast('Pedido guardado.');
