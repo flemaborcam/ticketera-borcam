@@ -1007,36 +1007,84 @@ function renderReservaCalendario(t) {
     <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="descargarIcsReserva('${t.id}')">📅 Descargar evento (.ics)</button></div>
   </div>`;
 }
-function descargarIcsReserva(id) {
-  const t = cache.tickets.find(x => x.id === id);
-  if (!t) return;
-  const fecha = document.getElementById('reserva-ics-fecha').value;
-  const hora = document.getElementById('reserva-ics-hora').value;
-  const duracion = Number(document.getElementById('reserva-ics-duracion').value) || 60;
-  if (!fecha || !hora) { showToast('Elegí fecha y hora.'); return; }
+// Función compartida: arma y descarga el .ics. La usan tanto el bloque de Reservas como el
+// modal de "Agendar servicio técnico" (mismo formato, dos entradas distintas).
+function generarYDescargarIcs(t, { fecha, hora, duracion, titulo, prefijoArchivo }) {
+  if (!fecha || !hora) { showToast('Elegí fecha y hora.'); return false; }
   const inicio = new Date(`${fecha}T${hora}:00`);
-  if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return; }
-  const fin = new Date(inicio.getTime() + duracion * 60000);
+  if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return false; }
+  const dur = Number(duracion) || 60;
+  const fin = new Date(inicio.getTime() + dur * 60000);
   const toIcsUtc = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
   const escapeIcs = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
   const descripcion = `Ticket ${t.numero}\\nCliente: ${t.remitenteNombre} (${t.remitenteEmail})`;
   const ics = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ticketera Borcam//Reservas//ES', 'CALSCALE:GREGORIAN',
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ticketera Borcam//Agenda//ES', 'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
-    `UID:reserva-${t.id}-${Date.now()}@ticketera-borcam`,
+    `UID:${prefijoArchivo}-${t.id}-${Date.now()}@ticketera-borcam`,
     `DTSTAMP:${toIcsUtc(new Date())}`,
     `DTSTART:${toIcsUtc(inicio)}`,
     `DTEND:${toIcsUtc(fin)}`,
-    `SUMMARY:${escapeIcs(t.asunto)}`,
+    `SUMMARY:${escapeIcs(titulo || t.asunto)}`,
     `DESCRIPTION:${escapeIcs(descripcion)}`,
     'END:VEVENT', 'END:VCALENDAR'
   ].join('\r\n');
   const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `reserva-${t.numero}.ics`;
+  a.href = url; a.download = `${prefijoArchivo}-${t.numero}.ics`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  return true;
+}
+function descargarIcsReserva(id) {
+  const t = cache.tickets.find(x => x.id === id);
+  if (!t) return;
+  generarYDescargarIcs(t, {
+    fecha: document.getElementById('reserva-ics-fecha').value,
+    hora: document.getElementById('reserva-ics-hora').value,
+    duracion: document.getElementById('reserva-ics-duracion').value,
+    titulo: t.asunto,
+    prefijoArchivo: 'reserva'
+  });
+}
+/* ---------------- Agendar servicio técnico (botón + modal, cualquier ticket) ----------------
+   Igual de autocontenido que el bloque de Reservas: no toca la base de datos, se puede sacar
+   borrando este bloque, la llamada al botón en renderTicket() y la línea en renderActiveModal(). */
+function openAgendarServicioModal(ticketId) {
+  state.modal = 'agendar-servicio';
+  state.agendarServicioTicketId = ticketId;
+  render();
+}
+function renderAgendarServicioModal() {
+  const t = cache.tickets.find(x => x.id === state.agendarServicioTicketId);
+  if (!t) { return ''; }
+  const ahora = new Date(Date.now() + 60 * 60000);
+  const fechaDefault = ahora.toISOString().slice(0, 10);
+  const horaDefault = ahora.toTimeString().slice(0, 5);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📅 Agendar servicio técnico</h2>
+    <p class="sub">Ticket ${escapeHtml(t.numero)} — ${escapeHtml(t.asunto)}</p>
+    <div class="field"><label>Título del evento</label><input type="text" id="servicio-ics-titulo" value="${escapeHtml(`Servicio técnico — ${t.asunto}`)}"></div>
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input type="date" id="servicio-ics-fecha" value="${fechaDefault}"></div>
+      <div class="field"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
+    </div>
+    <div class="field"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="descargarIcsServicioTecnico()">📅 Descargar evento (.ics)</button></div>
+  </div></div>`;
+}
+function descargarIcsServicioTecnico() {
+  const t = cache.tickets.find(x => x.id === state.agendarServicioTicketId);
+  if (!t) return;
+  const ok = generarYDescargarIcs(t, {
+    fecha: document.getElementById('servicio-ics-fecha').value,
+    hora: document.getElementById('servicio-ics-hora').value,
+    duracion: document.getElementById('servicio-ics-duracion').value,
+    titulo: document.getElementById('servicio-ics-titulo').value,
+    prefijoArchivo: 'servicio'
+  });
+  if (ok) closeModal();
 }
 function filteredReservas() {
   const f = state.filtersReservas;
@@ -1202,6 +1250,7 @@ function renderTicket(id) {
           ${t.necesitaAtencion ? `<div class="stamp stamp-atencion">🔔 Respondió el cliente</div>` : ''}
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
           ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
+          <button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>
           <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
         </div>
       </div>
@@ -2158,6 +2207,7 @@ function renderActiveModal() {
   if (state.modal === 'editar-usuario') return renderEditarUsuarioModal();
   if (state.modal === 'nuevo-usuario') return renderNuevoUsuarioModal();
   if (state.modal === 'nuevo-documento' || state.modal === 'editar-documento') return renderDocumentoModal();
+  if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   return '';
 }
 function renderDocumentoModal() {
