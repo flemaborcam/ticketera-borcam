@@ -925,10 +925,13 @@ function renderShell(inner) {
   const u = currentUser();
   return `
   <style>
-    /* Arreglo: cuando el contenido de una sección (Tickets con muchos ítems, avisos largos, etc.)
-       es más alto que la pantalla, el menú lateral no debe desplazarse con él ni sacar de vista
-       el pie con el usuario y "Cerrar sesión" — queda fijo en su lugar, con scroll propio si hace falta. */
-    .sidebar { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; }
+    /* Arreglo: el menú lateral usaba "position: sticky", que se "despega" de su lugar cerca del
+       final de una página muy larga (como la bandeja de Tickets, con hasta 20 tickets por página).
+       Con "fixed" queda anclado a la pantalla siempre, sin importar cuánto scroll tenga el contenido. */
+    @media (min-width: 881px) {
+      .sidebar { position: fixed !important; top: 0; left: 0; height: 100vh; overflow-y: auto; }
+      .main { margin-left: 220px; }
+    }
   </style>
   <div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
