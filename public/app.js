@@ -1289,7 +1289,7 @@ function renderTicket(id) {
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
           ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
           ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
-          <button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>
+          ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
           <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
         </div>
       </div>
