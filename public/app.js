@@ -1000,32 +1000,55 @@ function renderReservaCalendario(t) {
   const horaDefault = ahora.toTimeString().slice(0, 5);
   return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
     ${configSectionHead('📅', 'Agendar esta reserva', 'Generá un archivo .ics con la fecha y hora que seleccionás, para abrirlo con tu app de calendario (One Calendar, Outlook, Google Calendar, etc.).')}
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="reserva-ics-todo-el-dia" onchange="toggleTodoElDiaIcs('reserva')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="reserva-ics-fecha" value="${fechaDefault}"></div>
-      <div class="field"><label>Hora</label><input type="time" id="reserva-ics-hora" value="${horaDefault}"></div>
+      <div class="field" id="reserva-ics-hora-wrap"><label>Hora</label><input type="time" id="reserva-ics-hora" value="${horaDefault}"></div>
     </div>
-    <div class="field"><label>Duración (minutos)</label><input type="number" id="reserva-ics-duracion" min="15" step="15" value="60"></div>
+    <div class="field" id="reserva-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="reserva-ics-duracion" min="15" step="15" value="60"></div>
     <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="descargarIcsReserva('${t.id}')">📅 Descargar evento (.ics)</button></div>
   </div>`;
 }
+// Al tildar "Todo el día" se ocultan hora/duración, ya que no aplican a un evento de día completo
+// (así queda igual que la opción "Todo el día" de One Calendar / Windows Calendar / Outlook).
+function toggleTodoElDiaIcs(prefijo) {
+  const marcado = document.getElementById(`${prefijo}-ics-todo-el-dia`).checked;
+  const horaWrap = document.getElementById(`${prefijo}-ics-hora-wrap`);
+  const duracionWrap = document.getElementById(`${prefijo}-ics-duracion-wrap`);
+  if (horaWrap) horaWrap.style.display = marcado ? 'none' : '';
+  if (duracionWrap) duracionWrap.style.display = marcado ? 'none' : '';
+}
 // Función compartida: arma y descarga el .ics. La usan tanto el bloque de Reservas como el
 // modal de "Agendar servicio técnico" (mismo formato, dos entradas distintas).
-function generarYDescargarIcs(t, { fecha, hora, duracion, titulo, prefijoArchivo }) {
-  if (!fecha || !hora) { showToast('Elegí fecha y hora.'); return false; }
-  const inicio = new Date(`${fecha}T${hora}:00`);
-  if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return false; }
-  const dur = Number(duracion) || 60;
-  const fin = new Date(inicio.getTime() + dur * 60000);
+function generarYDescargarIcs(t, { fecha, hora, duracion, titulo, prefijoArchivo, todoElDia }) {
+  if (!fecha) { showToast('Elegí una fecha.'); return false; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return false; }
   const toIcsUtc = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
   const escapeIcs = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
   const descripcion = `Ticket ${t.numero}\\nCliente: ${t.remitenteNombre} (${t.remitenteEmail})`;
+  let lineasFecha;
+  if (todoElDia) {
+    // Evento de día completo: DTSTART/DTEND van solo con fecha (VALUE=DATE), y el DTEND es el día
+    // siguiente porque en formato .ics el final de un evento de todo el día es "exclusivo" (así lo
+    // interpretan One Calendar, Outlook y Google Calendar para mostrar un solo día marcado).
+    const inicioDate = new Date(`${fecha}T00:00:00`);
+    if (isNaN(inicioDate.getTime())) { showToast('Fecha inválida.'); return false; }
+    const finDate = new Date(inicioDate.getTime() + 24 * 60 * 60000);
+    const toIcsDate = d => d.toISOString().slice(0, 10).replace(/-/g, '');
+    lineasFecha = [`DTSTART;VALUE=DATE:${toIcsDate(inicioDate)}`, `DTEND;VALUE=DATE:${toIcsDate(finDate)}`];
+  } else {
+    const inicio = new Date(`${fecha}T${hora}:00`);
+    if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return false; }
+    const dur = Number(duracion) || 60;
+    const fin = new Date(inicio.getTime() + dur * 60000);
+    lineasFecha = [`DTSTART:${toIcsUtc(inicio)}`, `DTEND:${toIcsUtc(fin)}`];
+  }
   const ics = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ticketera Borcam//Agenda//ES', 'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
     `UID:${prefijoArchivo}-${t.id}-${Date.now()}@ticketera-borcam`,
     `DTSTAMP:${toIcsUtc(new Date())}`,
-    `DTSTART:${toIcsUtc(inicio)}`,
-    `DTEND:${toIcsUtc(fin)}`,
+    ...lineasFecha,
     `SUMMARY:${escapeIcs(titulo || t.asunto)}`,
     `DESCRIPTION:${escapeIcs(descripcion)}`,
     'END:VEVENT', 'END:VCALENDAR'
@@ -1046,7 +1069,8 @@ function descargarIcsReserva(id) {
     hora: document.getElementById('reserva-ics-hora').value,
     duracion: document.getElementById('reserva-ics-duracion').value,
     titulo: t.asunto,
-    prefijoArchivo: 'reserva'
+    prefijoArchivo: 'reserva',
+    todoElDia: document.getElementById('reserva-ics-todo-el-dia').checked
   });
 }
 // Atajo "🏷️ Pedido de Tag" desde la ficha del ticket: te lleva directo a Tags → Nuevo pedido
@@ -1078,11 +1102,12 @@ function renderAgendarServicioModal() {
     <h2>📅 Agendar servicio técnico</h2>
     <p class="sub">Ticket ${escapeHtml(t.numero)} — ${escapeHtml(t.asunto)}</p>
     <div class="field"><label>Título del evento</label><input type="text" id="servicio-ics-titulo" value="${escapeHtml(`Servicio técnico — ${t.asunto}`)}"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-ics-todo-el-dia" onchange="toggleTodoElDiaIcs('servicio')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="servicio-ics-fecha" value="${fechaDefault}"></div>
-      <div class="field"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
+      <div class="field" id="servicio-ics-hora-wrap"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
     </div>
-    <div class="field"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
+    <div class="field" id="servicio-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="descargarIcsServicioTecnico()">📅 Descargar evento (.ics)</button></div>
   </div></div>`;
 }
@@ -1094,7 +1119,8 @@ function descargarIcsServicioTecnico() {
     hora: document.getElementById('servicio-ics-hora').value,
     duracion: document.getElementById('servicio-ics-duracion').value,
     titulo: document.getElementById('servicio-ics-titulo').value,
-    prefijoArchivo: 'servicio'
+    prefijoArchivo: 'servicio',
+    todoElDia: document.getElementById('servicio-ics-todo-el-dia').checked
   });
   if (ok) closeModal();
 }
@@ -1262,7 +1288,7 @@ function renderTicket(id) {
           ${t.necesitaAtencion ? `<div class="stamp stamp-atencion">🔔 Respondió el cliente</div>` : ''}
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
           ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
-          <button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>
+          ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
           <button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>
           <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
         </div>
