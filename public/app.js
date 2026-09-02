@@ -672,16 +672,23 @@ function renderCalendarioHtml() {
     </div>`;
   }).join('');
 
-  const citasHtml = cache.citas.length ? cache.citas.map(ci => `
-    <div class="user-row">
-      <div class="avatar">📅</div>
-      <div><div class="u-name">${escapeHtml(ci.nombre_cliente)}${ci.estado === 'cancelada' ? ' <span class="tag tag-cerrado" style="margin-left:6px;">Cancelado</span>' : ''}</div>
-      <div class="u-sub">${new Date(ci.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })} · ${escapeHtml(ci.edificio)} UD ${escapeHtml(ci.numero_unidad)} · ${escapeHtml(ci.telefono)}</div></div>
-    </div>`).join('') : `<div class="hint-text">No hay turnos agendados todavía.</div>`;
+  const tab = state.calendarioTab || 'config';
+  const tabsHtml = [
+    { v: 'config', label: 'Configuración' },
+    { v: 'turnos', label: 'Próximos turnos' },
+    { v: 'realizados', label: 'Agenda realizada' }
+  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioTab('${t.v}')">${t.label}</button>`).join('');
 
   return `
     <div class="page-head"><div><h1>Calendario de instalaciones</h1><div class="sub">Configurá la disponibilidad para que los clientes agenden solos</div></div></div>
-
+    <div class="reply-tabs">${tabsHtml}</div>
+    ${tab === 'config' ? renderCalendarioConfigTab(c, filasDias) : ''}
+    ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
+    ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}`;
+}
+function cambiarCalendarioTab(t) { state.calendarioTab = t; render(); }
+function renderCalendarioConfigTab(c, filasDias) {
+  return `
     <div class="card card-narrow" style="max-width:640px;margin-bottom:18px;">
       <div style="font-weight:600;font-size:14.5px;margin-bottom:8px;">Enlace para compartir con clientes</div>
       <div style="display:flex;gap:8px;">
@@ -726,11 +733,58 @@ function renderCalendarioHtml() {
         <button type="button" class="btn btn-ghost btn-block" onclick="probarGoogleCalendar()">Probar conexión con Google Calendar</button>
         <div id="resultado-google" style="margin-top:8px;"></div>
       </div>
+    </div>`;
+}
+function renderCalendarioListaCitas(filtro, mensajeVacio) {
+  const citas = (cache.citas || []).filter(filtro);
+  const citasHtml = citas.length ? citas.map(ci => `
+    <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleCita('${ci.id}')">
+      <div class="avatar">📅</div>
+      <div><div class="u-name">${escapeHtml(ci.nombre_cliente)}${ci.estado === 'cancelada' ? ' <span class="tag tag-cerrado" style="margin-left:6px;">Cancelado</span>' : ''}${ci.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : ''}</div>
+      <div class="u-sub">${new Date(ci.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })} · ${escapeHtml(ci.edificio)} UD ${escapeHtml(ci.numero_unidad)} · ${escapeHtml(ci.telefono)}</div></div>
+    </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
+  return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${citas.length} turno${citas.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="user-list">${citasHtml}</div>`;
+}
+function abrirDetalleCita(id) {
+  state.modal = 'detalle-cita';
+  state.citaDetalleId = id;
+  render();
+}
+function renderDetalleCitaModal() {
+  const ci = (cache.citas || []).find(x => String(x.id) === String(state.citaDetalleId));
+  if (!ci) return '';
+  const filas = [
+    ['Cliente', escapeHtml(ci.nombre_cliente)],
+    ['Correo', escapeHtml(ci.correo_cliente || '—')],
+    ['Teléfono', escapeHtml(ci.telefono || '—')],
+    ['Edificio', escapeHtml(ci.edificio || '—')],
+    ['Unidad', escapeHtml(ci.numero_unidad || '—')],
+    ['Tiene internet', ci.tiene_internet ? 'Sí' : 'No'],
+    ['Fecha y hora', new Date(ci.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
+    ['Duración', `${ci.duracion_minutos || 60} min`],
+    ['Estado', ci.estado === 'realizada' ? 'Realizada' : ci.estado === 'cancelada' ? 'Cancelada' : 'Confirmada']
+  ];
+  const puedeMarcar = ci.estado === 'confirmada';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📅 Detalle del turno</h2>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:${puedeMarcar ? '18px' : '4px'};">
+      ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
-
-    <div class="page-head" style="margin-top:26px;"><div><h1 style="font-size:18px;">Próximos turnos</h1><div class="sub">${cache.citas.length} en total</div></div></div>
-    <div class="user-list">${citasHtml}</div>
-  `;
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarCitaRealizada('${ci.id}')">✅ Marcar como realizada</button>` : ''}
+    </div>
+  </div></div>`;
+}
+async function marcarCitaRealizada(id) {
+  try {
+    await api('POST', `/api/citas/${id}/marcar-realizada`);
+    const ci = cache.citas.find(x => String(x.id) === String(id));
+    if (ci) ci.estado = 'realizada';
+    showToast('Turno marcado como realizado.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
 }
 
 /* ---------------- Configuración ---------------- */
@@ -2261,6 +2315,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-usuario') return renderNuevoUsuarioModal();
   if (state.modal === 'nuevo-documento' || state.modal === 'editar-documento') return renderDocumentoModal();
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
+  if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
   return '';
 }
 function renderDocumentoModal() {
