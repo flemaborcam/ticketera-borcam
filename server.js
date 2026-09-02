@@ -1694,8 +1694,15 @@ app.post('/api/calendario-config/probar', requireStaff, async (req, res) => {
   } catch (e) { bad(res, e.message); }
 });
 app.get('/api/citas', requireStaff, async (req, res) => {
-  const citas = (await pool.query(`select * from citas where fecha_hora >= now() - interval '1 day' order by fecha_hora asc`)).rows;
+  // Antes solo traía las citas de aprox. el último día en adelante — no alcanzaba para armar una
+  // pestaña de "Agenda realizada" con historial. Ahora trae todas, más recientes primero.
+  const citas = (await pool.query(`select * from citas order by fecha_hora desc`)).rows;
   ok(res, citas);
+});
+app.post('/api/citas/:id/marcar-realizada', requireStaff, async (req, res) => {
+  const r = await pool.query(`update citas set estado='realizada' where id=$1 returning *`, [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Cita no encontrada.', 404);
+  ok(res, r.rows[0]);
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
 async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
