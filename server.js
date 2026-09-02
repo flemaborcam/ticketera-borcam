@@ -1423,7 +1423,14 @@ app.get('/api/agenda/info', async (req, res) => {
   filasCitas.forEach(r => { edificioPorFecha[fechaMontevideoStr(new Date(r.fecha_hora))] = r.edificio; });
   const candidatos = [];
   const hoy = new Date();
-  for (let i = 0; i < diasVisibles; i++) {
+  // "diasVisibles" (por defecto 21) alcanza para edificios que rotan cada semana, pero algunos
+  // edificios solo tienen asignada, por ejemplo, la 4ta repetición del mes de un día — eso puede
+  // caer más allá de esos 21 días y antes se perdía sin avisar ("no quedan horarios" aunque sí
+  // hubiera, más adelante). Ahora, si no encontramos nada dentro de la ventana normal, seguimos
+  // buscando hasta 120 días para no dejar a ningún edificio sin ninguna fecha disponible.
+  const MAX_DIAS_BUSQUEDA = 120;
+  for (let i = 0; i < MAX_DIAS_BUSQUEDA; i++) {
+    if (i >= diasVisibles && candidatos.length > 0) break;
     if (i < minNotice) continue;
     const d = new Date(hoy.getTime() + i * 24 * 60 * 60 * 1000);
     const dateStr = fechaMontevideoStr(d);
@@ -1439,7 +1446,7 @@ app.get('/api/agenda/info', async (req, res) => {
     candidatos.push(...generarSlotsDia(dateStr, horario, duracion));
   }
   const ocupadas = new Set(filasCitas.map(r => new Date(r.fecha_hora).toISOString()));
-  const libres = candidatos.filter(s => !ocupadas.has(new Date(s).toISOString()));
+  const libres = candidatos.filter(s => !ocupadas.has(new Date(s).toISOString())).slice(0, 60);
   ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: libres });
 });
 app.post('/api/agenda/reservar', async (req, res) => {
