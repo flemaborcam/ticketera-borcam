@@ -2180,6 +2180,8 @@ async function procesarCorreoEntrante(parsed) {
   if (!fromAddr) return;
   const remitenteEmail = fromAddr.address;
   const remitenteNombre = fromAddr.name || remitenteEmail;
+  const ccOriginal = (parsed.cc && parsed.cc.value ? parsed.cc.value : [])
+    .map(x => x.address).filter(Boolean).filter(a => a.toLowerCase() !== remitenteEmail.toLowerCase());
   const asunto = parsed.subject || '(sin asunto)';
   const sinCitas = recortarCitas((parsed.text || '').trim());
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -2229,8 +2231,8 @@ async function procesarCorreoEntrante(parsed) {
   if (ticket) {
     const adjuntos = await subirAdjuntosCrudos(ticket.id);
     const rm = await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5) returning id`,
-      [ticket.id, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos, cc) values ($1,'entrante',$2,$3,$4,$5,$6) returning id`,
+      [ticket.id, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos), ccOriginal.length ? ccOriginal : null]
     );
     await corregirReferenciasCid(ticket.id, rm.rows[0].id, adjuntos);
     await pool.query('update tickets set necesita_atencion=true where id=$1', [ticket.id]);
@@ -2251,8 +2253,8 @@ async function procesarCorreoEntrante(parsed) {
     const ticketId = r.rows[0].id;
     const adjuntos = await subirAdjuntosCrudos(ticketId);
     const rm = await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos) values ($1,'entrante',$2,$3,$4,$5) returning id`,
-      [ticketId, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos)]
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, cuerpo_html, adjuntos, cc) values ($1,'entrante',$2,$3,$4,$5,$6) returning id`,
+      [ticketId, remitenteNombre, cuerpo, cuerpoHtml, JSON.stringify(adjuntos), ccOriginal.length ? ccOriginal : null]
     );
     await corregirReferenciasCid(ticketId, rm.rows[0].id, adjuntos);
     await pool.query('update tickets set necesita_atencion=true where id=$1', [ticketId]);
