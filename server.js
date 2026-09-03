@@ -245,7 +245,8 @@ async function ticketConMensajes(ticketId) {
   const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return null;
   const mensajes = (await pool.query('select * from mensajes where ticket_id=$1 order by fecha asc', [ticketId])).rows;
-  return { ...t, mensajes };
+  const serviciosTecnicos = (await pool.query('select * from servicios_tecnicos where ticket_id=$1 order by fecha_hora asc', [ticketId])).rows;
+  return { ...t, mensajes, serviciosTecnicos };
 }
 async function collectTicketCCs(ticketId) {
   const r = await pool.query(
@@ -302,6 +303,18 @@ async function contextoTicket(ticketId) {
   const t = (await pool.query('select numero, asunto, remitente_email from tickets where id=$1', [ticketId])).rows[0];
   const ccs = await collectTicketCCs(ticketId);
   return { ...t, ccs };
+}
+// Se dispara cuando un ticket que estaba Resuelto/Cerrado/Esperando al Cliente se reabre solo porque
+// el cliente volvió a escribir (por el portal o por correo real). Le avisa que ya se reabrió, para que
+// no se quede esperando en silencio mientras el equipo lo retoma.
+async function notificarReaperturaTicket(ticketId) {
+  const mensaje = 'Reabrimos tu ticket automáticamente al recibir tu respuesta. En breve un integrante del equipo lo va a retomar.';
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Reapertura',$2,true)`,
+    [ticketId, mensaje]
+  );
+  const ctx = await contextoTicket(ticketId);
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
 }
 // Aplica un cambio de estado y, si corresponde, dispara el correo automático de "Esperando al Cliente"
 async function aplicarCambioEstado(ticketId, nuevoEstado) {
@@ -2125,6 +2138,7 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
   if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(t.estado)) {
     await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
+    await notificarReaperturaTicket(id).catch(e => console.error('Error avisando reapertura:', e.message));
   }
   await aplicarAutomatizacionSiCorresponde(id, cuerpo);
   await aplicarAvisoFinDeSemana(id);
@@ -2276,6 +2290,7 @@ async function procesarCorreoEntrante(parsed) {
     await pool.query('update tickets set necesita_atencion=true where id=$1', [ticket.id]);
     if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(ticket.estado)) {
       await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', ticket.id]);
+      await notificarReaperturaTicket(ticket.id).catch(e => console.error('Error avisando reapertura:', e.message));
     }
     await aplicarAutomatizacionSiCorresponde(ticket.id, cuerpo);
     await aplicarAvisoFinDeSemana(ticket.id);
