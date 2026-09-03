@@ -743,7 +743,7 @@ function abrirDetalleServicioTecnico(id) {
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
   if (!s) return '';
-  if (state.editandoServicioTecnicoId === s.id) return renderEditarServicioTecnicoModal(s);
+  if (state.editandoServicioTecnicoId != null && String(state.editandoServicioTecnicoId) === String(s.id)) return renderEditarServicioTecnicoModal(s);
   const filas = [
     ['Título', escapeHtml(s.titulo)],
     ['Ticket', s.ticket_numero ? escapeHtml(s.ticket_numero) : '—'],
