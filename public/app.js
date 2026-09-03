@@ -41,7 +41,8 @@ function mapTicket(row) {
     mensajes: (row.mensajes || []).map(mapMensaje),
     serviciosTecnicos: row.serviciosTecnicos || [],
     satisfaccion: row.satisfaccion || null,
-    historialCliente: row.historialCliente || []
+    historialCliente: row.historialCliente || [],
+    checklistEstado: row.checklist_estado || {}
   };
 }
 function mapMensaje(m) {
@@ -790,6 +791,29 @@ async function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
     render();
   } catch (e) { showToast(e.message); }
 }
+// Checklist de pasos según la categoría del ticket (plantillas configurables en Configuración → Checklists).
+function renderChecklistTicket(t) {
+  const pasos = (CAT.checklistsCategoria && CAT.checklistsCategoria[t.categoria]) || [];
+  if (!pasos.length) return '';
+  const estado = t.checklistEstado || {};
+  return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
+    ${configSectionHead('✅', `Checklist — ${escapeHtml(t.categoria)}`, 'Pasos sugeridos para esta categoría. Se guardan solos al tildarlos.')}
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${pasos.map(p => `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;${estado[p] ? 'color:var(--ink-soft);text-decoration:line-through;' : ''}">
+          <input type="checkbox" ${estado[p] ? 'checked' : ''} onchange="toggleChecklistItem('${t.id}', ${escapeHtml(JSON.stringify(p))}, this.checked)"> ${escapeHtml(p)}
+        </label>`).join('')}
+    </div>
+  </div>`;
+}
+async function toggleChecklistItem(ticketId, paso, marcado) {
+  try {
+    await api('PATCH', `/api/tickets/${ticketId}/checklist`, { paso, marcado });
+    const t = cache.tickets.find(x => x.id === ticketId);
+    if (t) { t.checklistEstado = t.checklistEstado || {}; t.checklistEstado[paso] = marcado; }
+    render();
+  } catch (e) { showToast(e.message); }
+}
 // Historial: otros tickets previos del mismo correo remitente, para saber rápido si es un cliente
 // recurrente o si ya tuvo un problema parecido antes.
 function renderHistorialClienteTicket(t) {
@@ -1503,6 +1527,7 @@ function renderTicket(id) {
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
     ${renderServiciosTecnicosDelTicket(t)}
+    ${renderChecklistTicket(t)}
     ${renderHistorialClienteTicket(t)}
     ${renderAceptacionesTicket(t)}
     <div class="thread">${thread}</div>
@@ -1794,6 +1819,7 @@ function renderConfigTabs() {
     { v: 'telegram', label: '✈️ Telegram' },
     { v: 'notificaciones', label: '🔔 Notificaciones al cliente' },
     { v: 'respaldo', label: '💾 Respaldo' },
+    { v: 'checklists', label: '✅ Checklists' },
   ];
   if (currentUser().es_superadmin) tabs.push({ v: 'peligro', label: '⚠️ Zona de peligro' });
   const activa = state.configTab || 'correo';
@@ -2440,7 +2466,29 @@ function renderConfiguracion() {
       <div class="hint-text" style="margin-bottom:10px;">Al borrar un ticket (arriba o desde el propio ticket), sus adjuntos ya se borran solos de Storage. Marcar un ticket como Resuelto o Cerrado NO libera espacio por sí solo — para eso hay que borrarlo.</div>
       <button type="button" class="btn btn-danger btn-block" onclick="limpiarTicketsAntiguos()">Borrar tickets Resueltos/Cerrados antiguos (elegís desde cuántos meses)</button>
       <button type="button" class="btn btn-ghost btn-block" style="margin-top:10px;" onclick="limpiarAdjuntosHuerfanos()">Limpiar adjuntos huérfanos en Storage (de tickets ya borrados antes de este cambio)</button>
-    </div>` : ''}`;
+    </div>` : ''}
+
+    <div class="card card-narrow" style="max-width:560px;margin-top:18px;${tab === 'checklists' ? '' : 'display:none;'}">
+      ${configSectionHead('✅', 'Checklists por categoría', 'Un paso por línea. Se muestran como checklist dentro de cada ticket de esa categoría, y quedan tildados por ticket.')}
+      ${CAT.CATEGORIAS.map(cat => `
+        <div class="field">
+          <label>${escapeHtml(cat)}</label>
+          <textarea id="checklist-cat-${slug(cat)}" style="min-height:90px;">${escapeHtml(((CAT.checklistsCategoria || {})[cat] || []).join('\n'))}</textarea>
+        </div>`).join('')}
+      <button type="button" class="btn btn-primary btn-block" onclick="guardarChecklistsCategoria()">Guardar checklists</button>
+    </div>`;
+}
+async function guardarChecklistsCategoria() {
+  const checklists = {};
+  CAT.CATEGORIAS.forEach(cat => {
+    const pasos = (document.getElementById(`checklist-cat-${slug(cat)}`).value || '').split('\n').map(s => s.trim()).filter(Boolean);
+    if (pasos.length) checklists[cat] = pasos;
+  });
+  try {
+    await api('PUT', '/api/checklists-categoria', { checklists });
+    CAT.checklistsCategoria = checklists;
+    showToast('Checklists guardados.');
+  } catch (e) { showToast(e.message); }
 }
 
 /* ---------------- Modales ---------------- */
