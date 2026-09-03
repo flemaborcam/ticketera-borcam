@@ -250,7 +250,13 @@ async function ticketConMensajes(ticketId) {
   if (!t) return null;
   const mensajes = (await pool.query('select * from mensajes where ticket_id=$1 order by fecha asc', [ticketId])).rows;
   const serviciosTecnicos = (await pool.query('select * from servicios_tecnicos where ticket_id=$1 order by fecha_hora asc', [ticketId])).rows;
-  return { ...t, mensajes, serviciosTecnicos };
+  const historialCliente = t.remitente_email
+    ? (await pool.query(
+        `select id, numero, asunto, estado, creado from tickets where remitente_email=$1 and id != $2 order by creado desc limit 15`,
+        [t.remitente_email, ticketId]
+      )).rows
+    : [];
+  return { ...t, mensajes, serviciosTecnicos, historialCliente };
 }
 async function collectTicketCCs(ticketId) {
   const r = await pool.query(
