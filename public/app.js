@@ -551,11 +551,12 @@ async function desvincularTelegram() {
 const DIAS_SEMANA = [['lunes', 'Lunes'], ['martes', 'Martes'], ['miercoles', 'Miércoles'], ['jueves', 'Jueves'], ['viernes', 'Viernes'], ['sabado', 'Sábado'], ['domingo', 'Domingo']];
 
 async function renderCalendarioAsync() {
-  const [cfgData, citas] = await Promise.all([api('GET', '/api/calendario-config'), api('GET', '/api/citas')]);
+  const [cfgData, citas, serviciosTecnicos] = await Promise.all([api('GET', '/api/calendario-config'), api('GET', '/api/citas'), api('GET', '/api/servicios-tecnicos')]);
   cache.calendarioConfig = cfgData.config || {};
   cache.calendarioEdificios = cfgData.edificios || [];
   cache.googleServiceEmail = cfgData.googleServiceEmail;
   cache.citas = citas;
+  cache.serviciosTecnicos = serviciosTecnicos;
   return renderCalendarioHtml();
 }
 
@@ -672,6 +673,12 @@ function renderCalendarioHtml() {
     </div>`;
   }).join('');
 
+  const subTab = state.calendarioSubTab || 'domotica';
+  const subTabsHtml = [
+    { v: 'domotica', label: '🏠 Domótica' },
+    { v: 'servicio-tecnico', label: '🛠️ Servicio Técnico' }
+  ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
+
   const tab = state.calendarioTab || 'config';
   const tabsHtml = [
     { v: 'config', label: 'Configuración' },
@@ -680,13 +687,81 @@ function renderCalendarioHtml() {
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioTab('${t.v}')">${t.label}</button>`).join('');
 
   return `
-    <div class="page-head"><div><h1>Calendario de instalaciones</h1><div class="sub">Configurá la disponibilidad para que los clientes agenden solos</div></div></div>
-    <div class="reply-tabs">${tabsHtml}</div>
-    ${tab === 'config' ? renderCalendarioConfigTab(c, filasDias) : ''}
-    ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
-    ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}`;
+    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Agenda de instalaciones (domótica) y turnos de servicio técnico</div></div></div>
+    <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
+    ${subTab === 'domotica' ? `
+      <div class="reply-tabs">${tabsHtml}</div>
+      ${tab === 'config' ? renderCalendarioConfigTab(c, filasDias) : ''}
+      ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
+      ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}
+    ` : renderServicioTecnicoTab()}`;
 }
+function cambiarCalendarioSubTab(t) { state.calendarioSubTab = t; render(); }
 function cambiarCalendarioTab(t) { state.calendarioTab = t; render(); }
+/* ---------------- Servicio Técnico (submenú de Calendario) ----------------
+   Turnos que se cargan desde el botón "📅 Agendar servicio técnico" de cualquier ticket. */
+function renderServicioTecnicoTab() {
+  const tab = state.servicioTecnicoTab || 'turnos';
+  const tabsHtml = [
+    { v: 'turnos', label: 'Próximos turnos' },
+    { v: 'realizados', label: 'Servicios Realizados' }
+  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
+  const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
+  const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
+  return `
+    <div class="reply-tabs">${tabsHtml}</div>
+    ${renderServicioTecnicoLista(filtro, mensajeVacio)}`;
+}
+function cambiarServicioTecnicoTab(t) { state.servicioTecnicoTab = t; render(); }
+function renderServicioTecnicoLista(filtro, mensajeVacio) {
+  const turnos = (cache.serviciosTecnicos || []).filter(filtro);
+  const html = turnos.length ? turnos.map(s => `
+    <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
+      <div class="avatar">🛠️</div>
+      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : ''}</div>
+      <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
+    </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
+  return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="user-list">${html}</div>`;
+}
+function abrirDetalleServicioTecnico(id) {
+  state.modal = 'detalle-servicio-tecnico';
+  state.servicioTecnicoDetalleId = id;
+  render();
+}
+function renderDetalleServicioTecnicoModal() {
+  const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
+  if (!s) return '';
+  const filas = [
+    ['Título', escapeHtml(s.titulo)],
+    ['Ticket', s.ticket_numero ? escapeHtml(s.ticket_numero) : '—'],
+    ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
+    ['Duración', s.todo_el_dia ? '—' : `${s.duracion_minutos || 60} min`],
+    ['Cargado por', s.creado_por ? escapeHtml(s.creado_por) : '—'],
+    ['Estado', s.estado === 'realizado' ? 'Realizado' : 'Pendiente']
+  ];
+  const puedeMarcar = s.estado !== 'realizado';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🛠️ Detalle del servicio técnico</h2>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:${puedeMarcar ? '18px' : '4px'};">
+      ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
+      ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
+    </div>
+  </div></div>`;
+}
+async function marcarServicioTecnicoRealizado(id) {
+  try {
+    await api('POST', `/api/servicios-tecnicos/${id}/marcar-realizado`);
+    const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(id));
+    if (s) s.estado = 'realizado';
+    showToast('Servicio técnico marcado como realizado.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
+}
 function renderCalendarioConfigTab(c, filasDias) {
   return `
     <div class="card card-narrow" style="max-width:640px;margin-bottom:18px;">
@@ -1171,21 +1246,25 @@ function renderAgendarServicioModal() {
       <div class="field" id="servicio-ics-hora-wrap"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="servicio-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
-    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="descargarIcsServicioTecnico()">📅 Descargar evento (.ics)</button></div>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarServicioTecnico()">📅 Agendar</button></div>
   </div></div>`;
 }
-function descargarIcsServicioTecnico() {
+async function guardarServicioTecnico() {
   const t = cache.tickets.find(x => x.id === state.agendarServicioTicketId);
   if (!t) return;
-  const ok = generarYDescargarIcs(t, {
-    fecha: document.getElementById('servicio-ics-fecha').value,
-    hora: document.getElementById('servicio-ics-hora').value,
-    duracion: document.getElementById('servicio-ics-duracion').value,
-    titulo: document.getElementById('servicio-ics-titulo').value,
-    prefijoArchivo: 'servicio',
-    todoElDia: document.getElementById('servicio-ics-todo-el-dia').checked
-  });
-  if (ok) closeModal();
+  const fecha = document.getElementById('servicio-ics-fecha').value;
+  const hora = document.getElementById('servicio-ics-hora').value;
+  const duracion = document.getElementById('servicio-ics-duracion').value;
+  const titulo = document.getElementById('servicio-ics-titulo').value;
+  const todoElDia = document.getElementById('servicio-ics-todo-el-dia').checked;
+  if (!fecha) { showToast('Elegí una fecha.'); return; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
+  // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Calendario → Servicio Técnico.
+  try {
+    await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, titulo, fecha, hora, duracion, todoElDia });
+    showToast('Servicio técnico agendado.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
 }
 function filteredReservas() {
   const f = state.filtersReservas;
@@ -2316,6 +2395,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-documento' || state.modal === 'editar-documento') return renderDocumentoModal();
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
+  if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
   return '';
 }
 function renderDocumentoModal() {
