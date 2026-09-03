@@ -40,7 +40,8 @@ function mapTicket(row) {
     necesitaAtencion: !!row.necesita_atencion,
     mensajes: (row.mensajes || []).map(mapMensaje),
     serviciosTecnicos: row.serviciosTecnicos || [],
-    satisfaccion: row.satisfaccion || null
+    satisfaccion: row.satisfaccion || null,
+    historialCliente: row.historialCliente || []
   };
 }
 function mapMensaje(m) {
@@ -789,6 +790,25 @@ async function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
     render();
   } catch (e) { showToast(e.message); }
 }
+// Historial: otros tickets previos del mismo correo remitente, para saber rápido si es un cliente
+// recurrente o si ya tuvo un problema parecido antes.
+function renderHistorialClienteTicket(t) {
+  const hist = t.historialCliente || [];
+  if (!hist.length) return '';
+  return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
+    ${configSectionHead('🗂️', `Otros tickets de ${escapeHtml(t.remitenteEmail)}`, `${hist.length} ticket${hist.length === 1 ? '' : 's'} anterior${hist.length === 1 ? '' : 'es'} de este mismo correo.`)}
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;">
+      ${hist.map(h => `
+        <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;padding:8px 12px;" onclick="openTicket('${h.id}')">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(h.numero)} — ${escapeHtml(h.asunto)}</div>
+            <div class="u-sub">${fmtDateTime(h.creado)}</div>
+          </div>
+          <span class="stamp stamp-${slug(h.estado)}" style="flex:none;">${escapeHtml(h.estado)}</span>
+        </button>`).join('')}
+    </div>
+  </div>`;
+}
 async function marcarServicioTecnicoRealizado(id) {
   try {
     await api('POST', `/api/servicios-tecnicos/${id}/marcar-realizado`);
@@ -1483,6 +1503,7 @@ function renderTicket(id) {
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
     ${renderServiciosTecnicosDelTicket(t)}
+    ${renderHistorialClienteTicket(t)}
     ${renderAceptacionesTicket(t)}
     <div class="thread">${thread}</div>
     <div class="reply-box">
