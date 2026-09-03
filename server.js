@@ -186,6 +186,19 @@ pool.query(`create table if not exists tags_pedidos (
   fecha_pedido timestamptz not null default now(),
   fecha_entrega timestamptz
 )`).catch(e => console.error('No se pudo crear tags_pedidos:', e.message));
+// Migración automática: crea la tabla de turnos de Servicio Técnico (submenú de Calendario) si todavía no existe.
+pool.query(`create table if not exists servicios_tecnicos (
+  id serial primary key,
+  ticket_id uuid,
+  ticket_numero text,
+  titulo text not null,
+  fecha_hora timestamptz not null,
+  duracion_minutos integer,
+  todo_el_dia boolean not null default false,
+  estado text not null default 'pendiente',
+  creado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear servicios_tecnicos:', e.message));
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -1702,6 +1715,31 @@ app.get('/api/citas', requireStaff, async (req, res) => {
 app.post('/api/citas/:id/marcar-realizada', requireStaff, async (req, res) => {
   const r = await pool.query(`update citas set estado='realizada' where id=$1 returning *`, [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Cita no encontrada.', 404);
+  ok(res, r.rows[0]);
+});
+/* ---------------- Servicio Técnico (submenú de Calendario) ----------------
+   Turnos que se cargan desde el botón "Agendar servicio técnico" de cualquier ticket. */
+app.get('/api/servicios-tecnicos', requireStaff, async (req, res) => {
+  const filas = (await pool.query(`select * from servicios_tecnicos order by fecha_hora desc`)).rows;
+  ok(res, filas);
+});
+app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
+  const { ticketId, ticketNumero, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
+  if (!fecha) return bad(res, 'Falta la fecha.');
+  if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
+  const fechaHora = todoElDia ? `${fecha}T00:00:00` : `${fecha}T${hora}:00`;
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const r = await pool.query(
+    `insert into servicios_tecnicos (ticket_id, ticket_numero, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por)
+     values ($1,$2,$3,$4,$5,$6,$7) returning *`,
+    [ticketId || null, ticketNumero || null, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null]
+  );
+  ok(res, r.rows[0]);
+});
+app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
+  const r = await pool.query(`update servicios_tecnicos set estado='realizado' where id=$1 returning *`, [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, r.rows[0]);
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
