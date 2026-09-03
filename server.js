@@ -167,6 +167,9 @@ pool.query('alter table telegram_notificaciones_ticket add column if not exists 
 pool.query('alter table tickets add column if not exists satisfaccion_token text').catch(e => console.error('No se pudo migrar satisfaccion_token:', e.message));
 pool.query('alter table tickets add column if not exists satisfaccion text').catch(e => console.error('No se pudo migrar satisfaccion:', e.message));
 pool.query('alter table tickets add column if not exists satisfaccion_fecha timestamptz').catch(e => console.error('No se pudo migrar satisfaccion_fecha:', e.message));
+// Migración automática: checklist de pasos por categoría (plantillas en configuracion, estado por ticket).
+pool.query(`alter table configuracion add column if not exists checklist_categorias jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_categorias:', e.message));
+pool.query(`alter table tickets add column if not exists checklist_estado jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_estado:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -504,8 +507,14 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 /* ---------------- Catálogos ---------------- */
-app.get('/api/catalogos', requireStaff, (req, res) => {
-  ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE });
+app.get('/api/catalogos', requireStaff, async (req, res) => {
+  const c = await getConfig();
+  ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, checklistsCategoria: c.checklist_categorias || {} });
+});
+app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
+  const checklists = req.body.checklists || {};
+  await pool.query('update configuracion set checklist_categorias=$1 where id=1', [JSON.stringify(checklists)]);
+  ok(res, { ok: true });
 });
 /* ---------------- Tickets (staff) ---------------- */
 app.get('/api/tickets', requireStaff, async (req, res) => {
@@ -818,6 +827,16 @@ async function asignarTicket(ticketId, staffId) {
   await actualizarBotonTomarEnGrupo(ticketId, `${staff.nombre} ${staff.apellido}`);
   return { staff, t };
 }
+app.patch('/api/tickets/:id/checklist', requireStaff, async (req, res) => {
+  const { paso, marcado } = req.body || {};
+  if (!paso) return bad(res, 'Falta el paso.');
+  const r = await pool.query(
+    `update tickets set checklist_estado = coalesce(checklist_estado,'{}'::jsonb) || jsonb_build_object($1::text, $2::boolean) where id=$3 returning checklist_estado`,
+    [paso, !!marcado, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Ticket no encontrado.', 404);
+  ok(res, { checklistEstado: r.rows[0].checklist_estado });
+});
 app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
   const id = req.params.id;
   // Mismo chequeo que ya hacía el botón de Telegram: si alguien ya lo tomó (por ejemplo, lo
