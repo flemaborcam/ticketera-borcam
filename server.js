@@ -163,6 +163,10 @@ const pool = new Pool({
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
 pool.query('alter table clientes add column if not exists rol_cliente text').catch(e => console.error('No se pudo migrar rol_cliente:', e.message));
 pool.query('alter table telegram_notificaciones_ticket add column if not exists es_grupo boolean default false').catch(e => console.error('No se pudo migrar es_grupo:', e.message));
+// Migración automática: columnas para la encuesta de satisfacción que se manda al resolver un ticket.
+pool.query('alter table tickets add column if not exists satisfaccion_token text').catch(e => console.error('No se pudo migrar satisfaccion_token:', e.message));
+pool.query('alter table tickets add column if not exists satisfaccion text').catch(e => console.error('No se pudo migrar satisfaccion:', e.message));
+pool.query('alter table tickets add column if not exists satisfaccion_fecha timestamptz').catch(e => console.error('No se pudo migrar satisfaccion_fecha:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -333,6 +337,30 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
     const ctx = await contextoTicket(ticketId);
     await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
   }
+  if (nuevoEstado === 'Resuelto' && t.estado !== 'Resuelto') {
+    await enviarEncuestaSatisfaccion(ticketId).catch(e => console.error('Error enviando encuesta de satisfacción:', e.message));
+  }
+}
+// Al resolver un ticket, se manda un correo aparte con dos enlaces (Sí / No) para que el cliente
+// confirme si quedó conforme. Cada vez se genera un token nuevo, así una respuesta vieja no cuenta dos veces.
+async function enviarEncuestaSatisfaccion(ticketId) {
+  const cfg = await getConfig();
+  if (cfg.encuesta_satisfaccion_activa === false) return;
+  const token = crypto.randomUUID();
+  await pool.query('update tickets set satisfaccion_token=$1, satisfaccion=null, satisfaccion_fecha=null where id=$2', [token, ticketId]);
+  const ctx = await contextoTicket(ticketId);
+  const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
+  const urlSi = `${baseUrl}/api/satisfaccion/${ticketId}/si?token=${token}`;
+  const urlNo = `${baseUrl}/api/satisfaccion/${ticketId}/no?token=${token}`;
+  const texto = `Marcamos tu ticket como resuelto. ¿Quedó conforme con la solución?\n\nSí, quedó resuelto: ${urlSi}\nNo, todavía tengo el problema: ${urlNo}`;
+  const html = `<p>Marcamos tu ticket como resuelto. ¿Quedó conforme con la solución?</p>
+    <p><a href="${urlSi}" style="display:inline-block;padding:8px 16px;background:#2e7d32;color:#fff;text-decoration:none;border-radius:6px;margin-right:8px;">✅ Sí, quedó resuelto</a>
+    <a href="${urlNo}" style="display:inline-block;padding:8px 16px;background:#c62828;color:#fff;text-decoration:none;border-radius:6px;">❌ No, todavía tengo el problema</a></p>`;
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Encuesta de satisfacción',$2,true)`,
+    [ticketId, texto]
+  );
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: texto, html, esAutomatico: true });
 }
 function pasoCoincide(paso, texto) {
   if (paso.match_any) return true;
@@ -1572,6 +1600,37 @@ app.get('/cancelar-cita/:token', async (req, res) => {
       }
     </script>`}
   </div></body></html>`);
+});
+app.get('/api/satisfaccion/:id/:valor', async (req, res) => {
+  const paginaFn = (titulo, mensaje) => `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${titulo}</title>
+  <style>
+    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
+    .card{background:#fff;border-radius:10px;padding:32px;max-width:420px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
+    h1{font-size:20px;color:#0F2A4D;margin:0 0 10px;} p{color:#48607F;line-height:1.5;}
+  </style></head><body><div class="card"><h1>${titulo}</h1><p>${mensaje}</p></div></body></html>`;
+  const { id, valor } = req.params;
+  if (!['si', 'no'].includes(valor)) return res.status(400).send(paginaFn('Enlace inválido', ''));
+  const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
+  if (!t) return res.status(404).send(paginaFn('Ticket no encontrado', ''));
+  if (!t.satisfaccion_token || t.satisfaccion_token !== req.query.token) {
+    return res.status(403).send(paginaFn('Enlace vencido', 'Este enlace ya no es válido (puede que el ticket se haya vuelto a resolver después).'));
+  }
+  if (t.satisfaccion) {
+    return res.send(paginaFn('Ya registramos tu respuesta', 'Gracias, tu respuesta anterior ya quedó guardada.'));
+  }
+  await pool.query('update tickets set satisfaccion=$1, satisfaccion_fecha=now() where id=$2', [valor, id]);
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema','Encuesta de satisfacción',$2,true)`,
+    [id, valor === 'si' ? 'El cliente confirmó que el ticket quedó resuelto.' : 'El cliente indicó que el problema no quedó resuelto.']
+  );
+  if (valor === 'no') {
+    // Si el cliente dice que no quedó resuelto, se reabre y vuelve a aparecer como pendiente de atención.
+    await pool.query('update tickets set estado=$1, necesita_atencion=true, actualizado=now() where id=$2', ['Abierto', id]);
+  }
+  res.send(valor === 'si'
+    ? paginaFn('¡Gracias!', 'Nos alegra que haya quedado resuelto. Cualquier cosa, estamos para ayudarte.')
+    : paginaFn('Gracias por avisarnos', 'Vamos a retomar tu ticket para resolverlo correctamente.'));
 });
 /* ---------------- Documentos legales (descargos con firma electrónica) ---------------- */
 app.get('/api/documentos-legales', requireStaff, async (req, res) => {
