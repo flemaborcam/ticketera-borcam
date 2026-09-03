@@ -673,28 +673,35 @@ function renderCalendarioHtml() {
     </div>`;
   }).join('');
 
-  const subTab = state.calendarioSubTab || 'domotica';
+  const subTab = state.calendarioSubTab || 'config';
   const subTabsHtml = [
+    { v: 'config', label: 'Configuración' },
     { v: 'domotica', label: '🏠 Domótica' },
     { v: 'servicio-tecnico', label: '🛠️ Servicio Técnico' }
   ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
 
-  const tab = state.calendarioTab || 'config';
+  const tab = state.calendarioTab || 'turnos';
   const tabsHtml = [
-    { v: 'config', label: 'Configuración' },
     { v: 'turnos', label: 'Próximos turnos' },
     { v: 'realizados', label: 'Agenda realizada' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioTab('${t.v}')">${t.label}</button>`).join('');
 
-  return `
-    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Agenda de instalaciones (domótica) y turnos de servicio técnico</div></div></div>
-    <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
-    ${subTab === 'domotica' ? `
+  let contenido;
+  if (subTab === 'config') {
+    contenido = renderCalendarioConfigTab(c, filasDias);
+  } else if (subTab === 'domotica') {
+    contenido = `
       <div class="reply-tabs">${tabsHtml}</div>
-      ${tab === 'config' ? renderCalendarioConfigTab(c, filasDias) : ''}
       ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
-      ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}
-    ` : renderServicioTecnicoTab()}`;
+      ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}`;
+  } else {
+    contenido = renderServicioTecnicoTab();
+  }
+
+  return `
+    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Configuración general, agenda de instalaciones (domótica) y turnos de servicio técnico</div></div></div>
+    <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
+    ${contenido}`;
 }
 function cambiarCalendarioSubTab(t) { state.calendarioSubTab = t; render(); }
 function cambiarCalendarioTab(t) { state.calendarioTab = t; render(); }
