@@ -266,7 +266,7 @@ async function eliminarTicket(id) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -743,6 +743,7 @@ function abrirDetalleServicioTecnico(id) {
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
   if (!s) return '';
+  if (state.editandoServicioTecnicoId === s.id) return renderEditarServicioTecnicoModal(s);
   const filas = [
     ['Título', escapeHtml(s.titulo)],
     ['Ticket', s.ticket_numero ? escapeHtml(s.ticket_numero) : '—'],
@@ -760,9 +761,46 @@ function renderDetalleServicioTecnicoModal() {
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
+      <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
     </div>
   </div></div>`;
+}
+function renderEditarServicioTecnicoModal(s) {
+  const d = new Date(s.fecha_hora);
+  const fechaDefault = d.toISOString().slice(0, 10);
+  const horaDefault = d.toTimeString().slice(0, 5);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>✏️ Editar servicio técnico</h2>
+    <div class="field"><label>Título del evento</label><input type="text" id="servicio-edit-titulo" value="${escapeHtml(s.titulo)}"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-edit-ics-todo-el-dia" ${s.todo_el_dia ? 'checked' : ''} onchange="toggleTodoElDiaIcs('servicio-edit')"> Todo el día</label>
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input type="date" id="servicio-edit-fecha" value="${fechaDefault}"></div>
+      <div class="field" id="servicio-edit-ics-hora-wrap" style="${s.todo_el_dia ? 'display:none;' : ''}"><label>Hora</label><input type="time" id="servicio-edit-hora" value="${horaDefault}"></div>
+    </div>
+    <div class="field" id="servicio-edit-ics-duracion-wrap" style="${s.todo_el_dia ? 'display:none;' : ''}"><label>Duración (minutos)</label><input type="number" id="servicio-edit-duracion" min="15" step="15" value="${s.duracion_minutos || 60}"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId=null; render();">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="guardarEdicionServicioTecnico('${s.id}')">Guardar cambios</button>
+    </div>
+  </div></div>`;
+}
+async function guardarEdicionServicioTecnico(id) {
+  const titulo = document.getElementById('servicio-edit-titulo').value;
+  const fecha = document.getElementById('servicio-edit-fecha').value;
+  const hora = document.getElementById('servicio-edit-hora').value;
+  const duracion = document.getElementById('servicio-edit-duracion').value;
+  const todoElDia = document.getElementById('servicio-edit-ics-todo-el-dia').checked;
+  if (!fecha) { showToast('Elegí una fecha.'); return; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { titulo, fecha, hora, duracion, todoElDia });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    state.editandoServicioTecnicoId = null;
+    showToast('Servicio técnico actualizado.');
+    render();
+  } catch (e) { showToast(e.message); }
 }
 // Tarjeta que se ve dentro del ticket con los turnos de Servicio Técnico ya agendados desde acá,
 // para no tener que ir a buscarlos a Calendario → Servicio Técnico.
