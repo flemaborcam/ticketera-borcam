@@ -38,7 +38,8 @@ function mapTicket(row) {
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
     asignadoA: row.asignado_a, grupoId: row.cliente_id, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
-    mensajes: (row.mensajes || []).map(mapMensaje)
+    mensajes: (row.mensajes || []).map(mapMensaje),
+    serviciosTecnicos: row.serviciosTecnicos || []
   };
 }
 function mapMensaje(m) {
@@ -760,6 +761,33 @@ function renderDetalleServicioTecnicoModal() {
     </div>
   </div></div>`;
 }
+// Tarjeta que se ve dentro del ticket con los turnos de Servicio Técnico ya agendados desde acá,
+// para no tener que ir a buscarlos a Calendario → Servicio Técnico.
+function renderServiciosTecnicosDelTicket(t) {
+  const turnos = t.serviciosTecnicos || [];
+  if (!turnos.length) return '';
+  return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
+    ${configSectionHead('🛠️', 'Servicio técnico agendado', 'Turnos cargados desde este ticket.')}
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${turnos.map(s => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;">
+          <div>
+            <div style="font-weight:600;font-size:13.5px;">${escapeHtml(s.titulo)}</div>
+            <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}</div>
+          </div>
+          ${s.estado === 'realizado' ? `<span class="tag tag-resuelto">Realizado</span>` : `<button type="button" class="btn btn-ghost" onclick="marcarServicioTecnicoRealizadoDesdeTicket('${s.id}', '${t.id}')">✅ Marcar realizado</button>`}
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+async function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
+  try {
+    await api('POST', `/api/servicios-tecnicos/${servicioId}/marcar-realizado`);
+    showToast('Servicio técnico marcado como realizado.');
+    await refreshTicket(ticketId);
+    render();
+  } catch (e) { showToast(e.message); }
+}
 async function marcarServicioTecnicoRealizado(id) {
   try {
     await api('POST', `/api/servicios-tecnicos/${id}/marcar-realizado`);
@@ -1451,6 +1479,7 @@ function renderTicket(id) {
       </div>
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
+    ${renderServiciosTecnicosDelTicket(t)}
     ${renderAceptacionesTicket(t)}
     <div class="thread">${thread}</div>
     <div class="reply-box">
