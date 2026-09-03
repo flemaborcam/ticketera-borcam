@@ -1834,6 +1834,19 @@ app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
   );
   ok(res, r.rows[0]);
 });
+app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
+  const { titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
+  if (!fecha) return bad(res, 'Falta la fecha.');
+  if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
+  const fechaHora = todoElDia ? `${fecha}T00:00:00` : `${fecha}T${hora}:00`;
+  const r = await pool.query(
+    `update servicios_tecnicos set titulo=$1, fecha_hora=$2, duracion_minutos=$3, todo_el_dia=$4 where id=$5 returning *`,
+    [titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
   const r = await pool.query(`update servicios_tecnicos set estado='realizado' where id=$1 returning *`, [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
