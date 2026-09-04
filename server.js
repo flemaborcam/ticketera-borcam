@@ -1825,7 +1825,9 @@ app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
-  const fechaHora = todoElDia ? `${fecha}T00:00:00` : `${fecha}T${hora}:00`;
+  // Se fija el offset de Uruguay (-03:00) explícitamente: si no, Postgres interpreta la hora que
+  // escribió el usuario como si fuera UTC y el turno queda corrido varias horas.
+  const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
   const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
   const r = await pool.query(
     `insert into servicios_tecnicos (ticket_id, ticket_numero, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por)
@@ -1839,7 +1841,9 @@ app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
-  const fechaHora = todoElDia ? `${fecha}T00:00:00` : `${fecha}T${hora}:00`;
+  // Se fija el offset de Uruguay (-03:00) explícitamente: si no, Postgres interpreta la hora que
+  // escribió el usuario como si fuera UTC y el turno queda corrido varias horas.
+  const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
   const r = await pool.query(
     `update servicios_tecnicos set titulo=$1, fecha_hora=$2, duracion_minutos=$3, todo_el_dia=$4 where id=$5 returning *`,
     [titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
