@@ -1215,6 +1215,12 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
       });
     }
 
+    const porCategoria = (await pool.query(
+      `select coalesce(categoria, 'Sin categoría') as categoria, count(*) as cantidad
+       from tickets where creado between $1 and $2
+       group by 1 order by 2 desc`, [desde, hasta]
+    )).rows.map(r => ({ categoria: r.categoria, cantidad: Number(r.cantidad) }));
+
     const evolucion = (await pool.query(
       `select to_char(date_trunc('month', creado), 'YYYY-MM') as mes,
          count(*) as recibidos,
@@ -1233,7 +1239,8 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
         promedioResolucionHoras: resolucionGeneral ? Number(resolucionGeneral) : null
       },
       porUsuario,
-      evolucion
+      evolucion,
+      porCategoria
     });
   } catch (e) { bad(res, 'No se pudo armar el reporte: ' + e.message); }
 });
