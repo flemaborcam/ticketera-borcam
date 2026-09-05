@@ -1240,6 +1240,12 @@ function dashboardStyleTag() {
     .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
     @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
+
+    .dash-profile-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:99px;padding:5px 14px 5px 5px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 18px -10px rgba(15,42,77,.25);transition:transform .15s ease,box-shadow .15s ease;}
+    .dash-profile-chip:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(15,42,77,.05),0 12px 22px -8px rgba(15,42,77,.32);border-color:var(--line-strong);}
+    .dash-profile-avatar{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 2px 6px rgba(30,86,199,.4);}
+    .dash-profile-name{font-size:13.5px;font-weight:600;color:var(--ink);}
+    @media (max-width:600px){.dash-profile-name{display:none;}}
   </style>`;
 }
 function renderStub(t, clientMode, selectable) {
@@ -1493,9 +1499,16 @@ function renderDashboard() {
       <button class="btn btn-ghost" ${state.paginaTickets >= totalPaginas ? 'disabled' : ''} onclick="irAPagina(${state.paginaTickets + 1})">Siguiente &rarr;</button>
     </div>` : '';
 
+  const u = currentUser();
   return `${dashboardStyleTag()}
     <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
-      <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button></div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button>
+        <button type="button" class="dash-profile-chip" onclick="go('perfil')" title="Ir a mi perfil">
+          <span class="dash-profile-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</span>
+          <span class="dash-profile-name">${escapeHtml(u.nombre)}</span>
+        </button>
+      </div></div>
     <div class="filters">
       <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>
       <input type="date" value="${state.filters.fecha}" onchange="setFilter('fecha', this.value)" title="Buscar tickets de un día específico">
