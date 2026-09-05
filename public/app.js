@@ -1359,7 +1359,10 @@ function renderShell(inner) {
       --line:#22334D; --line-strong:#33496B; --brand:#4C86E8; --brand-2:#6FA0F5; --brand-tint:#1B2C46;
       --stamp-red:#E2726B; --stamp-red-tint:#3A1F22; --stamp-amber:#E0B75C; --stamp-amber-tint:#3A331C;
       --stamp-green:#4FCB94; --stamp-green-tint:#173729; --gray:#8CA0BC; --gray-tint:#1C2A3F;
+      color-scheme: dark; /* así el navegador dibuja en oscuro sus propios controles: el reloj de
+      los campos de hora, el calendario de los campos de fecha, y la barra de scroll. */
     }
+    :root:not([data-theme="dark"]){ color-scheme: light; }
     :root[data-theme="dark"] body{background:var(--paper);color:var(--ink);}
     :root[data-theme="dark"] .field input,:root[data-theme="dark"] .field select,:root[data-theme="dark"] .field textarea,
     :root[data-theme="dark"] .filters select,:root[data-theme="dark"] .filters input[type=search],:root[data-theme="dark"] .filters input[type=date],
