@@ -170,6 +170,8 @@ pool.query('alter table tickets add column if not exists satisfaccion_fecha time
 // Migración automática: checklist de pasos por categoría (plantillas en configuracion, estado por ticket).
 pool.query(`alter table configuracion add column if not exists checklist_categorias jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_categorias:', e.message));
 pool.query(`alter table tickets add column if not exists checklist_estado jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_estado:', e.message));
+// Migración automática: pregunta "¿te entregaron la caja de domótica?" en el formulario de agendar turno.
+pool.query('alter table citas add column if not exists caja_domotica boolean').catch(e => console.error('No se pudo migrar caja_domotica:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -1529,8 +1531,8 @@ app.get('/api/agenda/info', async (req, res) => {
   ok(res, { activo: true, duracionMinutos: duracion, edificios, slots: libres });
 });
 app.post('/api/agenda/reservar', async (req, res) => {
-  const { fechaHora, nombreCliente, correoCliente, telefono, tieneInternet, edificio, numeroUnidad } = req.body;
-  if (!fechaHora || !nombreCliente || !correoCliente || !telefono || !edificio || !numeroUnidad || tieneInternet === undefined) {
+  const { fechaHora, nombreCliente, correoCliente, telefono, tieneInternet, edificio, numeroUnidad, cajaDomotica } = req.body;
+  if (!fechaHora || !nombreCliente || !correoCliente || !telefono || !edificio || !numeroUnidad || tieneInternet === undefined || cajaDomotica === undefined) {
     return bad(res, 'Completá todos los campos.');
   }
   const c = await getConfig();
@@ -1547,9 +1549,9 @@ app.post('/api/agenda/reservar', async (req, res) => {
   const token = crypto.randomUUID();
   const duracion = cfg.duracionMinutos || 60;
   const r = await pool.query(
-    `insert into citas (nombre_cliente, correo_cliente, telefono, tiene_internet, edificio, numero_unidad, fecha_hora, duracion_minutos, token_cancelacion)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
-    [nombreCliente, correoCliente, telefono, !!tieneInternet, edificio, numeroUnidad, fechaHora, duracion, token]
+    `insert into citas (nombre_cliente, correo_cliente, telefono, tiene_internet, edificio, numero_unidad, fecha_hora, duracion_minutos, token_cancelacion, caja_domotica)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+    [nombreCliente, correoCliente, telefono, !!tieneInternet, edificio, numeroUnidad, fechaHora, duracion, token, !!cajaDomotica]
   );
   const citaId = r.rows[0].id;
   if (cfg.googleCalendarId) {
@@ -1558,7 +1560,7 @@ app.post('/api/agenda/reservar', async (req, res) => {
       const fin = new Date(inicio.getTime() + duracion * 60000);
       const evento = await crearEventoGoogle(cfg.googleCalendarId, {
         summary: `Instalación domótica — ${edificio} UD ${numeroUnidad}`,
-        description: `Cliente: ${nombreCliente}\nTeléfono: ${telefono}\nCorreo: ${correoCliente}\nTiene internet: ${tieneInternet ? 'Sí' : 'No'}\nEdificio: ${edificio}\nUnidad: ${numeroUnidad}`,
+        description: `Cliente: ${nombreCliente}\nTeléfono: ${telefono}\nCorreo: ${correoCliente}\nTiene internet: ${tieneInternet ? 'Sí' : 'No'}\nCaja de domótica entregada: ${cajaDomotica ? 'Sí' : 'No'}\nEdificio: ${edificio}\nUnidad: ${numeroUnidad}`,
         start: { dateTime: inicio.toISOString(), timeZone: 'America/Montevideo' },
         end: { dateTime: fin.toISOString(), timeZone: 'America/Montevideo' }
       });
