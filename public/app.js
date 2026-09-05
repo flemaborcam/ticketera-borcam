@@ -24,6 +24,39 @@ let state = {
   reportesDesde: '', reportesHasta: ''
 };
 
+/* ---------------- Modo oscuro/claro ---------------- */
+// Si el usuario ya eligió un modo a mano, se respeta esa elección (queda guardada). Si nunca lo
+// tocó, sigue automáticamente el modo del sistema operativo (y lo actualiza si lo cambia mientras
+// la página sigue abierta).
+function temaDelSistema() {
+  try { return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light'; }
+  catch (e) { return 'light'; }
+}
+function temaInicial() {
+  try {
+    const guardado = localStorage.getItem('tema');
+    if (guardado === 'light' || guardado === 'dark') return guardado;
+  } catch (e) {}
+  return temaDelSistema();
+}
+function aplicarTema(tema, guardarEleccion) {
+  document.documentElement.setAttribute('data-theme', tema);
+  if (guardarEleccion) { try { localStorage.setItem('tema', tema); } catch (e) {} }
+}
+function toggleTema() {
+  const actual = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  aplicarTema(actual === 'dark' ? 'light' : 'dark', true);
+  render();
+}
+aplicarTema(temaInicial(), false);
+try {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    let elegidoAMano = null;
+    try { elegidoAMano = localStorage.getItem('tema'); } catch (err) {}
+    if (!elegidoAMano) { aplicarTema(e.matches ? 'dark' : 'light', false); render(); }
+  });
+} catch (e) {}
+
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fmtDateTime(iso) { return new Date(iso).toLocaleString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
@@ -1278,6 +1311,8 @@ function renderShell(inner) {
     .sidebar-avatar img,.dash-profile-avatar img,.perfil-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;}
     .sidebar-foot .who-text strong{display:block;color:#fff;font-size:13.5px;}
     .sidebar-foot .who-text{font-size:12px;color:#8FAAD4;}
+    .sidebar-theme-toggle{margin-left:auto;flex:none;width:30px;height:30px;border-radius:50%;border:none;background:rgba(255,255,255,.08);color:#EDF3FF;font-size:14px;display:flex;align-items:center;justify-content:center;transition:background .15s ease,transform .15s ease;}
+    .sidebar-theme-toggle:hover{background:rgba(255,255,255,.18);transform:scale(1.06);}
 
     /* Sistema de diseño general (aplica a toda la app: botones, etiquetas, sello del número de
        ticket) — degradés + sombra tipo "3D" y animaciones sutiles al interactuar. */
@@ -1316,11 +1351,31 @@ function renderShell(inner) {
     .stub-num > *{position:relative;z-index:1;}
 
     .stamp{border-radius:8px;padding:7px 16px;box-shadow:0 4px 10px -4px currentColor;background:#fff;}
+
+    /* ---------------- Modo oscuro ---------------- */
+    :root[data-theme="dark"]{
+      --ink:#E8EEF7; --ink-soft:#9FB3CC; --paper:#0B1626; --card:#121F35;
+      --line:#22334D; --line-strong:#33496B; --brand:#4C86E8; --brand-2:#6FA0F5; --brand-tint:#1B2C46;
+      --stamp-red:#E2726B; --stamp-red-tint:#3A1F22; --stamp-amber:#E0B75C; --stamp-amber-tint:#3A331C;
+      --stamp-green:#4FCB94; --stamp-green-tint:#173729; --gray:#8CA0BC; --gray-tint:#1C2A3F;
+    }
+    :root[data-theme="dark"] body{background:var(--paper);color:var(--ink);}
+    :root[data-theme="dark"] .field input,:root[data-theme="dark"] .field select,:root[data-theme="dark"] .field textarea,
+    :root[data-theme="dark"] .filters select,:root[data-theme="dark"] .filters input[type=search],:root[data-theme="dark"] .filters input[type=date],
+    :root[data-theme="dark"] .btn-ghost,:root[data-theme="dark"] .btn-danger,:root[data-theme="dark"] .stamp,
+    :root[data-theme="dark"] .msg-entrante,:root[data-theme="dark"] .msg-html-frame,:root[data-theme="dark"] .reply-tab.active,
+    :root[data-theme="dark"] .modal,:root[data-theme="dark"] .sign-editor
+    { background:var(--card) !important; color:var(--ink); border-color:var(--line-strong) !important; }
+    :root[data-theme="dark"] .btn-primary,:root[data-theme="dark"] .msg-saliente{color:#fff;}
+    :root[data-theme="dark"] .sidebar-theme-toggle{background:rgba(255,255,255,.08);color:#EDF3FF;}
+    :root[data-theme="dark"] .sidebar-theme-toggle:hover{background:rgba(255,255,255,.16);}
+    :root[data-theme="dark"] ::selection{background:var(--brand);color:#fff;}
   </style>
   <div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
-      <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${avatarInner(u)}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div></div>
+      <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${avatarInner(u)}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
+      <button type="button" class="sidebar-theme-toggle" onclick="toggleTema()" title="Cambiar a modo ${document.documentElement.getAttribute('data-theme') === 'dark' ? 'claro' : 'oscuro'}">${document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'}</button></div>
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
