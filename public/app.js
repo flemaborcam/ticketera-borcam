@@ -1346,7 +1346,7 @@ function renderShell(inner) {
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
-    .stub-num{background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);position:relative;overflow:hidden;}
+    .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);position:relative;overflow:hidden;}
     .stub-num::before,.stub-num::after{background:var(--paper);}
     .stub-num > *{position:relative;z-index:1;}
 
@@ -1369,6 +1369,10 @@ function renderShell(inner) {
     :root[data-theme="dark"] .btn-primary,:root[data-theme="dark"] .msg-saliente{color:#fff;}
     :root[data-theme="dark"] .sidebar-theme-toggle{background:rgba(255,255,255,.08);color:#EDF3FF;}
     :root[data-theme="dark"] .sidebar-theme-toggle:hover{background:rgba(255,255,255,.16);}
+    /* Estas barras siempre son azul marino de marca, en los dos modos (igual que el menú lateral,
+       que ya usa un color fijo): sin este ajuste, se aclaraban solas al invertirse --ink. */
+    :root[data-theme="dark"] .topbar,:root[data-theme="dark"] .bottomnav,:root[data-theme="dark"] .toast
+    { background:#0F2A4D !important; }
     :root[data-theme="dark"] ::selection{background:var(--brand);color:#fff;}
   </style>
   <div class="shell">
@@ -1401,7 +1405,7 @@ function dashboardStyleTag() {
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
-    .stub-num{background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);}
+    .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);}
     .stub-num::before,.stub-num::after{background:var(--paper);}
 
     .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);}
@@ -1798,7 +1802,7 @@ function ticketStyleTag() {
 
     /* Cuadro del número de ticket (arriba de la ficha) — antes era solo texto gris, ahora un
        "sello" a juego con el resto del diseño (mismo estilo que el número en la bandeja). */
-    .ticket-num-big{display:inline-block;font-family:var(--font-mono) !important;font-size:13px !important;font-weight:700;letter-spacing:.03em;color:#fff !important;background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);padding:6px 14px;border-radius:8px;box-shadow:0 4px 10px -4px rgba(15,42,77,.4);margin-bottom:6px;}
+    .ticket-num-big{display:inline-block;font-family:var(--font-mono) !important;font-size:13px !important;font-weight:700;letter-spacing:.03em;color:#fff !important;background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);padding:6px 14px;border-radius:8px;box-shadow:0 4px 10px -4px rgba(15,42,77,.4);margin-bottom:6px;}
   </style>`;
 }
 function renderTicket(id) {
@@ -2092,7 +2096,7 @@ async function eliminarUsuario(id) {
 function perfilStyleTag() {
   return `<style id="perfil-style-v1">
     .perfil-hero{position:relative;overflow:hidden;border-radius:20px;padding:28px 26px;margin-bottom:22px;
-      background:linear-gradient(135deg,var(--ink) 0%,#1B3F73 55%,var(--brand-2) 100%);color:#fff;
+      background:linear-gradient(135deg,#0F2A4D 0%,#1B3F73 55%,var(--brand-2) 100%);color:#fff;
       display:flex;align-items:center;gap:20px;box-shadow:0 16px 34px -16px rgba(15,42,77,.45);}
     .perfil-hero::before{content:'';position:absolute;top:-60px;right:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 70%);}
     .perfil-hero::after{content:'';position:absolute;bottom:-80px;left:20%;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.25),transparent 70%);}
@@ -3108,7 +3112,7 @@ function authStyleTag() {
 
     .auth-card{position:relative;z-index:1;width:100%;max-width:400px;background:rgba(255,255,255,.9);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.5);border-radius:20px;box-shadow:0 25px 60px -15px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.04);padding:0;overflow:hidden;animation:authCardIn .55s cubic-bezier(.2,.9,.25,1);}
     @keyframes authCardIn{from{opacity:0;transform:translateY(18px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
-    .auth-card-brand{position:relative;background:linear-gradient(135deg,var(--ink) 0%,#1B3F73 60%,#264d8f 100%);padding:26px 28px;display:flex;justify-content:center;align-items:center;overflow:hidden;}
+    .auth-card-brand{position:relative;background:linear-gradient(135deg,#0F2A4D 0%,#1B3F73 60%,#264d8f 100%);padding:26px 28px;display:flex;justify-content:center;align-items:center;overflow:hidden;}
     .auth-card-brand::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.12) 50%,transparent 70%);background-size:220% 100%;animation:authSheen 5s ease-in-out infinite;}
     @keyframes authSheen{0%{background-position:150% 0;}100%{background-position:-50% 0;}}
     .auth-card-brand img{position:relative;z-index:1;height:36px;width:auto;max-width:100%;display:block;}
