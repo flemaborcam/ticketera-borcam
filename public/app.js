@@ -2199,7 +2199,9 @@ function configStyleTag() {
     .switch-row input[type=checkbox]:checked{background:linear-gradient(135deg,var(--brand),var(--brand-2));}
     .switch-row input[type=checkbox]:checked::before{transform:translateX(16px);}
 
-    .card-peligro{border:1.5px solid var(--stamp-red-tint) !important;background:linear-gradient(180deg,#fff 0%,#FDF4F4 100%);}
+    .card-peligro{border:1.5px solid var(--stamp-red-tint) !important;background:linear-gradient(180deg,var(--card) 0%,var(--stamp-red-tint) 250%);}
+    :root[data-theme="dark"] .card-peligro .config-section-head *{color:var(--ink) !important;}
+    :root[data-theme="dark"] .card-peligro .hint-text{color:var(--ink-soft) !important;}
   </style>`;
 }
 function configSectionHead(icon, title, hint) {
