@@ -174,6 +174,8 @@ pool.query(`alter table tickets add column if not exists checklist_estado jsonb 
 pool.query('alter table citas add column if not exists caja_domotica boolean').catch(e => console.error('No se pudo migrar caja_domotica:', e.message));
 // Migración automática: foto de perfil del usuario (se guarda como archivo en el mismo storage que los adjuntos).
 pool.query('alter table usuarios add column if not exists foto_path text').catch(e => console.error('No se pudo migrar foto_path:', e.message));
+// Migración automática: vincular cada ticket a un edificio concreto (antes solo se podía inferir del asunto).
+pool.query('alter table tickets add column if not exists edificio text').catch(e => console.error('No se pudo migrar edificio:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -513,7 +515,13 @@ app.get('/api/auth/me', async (req, res) => {
 /* ---------------- Catálogos ---------------- */
 app.get('/api/catalogos', requireStaff, async (req, res) => {
   const c = await getConfig();
-  ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, checklistsCategoria: c.checklist_categorias || {} });
+  // Lista de edificios para autocompletar el campo del ticket: combina los que ya están cargados
+  // en Tags (edificios_tags) con los que ya se usaron en algún ticket, para que la lista se arme
+  // sola con el uso y no dependa de cargarlos primero en otro lado.
+  const edificiosTags = (await pool.query('select edificio from edificios_tags')).rows.map(r => r.edificio);
+  const edificiosTickets = (await pool.query(`select distinct edificio from tickets where edificio is not null and edificio <> ''`)).rows.map(r => r.edificio);
+  const EDIFICIOS = [...new Set([...edificiosTags, ...edificiosTickets])].sort((a, b) => a.localeCompare(b));
+  ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
 });
 app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
   const checklists = req.body.checklists || {};
@@ -556,10 +564,11 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   ok(res, { ticket, automatizado });
 });
 app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
-  const { categoria, prioridad, estado, asignadoA, clienteId } = req.body;
+  const { categoria, prioridad, estado, asignadoA, clienteId, edificio } = req.body;
   const id = req.params.id;
   if (categoria !== undefined) await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, id]);
   if (prioridad !== undefined) await pool.query('update tickets set prioridad=$1, actualizado=now() where id=$2', [prioridad, id]);
+  if (edificio !== undefined) await pool.query('update tickets set edificio=$1, actualizado=now() where id=$2', [(edificio || '').trim() || null, id]);
   if (asignadoA !== undefined) {
     if (asignadoA) {
       // Reasignar desde el desplegable "Asignado a" tiene que hacer exactamente lo mismo que "Tomar
@@ -1220,6 +1229,11 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
        from tickets where creado between $1 and $2
        group by 1 order by 2 desc`, [desde, hasta]
     )).rows.map(r => ({ categoria: r.categoria, cantidad: Number(r.cantidad) }));
+    const porEdificio = (await pool.query(
+      `select edificio, count(*) as cantidad
+       from tickets where creado between $1 and $2 and edificio is not null and edificio <> ''
+       group by 1 order by 2 desc limit 12`, [desde, hasta]
+    )).rows.map(r => ({ edificio: r.edificio, cantidad: Number(r.cantidad) }));
 
     const evolucion = (await pool.query(
       `select to_char(date_trunc('month', creado), 'YYYY-MM') as mes,
@@ -1240,7 +1254,8 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
       },
       porUsuario,
       evolucion,
-      porCategoria
+      porCategoria,
+      porEdificio
     });
   } catch (e) { bad(res, 'No se pudo armar el reporte: ' + e.message); }
 });
