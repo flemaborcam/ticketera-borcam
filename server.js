@@ -1238,7 +1238,7 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
   } catch (e) { bad(res, 'No se pudo armar el reporte: ' + e.message); }
 });
 app.get('/api/usuarios', requireStaff, async (req, res) => {
-  const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin from usuarios order by nombre')).rows;
+  const usuarios = (await pool.query('select id,nombre,apellido,telefono,email,cargo,es_superadmin,foto_path from usuarios order by nombre')).rows;
   ok(res, usuarios);
 });
 // Solo un Superadmin puede dar de alta usuarios directamente (sin pasar por el registro)
