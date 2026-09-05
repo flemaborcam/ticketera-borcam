@@ -2263,8 +2263,26 @@ function fmtHoras(h) {
 }
 function fmtDateShort(iso) { return new Date(iso).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
 function pctReporte(a, b) { return b ? Math.round((a / b) * 100) : 0; }
+// Ícono + color de acento según el texto del label — puramente cosmético, no cambia los datos.
+function kpiIconYColor(label) {
+  const l = label.toLowerCase();
+  if (l.includes('recibidos')) return ['📥', '#1E56C7'];
+  if (l.includes('resueltos/cerrados') || l === 'resueltos/cerrados') return ['✅', '#1F8A5F'];
+  if (l.includes('% resueltos')) return ['📈', '#B3811C'];
+  if (l.includes('sin asignar')) return ['⚠️', '#C43D3D'];
+  if (l.includes('abiertos')) return ['🗂️', '#3D7EF0'];
+  if (l.includes('1ra respuesta')) return ['⏱️', '#8B5CF6'];
+  if (l.includes('resolución')) return ['⏳', '#0D9488'];
+  if (l.includes('atendidos')) return ['🎯', '#1E56C7'];
+  if (l.includes('mensajes')) return ['💬', '#0D9488'];
+  return ['📊', '#1E56C7'];
+}
 function kpiCard(label, value) {
-  return `<div class="kpi-tile"><div class="v">${value}</div><div class="l">${escapeHtml(label)}</div></div>`;
+  const [icon, color] = kpiIconYColor(label);
+  return `<div class="kpi-tile" style="color:${color};">
+    <div class="ico-badge" style="background:${color}17;color:${color};">${icon}</div>
+    <div class="v" style="color:var(--ink);">${value}</div><div class="l">${escapeHtml(label)}</div>
+  </div>`;
 }
 function barChartSvg(datos) {
   if (!datos.length || datos.every(d => d.value === 0)) return '<div class="hint-text">Sin tickets resueltos en este período.</div>';
@@ -2328,10 +2346,16 @@ function renderEstadisticas() {
         .report-print-head { display:block !important; }
         .card { box-shadow:none !important; border:1px solid #ddd !important; break-inside:avoid; }
       }
-      .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
-      .kpi-tile { border:1px solid var(--line-strong); border-radius:var(--radius); padding:14px; }
-      .kpi-tile .v { font-family:var(--font-display); font-weight:700; font-size:22px; }
-      .kpi-tile .l { font-size:12px; color:var(--ink-soft); margin-top:2px; }
+      .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
+      .kpi-tile { position:relative; overflow:hidden; background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px 18px;
+        box-shadow:0 1px 2px rgba(15,42,77,.05), 0 10px 22px -12px rgba(15,42,77,.22);
+        transition:transform .18s ease, box-shadow .18s ease; }
+      .kpi-tile:hover { transform:translateY(-3px); box-shadow:0 1px 2px rgba(15,42,77,.05), 0 16px 30px -12px rgba(15,42,77,.32); }
+      .kpi-tile::before { content:''; position:absolute; top:-24px; right:-24px; width:88px; height:88px; border-radius:50%; background:currentColor; opacity:.09; }
+      .kpi-tile .ico-badge { position:relative; z-index:1; width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; margin-bottom:12px; box-shadow:inset 0 1px 0 rgba(255,255,255,.5); }
+      .kpi-tile .v { position:relative; z-index:1; font-family:var(--font-display); font-weight:700; font-size:25px; }
+      .kpi-tile .l { position:relative; z-index:1; font-size:12px; color:var(--ink-soft); margin-top:2px; }
+      @media print { .kpi-tile{ box-shadow:none !important; } .kpi-tile::before{ display:none; } }
       .reportes-table { width:100%; border-collapse:collapse; font-size:13px; }
       .reportes-table th, .reportes-table td { padding:9px 10px; border-bottom:1px solid var(--line-strong); }
       .reportes-table th { text-align:left; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); }
