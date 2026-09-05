@@ -1941,17 +1941,25 @@ function renderEditarUsuarioModal() {
   </div></div>`;
 }
 
+function usuariosStyleTag() {
+  return `<style id="usuarios-style-v1">
+    .user-row{border-radius:14px !important;box-shadow:0 1px 2px rgba(15,42,77,.05),0 4px 12px -10px rgba(15,42,77,.15);transition:box-shadow .15s ease,transform .15s ease;}
+    .user-row:hover{box-shadow:0 8px 20px -12px rgba(15,42,77,.22);transform:translateY(-1px);}
+    .user-row .avatar{background:linear-gradient(135deg,var(--brand-2),#8B5CF6);color:#fff;overflow:hidden;box-shadow:0 2px 6px rgba(30,86,199,.35);}
+    .user-row .avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;}
+  </style>`;
+}
 function renderUsuarios() {
   const soyAdmin = currentUser().es_superadmin;
   const miId = currentUser().id;
-  const rows = cache.usuarios.map(u => `<div class="user-row"><div class="avatar">${initials(u.nombre, u.apellido)}</div>
+  const rows = cache.usuarios.map(u => `<div class="user-row"><div class="avatar">${avatarInner(u)}</div>
     <div><div class="u-name">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}${u.es_superadmin ? ' <span class="tag tag-esperando-al-cliente" style="margin-left:4px;">Superadmin</span>' : ''}</div>
     <div class="u-sub">${escapeHtml(u.email)}${u.telefono ? ' · ' + escapeHtml(u.telefono) : ''}</div></div>
     <span class="tag tag-cat cargo-pill">${escapeHtml(u.cargo)}</span>
     ${soyAdmin ? `<button class="btn btn-ghost" style="margin-left:10px;" onclick="openEditarUsuarioModal('${u.id}')">Editar</button>` : ''}
     ${soyAdmin && u.id !== miId ? `<button class="btn btn-danger" style="margin-left:6px;" onclick="eliminarUsuario('${u.id}')">Eliminar</button>` : ''}
     </div>`).join('');
-  return `<div class="page-head"><div><h1>Usuarios</h1><div class="sub">${cache.usuarios.length} personas con acceso a la plataforma</div></div>
+  return `${usuariosStyleTag()}<div class="page-head"><div><h1>Usuarios</h1><div class="sub">${cache.usuarios.length} personas con acceso a la plataforma</div></div>
     ${soyAdmin ? `<button class="btn btn-primary" onclick="openNuevoUsuarioModal()">+ Nuevo usuario</button>` : ''}</div>
     <div class="user-list">${rows}</div>`;
 }
