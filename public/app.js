@@ -12,10 +12,10 @@ async function api(method, url, body) {
 
 let session = null;
 let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {} };
-let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [] };
+let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
-  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
+  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '', edificio: 'todos' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
   filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1,
@@ -35,6 +35,7 @@ function showToast(msg) { state.toast = msg; render(); setTimeout(() => { state.
 function mapTicket(row) {
   return {
     id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, prioridad: row.prioridad, estado: row.estado,
+    edificio: row.edificio || '',
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
     asignadoA: row.asignado_a, grupoId: row.cliente_id, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
@@ -222,6 +223,7 @@ function filteredTickets() {
     .filter(t => f.categoria === 'todas' || t.categoria === f.categoria)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => f.grupo === 'todos' || t.grupoId === f.grupo)
+    .filter(t => f.edificio === 'todos' || t.edificio === f.edificio)
     .filter(t => f.agente === 'todos' ? true : (f.agente === 'sin-asignar' ? !t.asignadoA : t.asignadoA === f.agente))
     .filter(t => !f.fecha || fechaLocal(t.creado) === f.fecha)
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
@@ -1557,6 +1559,7 @@ function renderDashboard() {
   const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const grupoOptions = `<option value="todos">Todos los clientes</option>` + cache.clientes.map(g => `<option value="${g.id}" ${state.filters.grupo === g.id ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('');
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
+  const edifOptions = `<option value="todos">Todos los edificios</option>` + (CAT.EDIFICIOS || []).map(e => `<option value="${e}" ${state.filters.edificio === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
 
   const paginacion = todos.length > TICKETS_POR_PAGINA ? `
@@ -1585,6 +1588,7 @@ function renderDashboard() {
       <select onchange="setFilter('prioridad', this.value)">${prioOptions}</select>
       <select onchange="setFilter('grupo', this.value)">${grupoOptions}</select>
       <select onchange="setFilter('agente', this.value)">${agenteOptions}</select>
+      <select onchange="setFilter('edificio', this.value)">${edifOptions}</select>
       <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filters.search)}" onkeydown="if(event.key==='Enter'){ setFilter('search', this.value); }" onsearch="setFilter('search', this.value)">
     </div>
     ${state.selectedTickets.size ? renderBulkActionBar() : ''}
@@ -1682,6 +1686,9 @@ function ticketStyleTag() {
     .meta-grid .field select{appearance:none;-webkit-appearance:none;width:100%;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%231E56C7'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E") no-repeat right 12px center/16px;border:1.5px solid var(--line-strong) !important;border-radius:10px !important;padding:10px 34px 10px 12px !important;font-weight:600;color:var(--ink);box-shadow:0 1px 2px rgba(15,42,77,.04);transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;cursor:pointer;}
     .meta-grid .field select:hover{border-color:var(--brand-2) !important;transform:translateY(-1px);}
     .meta-grid .field select:focus{outline:none;border-color:var(--brand-2) !important;box-shadow:0 0 0 3px rgba(61,126,240,.18);}
+    .meta-grid .field input[list]{width:100%;border:1.5px solid var(--line-strong) !important;border-radius:10px !important;padding:10px 12px !important;font-weight:600;color:var(--ink);box-shadow:0 1px 2px rgba(15,42,77,.04);transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;box-sizing:border-box;}
+    .meta-grid .field input[list]:hover{border-color:var(--brand-2) !important;transform:translateY(-1px);}
+    .meta-grid .field input[list]:focus{outline:none;border-color:var(--brand-2) !important;box-shadow:0 0 0 3px rgba(61,126,240,.18);}
 
     /* Cuadro del número de ticket (arriba de la ficha) — antes era solo texto gris, ahora un
        "sello" a juego con el resto del diseño (mismo estilo que el número en la bandeja). */
@@ -1726,6 +1733,7 @@ function renderTicket(id) {
         <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
         <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
         <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
+        <div class="field"><label>Edificio</label><input list="edificios-datalist" value="${escapeHtml(t.edificio || '')}" placeholder="Ej: ARIJON" onchange="updateTicketField('${t.id}','edificio', this.value)"><datalist id="edificios-datalist">${(CAT.EDIFICIOS || []).map(e => `<option value="${escapeHtml(e)}">`).join('')}</datalist></div>
       </div>
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
@@ -2645,6 +2653,10 @@ function renderEstadisticas() {
     <div class="card" style="margin-bottom:18px;">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Tickets recibidos por categoría — ${rangoTexto}</div>
       ${(r.porCategoria || []).length ? barChartSvg((r.porCategoria || []).map(c => ({ label: c.categoria, value: c.cantidad }))) : `<div class="hint-text">No hay tickets en este período.</div>`}
+    </div>
+    <div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Tickets recibidos por edificio — ${rangoTexto}</div>
+      ${(r.porEdificio || []).length ? barChartSvg((r.porEdificio || []).map(e => ({ label: e.edificio, value: e.cantidad }))) : `<div class="hint-text">No hay datos de edificio en este período.</div>`}
     </div>
     <div class="card" style="margin-bottom:18px;">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución mensual — recibidos vs. resueltos</div>
