@@ -531,7 +531,9 @@ app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
 /* ---------------- Tickets (staff) ---------------- */
 app.get('/api/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query(
-    `select t.*, (select string_agg(m.cuerpo, ' ') from mensajes m where m.ticket_id = t.id) as mensajes_texto
+    `select t.*, (select string_agg(m.cuerpo, ' ') from mensajes m where m.ticket_id = t.id) as mensajes_texto,
+     (select m2.tipo from mensajes m2 where m2.ticket_id = t.id and m2.tipo <> 'nota' order by m2.fecha desc limit 1) as ultimo_msg_tipo,
+     (select m2.fecha from mensajes m2 where m2.ticket_id = t.id and m2.tipo <> 'nota' order by m2.fecha desc limit 1) as ultimo_msg_fecha
      from tickets t order by t.actualizado desc`
   )).rows;
   ok(res, tickets);
