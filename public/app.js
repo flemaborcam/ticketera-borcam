@@ -1199,6 +1199,33 @@ function renderShell(inner) {
     .sidebar-avatar{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 0 0 2px rgba(255,255,255,.15);}
     .sidebar-foot .who-text strong{display:block;color:#fff;font-size:13.5px;}
     .sidebar-foot .who-text{font-size:12px;color:#8FAAD4;}
+
+    /* Sistema de diseño general (aplica a toda la app: botones, etiquetas, sello del número de
+       ticket) — degradés + sombra tipo "3D" y animaciones sutiles al interactuar. */
+    .btn{transition:transform .15s ease,box-shadow .15s ease,filter .15s ease,background .15s ease;}
+    .btn-primary{background:linear-gradient(135deg,var(--brand) 0%,#2E6BE0 55%,var(--brand-2) 100%);box-shadow:0 4px 12px -4px rgba(30,86,199,.5);border:none;}
+    .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 18px -4px rgba(30,86,199,.6);filter:brightness(1.04);}
+    .btn-primary:active{transform:translateY(0);box-shadow:0 2px 6px -2px rgba(30,86,199,.5);}
+    .btn-ghost{background:#fff;box-shadow:0 1px 2px rgba(15,42,77,.04),0 4px 10px -6px rgba(15,42,77,.15);}
+    .btn-ghost:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 16px -6px rgba(15,42,77,.22);background:var(--brand-tint);}
+    .btn-danger{background:#fff;box-shadow:0 1px 2px rgba(196,61,61,.05),0 4px 10px -6px rgba(196,61,61,.15);}
+    .btn-danger:hover{transform:translateY(-1px);box-shadow:0 8px 16px -6px rgba(196,61,61,.25);background:var(--stamp-red-tint);}
+
+    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);transition:transform .12s ease;}
+    .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
+    .tag-urgente{animation:tagPulseUrgente 1.8s ease-in-out infinite;}
+    @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
+    .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
+    @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
+    @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
+
+    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
+    .stub-num{background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);position:relative;overflow:hidden;}
+    .stub-num::before,.stub-num::after{background:var(--paper);}
+    .stub-num > *{position:relative;z-index:1;}
+
+    .stamp{border-radius:8px;padding:7px 16px;box-shadow:0 4px 10px -4px currentColor;background:#fff;}
   </style>
   <div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
@@ -1582,6 +1609,29 @@ function renderAdjuntos(ticketId, mensajeId, adjuntos) {
   }).join('')}</div>`;
 }
 
+// Estilos propios de la ficha de ticket: burbujas de mensaje estilo WhatsApp (con "colita") y
+// caja de respuesta con look más moderno (pestañas subrayadas, tipo Outlook nuevo).
+function ticketStyleTag() {
+  return `<style id="ticket-style-v2">
+    .thread{gap:10px;}
+    .msg{border-radius:16px;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12);position:relative;}
+    .msg-entrante{border-top-left-radius:4px;}
+    .msg-entrante::before{content:'';position:absolute;left:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:#fff;border-left:0;transform:rotate(-8deg);}
+    .msg-saliente{border-top-right-radius:4px;}
+    .msg-saliente::before{content:'';position:absolute;right:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:var(--brand);border-right:0;transform:rotate(8deg);}
+    .msg-nota{border-radius:12px;}
+    .msg-sistema{border-radius:12px;}
+
+    .reply-box{border-radius:16px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 10px 24px -14px rgba(15,42,77,.25);}
+    .reply-tabs{background:none;padding:0;border-bottom:1px solid var(--line);border-radius:0;width:100%;gap:18px;margin-bottom:18px;}
+    .reply-tab{background:none;border:none;padding:8px 2px 12px;font-size:13.5px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;border-radius:0;position:relative;top:1px;transition:color .15s ease,border-color .15s ease;}
+    .reply-tab:hover{color:var(--brand);}
+    .reply-tab.active{color:var(--brand);border-bottom-color:var(--brand);}
+    .reply-box textarea{border-radius:12px;}
+    .reply-box textarea:focus,.reply-box input:focus,.reply-box select:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
+    .reply-actions{display:flex;justify-content:flex-end;}
+  </style>`;
+}
 function renderTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
   if (!t) return `<button class="back-link" onclick="go('dashboard')">&larr; Volver</button><div class="empty-state">Cargando…</div>`;
@@ -1594,7 +1644,7 @@ function renderTicket(id) {
   const lastMsg = t.mensajes[t.mensajes.length - 1];
   const uid_ = currentUser().id;
   const u = currentUser();
-  return `
+  return `${ticketStyleTag()}
     <button class="back-link" onclick="go('dashboard')">&larr; Volver a la bandeja general</button>
     <div class="ticket-head">
       <div class="ticket-head-top">
