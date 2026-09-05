@@ -2354,11 +2354,21 @@ async function procesarCorreoEntrante(parsed) {
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   let cuerpo = textoLimpio;
   let cuerpoHtml = null;
+  // Algunos correos HTML (newsletters, avisos de pago con tablas e imágenes) no traen una versión
+  // en texto plano propia; el conversor automático arma una a partir del HTML y suele quedar mal
+  // (imágenes convertidas en "[https://...]" sueltos, tablas aplastadas en una sola línea). Si
+  // detectamos varios de esos "[http...]" seguidos, es señal de que esa conversión salió mal —
+  // en ese caso mostramos directamente el HTML original (ya se ve bien, con su tabla y todo) en
+  // vez del texto mal convertido.
+  const conversionHtmlDeficiente = parsed.html && (textoLimpio.match(/\[https?:\/\//g) || []).length >= 2;
   if (!cuerpo && parsed.html) {
     cuerpoHtml = parsed.html;
     cuerpo = '(Este correo llegó con formato HTML — ver el contenido completo abajo)';
   } else if (!cuerpo) {
     cuerpo = '(mensaje sin texto)';
+  } else if (conversionHtmlDeficiente) {
+    cuerpoHtml = parsed.html;
+    cuerpo = '(Este correo llegó con formato HTML — ver el contenido completo abajo)';
   }
   const numeroDetectado = extraerNumeroTicket(asunto);
   const adjuntosCrudos = [];
