@@ -1218,6 +1218,30 @@ function renderShell(inner) {
 
 /* ---------------- Dashboard / stub ---------------- */
 
+// Estilos del rediseño de la bandeja: se inyectan una sola vez por render (id checa duplicados).
+// Autocontenido — se puede sacar borrando esta función y su llamada en renderDashboard().
+function dashboardStyleTag() {
+  return `<style id="dash-style-v2">
+    .filters{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);}
+    .filters select,.filters input[type=date]{transition:border-color .15s ease,box-shadow .15s ease;}
+    .filters select:focus,.filters input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
+    .filters input[type=search]{border-radius:99px;padding-left:14px;}
+
+    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
+    .stub-num{background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);}
+    .stub-num::before,.stub-num::after{background:var(--paper);}
+
+    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);}
+    .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
+    .tag-urgente{animation:tagPulseUrgente 1.8s ease-in-out infinite;}
+    @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
+
+    .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
+    @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
+    @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
+  </style>`;
+}
 function renderStub(t, clientMode, selectable) {
   const lastMsg = t.mensajes[t.mensajes.length - 1];
   const grupo = t.grupoId ? cache.clientes.find(g => g.id === t.grupoId) : null;
@@ -1469,7 +1493,7 @@ function renderDashboard() {
       <button class="btn btn-ghost" ${state.paginaTickets >= totalPaginas ? 'disabled' : ''} onclick="irAPagina(${state.paginaTickets + 1})">Siguiente &rarr;</button>
     </div>` : '';
 
-  return `
+  return `${dashboardStyleTag()}
     <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
       <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button></div>
     <div class="filters">
