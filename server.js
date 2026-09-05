@@ -615,12 +615,70 @@ async function generarRespaldoJSON() {
     configuracion: configRow.rows[0], citas: citas.rows, documentos_legales: documentosLegales.rows, aceptaciones_legales: aceptaciones.rows
   };
 }
+// Arma un .tar.gz con todos los archivos adjuntos guardados en Supabase Storage (fotos, PDFs,
+// videos de tickets, avatares), usando solo módulos propios de Node (zlib) para no agregar
+// dependencias nuevas al proyecto.
+const zlib = require('zlib');
+function tarHeader(nombre, tamano) {
+  const buf = Buffer.alloc(512);
+  const nombreCorto = Buffer.byteLength(nombre, 'utf8') > 100 ? nombre.slice(-100) : nombre;
+  buf.write(nombreCorto, 0, 100, 'utf8');
+  buf.write('0000644\0', 100, 8, 'utf8');
+  buf.write('0000000\0', 108, 8, 'utf8');
+  buf.write('0000000\0', 116, 8, 'utf8');
+  buf.write(tamano.toString(8).padStart(11, '0') + '\0', 124, 12, 'utf8');
+  buf.write(Math.floor(Date.now() / 1000).toString(8).padStart(11, '0') + '\0', 136, 12, 'utf8');
+  buf.write('        ', 148, 8, 'utf8');
+  buf.write('0', 156, 1, 'utf8');
+  buf.write('ustar\x0000', 257, 8, 'utf8');
+  let suma = 0;
+  for (let i = 0; i < 512; i++) suma += buf[i];
+  buf.write(suma.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf8');
+  return buf;
+}
+function crearTarGz(archivos) {
+  const partes = [];
+  for (const a of archivos) {
+    partes.push(tarHeader(a.name, a.buffer.length), a.buffer);
+    const relleno = (512 - (a.buffer.length % 512)) % 512;
+    if (relleno) partes.push(Buffer.alloc(relleno));
+  }
+  partes.push(Buffer.alloc(1024));
+  return zlib.gzipSync(Buffer.concat(partes));
+}
+async function generarRespaldoArchivosTarGz() {
+  const carpetas = await listarArchivosStorage('');
+  const archivos = [];
+  for (const carpeta of carpetas || []) {
+    if (!carpeta || !carpeta.name || carpeta.id !== null) continue; // solo carpetas
+    const items = await listarArchivosStorage(carpeta.name);
+    for (const item of items || []) {
+      if (!item || !item.name || item.id === null) continue; // saltar subcarpetas anidadas
+      const rutaCompleta = `${carpeta.name}/${item.name}`;
+      try {
+        const upstream = await descargarArchivoStorage(rutaCompleta);
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        archivos.push({ name: rutaCompleta, buffer });
+      } catch (e) { console.error('No se pudo incluir en el respaldo de archivos:', rutaCompleta, e.message); }
+    }
+  }
+  return { cantidad: archivos.length, tarGz: crearTarGz(archivos) };
+}
 app.get('/api/respaldo/descargar', requireStaff, requireSuperadmin, async (req, res) => {
   const data = await generarRespaldoJSON();
   const nombre = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
   res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
   res.setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(data, null, 2));
+});
+app.get('/api/respaldo/archivos', requireStaff, requireSuperadmin, async (req, res) => {
+  try {
+    const { tarGz } = await generarRespaldoArchivosTarGz();
+    const nombre = `respaldo-archivos-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+    res.setHeader('Content-Disposition', `attachment; filename="${nombre}"`);
+    res.setHeader('Content-Type', 'application/gzip');
+    res.send(tarGz);
+  } catch (e) { bad(res, 'No se pudo armar el respaldo de archivos: ' + e.message); }
 });
 // Vuelca un respaldo completo dentro de la base de datos actual (borra todo lo existente primero)
 async function restaurarDesdeRespaldo(data) {
@@ -751,12 +809,28 @@ async function ejecutarRespaldoProgramado() {
     if (Date.now() - ultimo < frecuencia * 24 * 60 * 60 * 1000) return;
     const data = await generarRespaldoJSON();
     const json = JSON.stringify(data, null, 2);
-    const nombreArchivo = `respaldo-ticketera-${new Date().toISOString().slice(0, 10)}.json`;
+    const fechaHoy = new Date().toISOString().slice(0, 10);
+    const attachments = [{ filename: `respaldo-ticketera-${fechaHoy}.json`, content: Buffer.from(json).toString('base64'), encoding: 'base64' }];
+    let notaArchivos = '';
+    const LIMITE_ARCHIVOS_BYTES = 18 * 1024 * 1024; // dejamos margen bajo el límite típico de 25MB de los proveedores de correo
+    try {
+      const { cantidad, tarGz } = await generarRespaldoArchivosTarGz();
+      if (!cantidad) {
+        notaArchivos = ' No se adjuntaron archivos porque todavía no hay ninguno guardado.';
+      } else if (tarGz.length > LIMITE_ARCHIVOS_BYTES) {
+        notaArchivos = ` No se pudo adjuntar el respaldo de archivos porque pesa demasiado para enviarlo por correo (${(tarGz.length / 1024 / 1024).toFixed(1)} MB). Podés descargarlo manualmente desde Configuración → Respaldo → "Descargar archivos adjuntos".`;
+      } else {
+        attachments.push({ filename: `respaldo-archivos-${fechaHoy}.tar.gz`, content: tarGz.toString('base64'), encoding: 'base64' });
+      }
+    } catch (e) {
+      console.error('No se pudo generar el respaldo de archivos:', e.message);
+      notaArchivos = ' No se pudo generar el respaldo de los archivos adjuntos esta vez; se envía igual el respaldo de datos.';
+    }
     const enviado = await enviarEmailReal({
       to: c.respaldo_correo_destino,
       subject: `Respaldo automático — Sistema de Tickets (${new Date().toLocaleDateString('es-UY')})`,
-      text: 'Adjunto el respaldo completo de los datos del sistema de tickets (tickets, conversaciones, clientes, configuración, usuarios, etc.), listo para restaurar si hiciera falta. Guardalo en un lugar privado y seguro, ya que incluye contraseñas cifradas/hasheadas.',
-      attachments: [{ filename: nombreArchivo, content: Buffer.from(json).toString('base64'), encoding: 'base64' }],
+      text: 'Adjunto el respaldo completo de los datos del sistema de tickets (tickets, conversaciones, clientes, configuración, usuarios, etc.) y un archivo comprimido con los adjuntos guardados (fotos, PDFs, videos), listo todo para restaurar si hiciera falta. Guardalo en un lugar privado y seguro, ya que incluye contraseñas cifradas/hasheadas.' + notaArchivos,
+      attachments,
       esAutomatico: true
     });
     if (enviado) await pool.query('update configuracion set respaldo_ultimo=now() where id=1');
