@@ -1633,6 +1633,14 @@ function ticketStyleTag() {
     .reply-box textarea:focus,.reply-box input:focus,.reply-box select:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
     .reply-actions{display:flex;justify-content:flex-end;}
 
+    /* Fila Categoría / Prioridad / Estado / Asignado a / Cliente — selects con más presencia:
+       tarjeta redondeada, flecha propia, brillo al enfocar. */
+    .meta-grid{gap:14px !important;}
+    .meta-grid .field label{color:var(--brand) !important;font-size:11.5px !important;}
+    .meta-grid .field select{appearance:none;-webkit-appearance:none;width:100%;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%231E56C7'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E") no-repeat right 12px center/16px;border:1.5px solid var(--line-strong) !important;border-radius:10px !important;padding:10px 34px 10px 12px !important;font-weight:600;color:var(--ink);box-shadow:0 1px 2px rgba(15,42,77,.04);transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease;cursor:pointer;}
+    .meta-grid .field select:hover{border-color:var(--brand-2) !important;transform:translateY(-1px);}
+    .meta-grid .field select:focus{outline:none;border-color:var(--brand-2) !important;box-shadow:0 0 0 3px rgba(61,126,240,.18);}
+
     /* Cuadro del número de ticket (arriba de la ficha) — antes era solo texto gris, ahora un
        "sello" a juego con el resto del diseño (mismo estilo que el número en la bandeja). */
     .ticket-num-big{display:inline-block;font-family:var(--font-mono) !important;font-size:13px !important;font-weight:700;letter-spacing:.03em;color:#fff !important;background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);padding:6px 14px;border-radius:8px;box-shadow:0 4px 10px -4px rgba(15,42,77,.4);margin-bottom:6px;}
