@@ -1335,7 +1335,7 @@ function renderShell(inner) {
     input[type=file]::file-selector-button:hover{transform:translateY(-1px);box-shadow:0 8px 18px -4px rgba(124,58,237,.6);filter:brightness(1.05);}
     input[type=file]::file-selector-button:active{transform:translateY(0);}
 
-    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);transition:transform .12s ease;}
+    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);transition:transform .12s ease;border:1px solid currentColor;}
     .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
     .tag-urgente{animation:tagPulseUrgente 1.8s ease-in-out infinite;}
     @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
@@ -1413,7 +1413,7 @@ function dashboardStyleTag() {
     .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);}
     .stub-num::before,.stub-num::after{background:var(--paper);}
 
-    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);}
+    .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);border:1px solid currentColor;}
     .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
     .tag-urgente{animation:tagPulseUrgente 1.8s ease-in-out infinite;}
     @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
