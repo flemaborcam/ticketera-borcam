@@ -530,7 +530,10 @@ app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
 });
 /* ---------------- Tickets (staff) ---------------- */
 app.get('/api/tickets', requireStaff, async (req, res) => {
-  const tickets = (await pool.query('select * from tickets order by actualizado desc')).rows;
+  const tickets = (await pool.query(
+    `select t.*, (select string_agg(m.cuerpo, ' ') from mensajes m where m.ticket_id = t.id) as mensajes_texto
+     from tickets t order by t.actualizado desc`
+  )).rows;
   ok(res, tickets);
 });
 app.get('/api/tickets/:id', requireStaff, async (req, res) => {
