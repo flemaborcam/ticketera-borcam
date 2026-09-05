@@ -934,7 +934,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
       return { filename: a.nombre, content: base64, encoding: 'base64' };
     });
     const linkHtml = linkDocumento ? `<p style="margin-top:16px;"><a href="${linkDocumento}" style="background:#1E56C7;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;">Leer y aceptar el documento</a></p>` : '';
-    const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${linkHtml}${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
+    const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpoATextoConBotones(cuerpo)}</div>${linkHtml}${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
     await enviarEmailReal({
       to: t.remitente_email, cc: cc || [], subject: `[${t.numero}] ${t.asunto}`,
       text: cuerpoFinal, html: htmlBody, attachments: attachmentsForMail
@@ -2008,7 +2008,7 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
   if (t.estado === 'Abierto') await pool.query(`update tickets set estado='En progreso' where id=$1`, [ticketId]);
   await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [ticketId]);
   const ccs = await collectTicketCCs(ticketId);
-  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
+  const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpoATextoConBotones(cuerpo)}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, html: htmlBody });
   return { ok: true, numero: t.numero };
 }
@@ -2218,6 +2218,18 @@ async function revisarRecordatorioDiarioSinAsignar() {
 }
 function escapeHtmlSrv(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+// Convierte texto plano a HTML para el cuerpo del correo, soportando una sintaxis simple para
+// insertar un botón: escribiendo [Texto del botón](https://enlace) en cualquier respuesta
+// (incluidas las respuestas predefinidas), queda como un botón real dentro del email.
+function cuerpoATextoConBotones(cuerpo) {
+  const partes = String(cuerpo ?? '').split(/(\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g);
+  return partes.map(parte => {
+    const m = parte.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+    if (!m) return escapeHtmlSrv(parte);
+    const [, texto, url] = m;
+    return `<div style="margin:14px 0;"><a href="${escapeHtmlSrv(url)}" style="display:inline-block;background:linear-gradient(135deg,#1E56C7,#3D7EF0);color:#ffffff;text-decoration:none;font-family:sans-serif;font-weight:600;font-size:14px;padding:12px 24px;border-radius:999px;">${escapeHtmlSrv(texto)}</a></div>`;
+  }).join('');
 }
 /* ---------------- Portal de cliente ---------------- */
 app.get('/api/portal/tickets', requireCliente, async (req, res) => {
