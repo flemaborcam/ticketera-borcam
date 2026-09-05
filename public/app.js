@@ -1179,11 +1179,31 @@ function renderShell(inner) {
       .sidebar { position: fixed !important; top: 0; left: 0; height: 100vh; overflow-y: auto; }
       .main { margin-left: 220px; }
     }
+    /* Rediseño del menú lateral: degradé oscuro, borde con brillo animado, ítems tipo "pill" con
+       badge circular para el ícono, indicador activo con degradé + glow, avatar de usuario. */
+    .sidebar{background:linear-gradient(190deg,#0A1830 0%,#0F2A4D 55%,#132F5C 100%);position:relative;box-shadow:2px 0 24px rgba(0,0,0,.25);}
+    .sidebar::after{content:'';position:absolute;top:0;right:0;width:1px;height:100%;background:linear-gradient(180deg,transparent,rgba(61,126,240,.55),transparent);}
+    .sidebar .brand-mark{position:relative;padding-bottom:16px;margin-bottom:14px;}
+    .sidebar .brand-mark::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.22),transparent);}
+    .sidebar .brand-mark .name{letter-spacing:.08em;}
+    .sidebar nav{gap:4px;}
+    .nav-btn{position:relative;border-radius:10px;padding:9px 12px 9px 10px;transition:background .15s ease,color .15s ease,transform .15s ease;}
+    .nav-btn .ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.06);font-size:13px;flex:none;transition:background .15s ease,transform .15s ease;}
+    .nav-btn:hover{background:rgba(255,255,255,.08);color:#fff;transform:translateX(2px);}
+    .nav-btn:hover .ico{background:rgba(255,255,255,.14);transform:scale(1.06);}
+    .nav-btn.active{background:linear-gradient(90deg,var(--brand) 0%,var(--brand-2) 130%);color:#fff;box-shadow:0 4px 14px -2px rgba(30,86,199,.55);}
+    .nav-btn.active .ico{background:rgba(255,255,255,.22);}
+    .nav-btn.active::before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:4px;height:22px;border-radius:0 4px 4px 0;background:#fff;box-shadow:0 0 10px 2px rgba(255,255,255,.6);}
+    .sidebar-foot{border-top-color:rgba(255,255,255,.1);}
+    .sidebar-foot .who{display:flex;align-items:center;gap:10px;padding:4px 4px 12px;}
+    .sidebar-avatar{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 0 0 2px rgba(255,255,255,.15);}
+    .sidebar-foot .who-text strong{display:block;color:#fff;font-size:13.5px;}
+    .sidebar-foot .who-text{font-size:12px;color:#8FAAD4;}
   </style>
   <div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
-      <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
+      <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div></div>
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
