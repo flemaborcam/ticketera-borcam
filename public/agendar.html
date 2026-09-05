@@ -37,6 +37,12 @@
   .field input:focus,.field select:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.16);}
   .field-row{display:flex;gap:12px;} .field-row .field{flex:1;}
   .radio-row{display:flex;gap:16px;} .radio-row label{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:normal;text-transform:none;letter-spacing:0;color:var(--ink);}
+  .referencia{margin-top:14px;background:var(--brand-tint);border:1px dashed var(--line-strong);border-radius:12px;padding:14px;}
+  .referencia-label{font-size:11px;font-weight:700;color:var(--brand);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;}
+  .referencia-imgs{display:flex;gap:16px;flex-wrap:wrap;}
+  .referencia-item{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .referencia-item img{width:92px;height:92px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;}
+  .referencia-item span{font-size:11.5px;color:var(--ink-soft);font-weight:600;}
 
   /* --- Mini calendario tipo Google Calendar / One Calendar --- */
   .cal{margin-bottom:20px;}
@@ -179,6 +185,20 @@ function render() {
           <label><input type="radio" name="internet" value="no"> No</label>
         </div>
       </div>
+      <div class="field">
+        <label>¿Te entregaron la caja con los artículos de domótica?</label>
+        <div class="radio-row">
+          <label><input type="radio" name="cajaDomotica" value="si" required> Sí</label>
+          <label><input type="radio" name="cajaDomotica" value="no"> No</label>
+        </div>
+        <div class="referencia">
+          <div class="referencia-label">Referencia</div>
+          <div class="referencia-imgs">
+            <div class="referencia-item"><img src="/referencia-hub.png" alt="Hub Orvibo"><span>Hub</span></div>
+            <div class="referencia-item"><img src="/referencia-mando.png" alt="Mando Orvibo"><span>Mando</span></div>
+          </div>
+        </div>
+      </div>
       <div id="form-error"></div>
       <button type="submit" class="btn">Confirmar turno</button>
     </form>` : ''}
@@ -248,6 +268,7 @@ async function confirmarTurno(ev) {
       body: JSON.stringify({
         fechaHora: slotSeleccionado, nombreCliente: fd.get('nombre'), correoCliente: fd.get('correo'),
         telefono: fd.get('telefono'), tieneInternet: fd.get('internet') === 'si',
+        cajaDomotica: fd.get('cajaDomotica') === 'si',
         edificio: edificioSeleccionado, numeroUnidad: fd.get('unidad')
       })
     });
