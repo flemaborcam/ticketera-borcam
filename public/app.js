@@ -2605,11 +2605,11 @@ function barChartSvg(datos) {
     const y = gap + i * (barH + gap);
     const w = Math.max(2, Math.round((d.value / max) * chartW));
     const label = d.label.length > 22 ? d.label.slice(0, 21) + '…' : d.label;
-    return `<text x="0" y="${y + barH / 2 + 4}" font-size="12.5" fill="#1a2233">${escapeHtml(label)}</text>
+    return `<text x="0" y="${y + barH / 2 + 4}" font-size="12.5" fill="var(--ink)">${escapeHtml(label)}</text>
       <rect x="${leftW}" y="${y}" width="${chartW}" height="${barH}" rx="7" fill="var(--paper)"></rect>
       <rect class="chart-bar-3d" x="${leftW}" y="${y}" width="${w}" height="${barH}" rx="7" fill="url(#barGrad3d)" filter="url(#barShadow3d)" style="transform-origin:${leftW}px ${y}px;animation-delay:${i * 70}ms;"></rect>
       <rect x="${leftW}" y="${y}" width="${w}" height="${Math.round(barH * .4)}" rx="6" fill="rgba(255,255,255,.28)"></rect>
-      <text x="${leftW + w + 8}" y="${y + barH / 2 + 4}" font-size="12.5" font-weight="600" fill="#1a2233">${d.value}</text>`;
+      <text x="${leftW + w + 8}" y="${y + barH / 2 + 4}" font-size="12.5" font-weight="600" fill="var(--ink)">${d.value}</text>`;
   }).join('');
   return `<style>
     .chart-bar-3d{animation:chartBarGrow .6s cubic-bezier(.2,.9,.25,1) both;}
@@ -2687,7 +2687,7 @@ function renderEstadisticas() {
         .card { box-shadow:none !important; border:1px solid #ddd !important; break-inside:avoid; }
       }
       .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
-      .kpi-tile { position:relative; overflow:hidden; background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px 18px;
+      .kpi-tile { position:relative; overflow:hidden; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
         box-shadow:0 1px 2px rgba(15,42,77,.05), 0 10px 22px -12px rgba(15,42,77,.22);
         transition:transform .18s ease, box-shadow .18s ease; }
       .kpi-tile:hover { transform:translateY(-3px); box-shadow:0 1px 2px rgba(15,42,77,.05), 0 16px 30px -12px rgba(15,42,77,.32); }
