@@ -1613,23 +1613,27 @@ function renderAdjuntos(ticketId, mensajeId, adjuntos) {
 // caja de respuesta con look más moderno (pestañas subrayadas, tipo Outlook nuevo).
 function ticketStyleTag() {
   return `<style id="ticket-style-v2">
-    .thread{gap:10px;}
-    .msg{border-radius:16px;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12);position:relative;}
-    .msg-entrante{border-top-left-radius:4px;}
+    .thread{gap:10px !important;}
+    .msg{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12) !important;position:relative;}
+    .msg-entrante{border-top-left-radius:4px !important;}
     .msg-entrante::before{content:'';position:absolute;left:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:#fff;border-left:0;transform:rotate(-8deg);}
-    .msg-saliente{border-top-right-radius:4px;}
+    .msg-saliente{border-top-right-radius:4px !important;}
     .msg-saliente::before{content:'';position:absolute;right:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:var(--brand);border-right:0;transform:rotate(8deg);}
-    .msg-nota{border-radius:12px;}
-    .msg-sistema{border-radius:12px;}
+    .msg-nota{border-radius:12px !important;}
+    .msg-sistema{border-radius:12px !important;}
 
-    .reply-box{border-radius:16px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 10px 24px -14px rgba(15,42,77,.25);}
-    .reply-tabs{background:none;padding:0;border-bottom:1px solid var(--line);border-radius:0;width:100%;gap:18px;margin-bottom:18px;}
-    .reply-tab{background:none;border:none;padding:8px 2px 12px;font-size:13.5px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;border-radius:0;position:relative;top:1px;transition:color .15s ease,border-color .15s ease;}
+    .reply-box{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.05),0 10px 24px -14px rgba(15,42,77,.25) !important;}
+    .reply-tabs{background:none !important;padding:0 !important;border-bottom:1px solid var(--line);border-radius:0 !important;width:100% !important;gap:18px !important;margin-bottom:18px !important;display:flex;}
+    .reply-tab{background:none !important;border:none !important;padding:8px 2px 12px !important;font-size:13.5px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent !important;border-radius:0 !important;position:relative;top:1px;transition:color .15s ease,border-color .15s ease;box-shadow:none !important;}
     .reply-tab:hover{color:var(--brand);}
-    .reply-tab.active{color:var(--brand);border-bottom-color:var(--brand);}
-    .reply-box textarea{border-radius:12px;}
+    .reply-tab.active{color:var(--brand) !important;border-bottom-color:var(--brand) !important;background:none !important;box-shadow:none !important;}
+    .reply-box textarea{border-radius:12px !important;}
     .reply-box textarea:focus,.reply-box input:focus,.reply-box select:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
     .reply-actions{display:flex;justify-content:flex-end;}
+
+    /* Cuadro del número de ticket (arriba de la ficha) — antes era solo texto gris, ahora un
+       "sello" a juego con el resto del diseño (mismo estilo que el número en la bandeja). */
+    .ticket-num-big{display:inline-block;font-family:var(--font-mono) !important;font-size:13px !important;font-weight:700;letter-spacing:.03em;color:#fff !important;background:linear-gradient(160deg,var(--ink) 0%,#1B3F73 100%);padding:6px 14px;border-radius:8px;box-shadow:0 4px 10px -4px rgba(15,42,77,.4);margin-bottom:6px;}
   </style>`;
 }
 function renderTicket(id) {
