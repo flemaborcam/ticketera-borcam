@@ -1232,6 +1232,8 @@ function renderShell(inner) {
 
     /* Sistema de diseño general (aplica a toda la app: botones, etiquetas, sello del número de
        ticket) — degradés + sombra tipo "3D" y animaciones sutiles al interactuar. */
+    .card{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.05),0 4px 14px -10px rgba(15,42,77,.15) !important;transition:box-shadow .15s ease,transform .15s ease;}
+    .card:hover{box-shadow:0 10px 26px -14px rgba(15,42,77,.22) !important;}
     .btn{transition:transform .15s ease,box-shadow .15s ease,filter .15s ease,background .15s ease,border-color .15s ease;border-radius:999px !important;gap:8px;}
     .btn-primary{background:linear-gradient(135deg,var(--brand) 0%,#2E6BE0 55%,var(--brand-2) 100%);box-shadow:0 4px 12px -4px rgba(30,86,199,.5);border:none;}
     .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 18px -4px rgba(30,86,199,.6);filter:brightness(1.04);}
@@ -1774,7 +1776,7 @@ async function renderGrupoDetailAsync(id) {
   if (!g) return `<div class="empty-state">Cliente no encontrado.</div>`;
   const tickets = await loadClienteDetalleTickets(id);
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t)).join('')}</div>` : `<div class="empty-state"><div class="big">Este cliente todavía no tiene tickets</div></div>`;
-  return `
+  return `${ticketStyleTag()}
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
       <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
