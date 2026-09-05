@@ -1935,22 +1935,56 @@ async function eliminarUsuario(id) {
   } catch (e) { showToast(e.message); }
 }
 
+function perfilStyleTag() {
+  return `<style id="perfil-style-v1">
+    .perfil-hero{position:relative;overflow:hidden;border-radius:20px;padding:28px 26px;margin-bottom:22px;
+      background:linear-gradient(135deg,var(--ink) 0%,#1B3F73 55%,var(--brand-2) 100%);color:#fff;
+      display:flex;align-items:center;gap:20px;box-shadow:0 16px 34px -16px rgba(15,42,77,.45);}
+    .perfil-hero::before{content:'';position:absolute;top:-60px;right:-60px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.16),transparent 70%);}
+    .perfil-hero::after{content:'';position:absolute;bottom:-80px;left:20%;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.25),transparent 70%);}
+    .perfil-avatar{position:relative;z-index:1;flex:none;width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-family:var(--font-display);font-weight:700;font-size:26px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);
+      box-shadow:0 0 0 4px rgba(255,255,255,.18),0 10px 20px -6px rgba(0,0,0,.35);}
+    .perfil-hero-info{position:relative;z-index:1;}
+    .perfil-hero-info h1{margin:0 0 4px;font-family:var(--font-display);font-size:22px;}
+    .perfil-hero-cargo{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:600;margin-top:4px;}
+    .perfil-hero-email{opacity:.8;font-size:13px;margin-top:6px;}
+
+    .perfil-section-head{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+    .perfil-section-icon{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none;
+      background:var(--brand-tint);box-shadow:inset 0 0 0 1px var(--line);}
+    .perfil-section-head h3{margin:0;font-family:var(--font-display);font-weight:600;font-size:15.5px;}
+
+    .card-narrow{border-radius:16px !important;transition:box-shadow .15s ease;}
+    .card-narrow:hover{box-shadow:0 10px 24px -14px rgba(15,42,77,.2);}
+    #perfil-cargo{appearance:none;-webkit-appearance:none;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%231E56C7'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E") no-repeat right 14px center/16px;padding-right:38px;}
+  </style>`;
+}
 function renderPerfil() {
   const u = currentUser();
   const cargoOptions = CAT.CARGOS.map(c => `<option value="${c}" ${u.cargo === c ? 'selected' : ''}>${c}</option>`).join('');
-  return `
-    <div class="page-head"><div><h1>Mi perfil</h1><div class="sub">Tus datos dentro de la plataforma</div></div></div>
+  return `${perfilStyleTag()}
+    <div class="perfil-hero">
+      <div class="perfil-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</div>
+      <div class="perfil-hero-info">
+        <h1>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</h1>
+        <div class="perfil-hero-cargo">💼 ${escapeHtml(u.cargo)}</div>
+        <div class="perfil-hero-email">${escapeHtml(u.email)}</div>
+      </div>
+    </div>
     <div class="card card-narrow"><form onsubmit="return submitPerfil(event)">
+      <div class="perfil-section-head"><div class="perfil-section-icon">👤</div><h3>Datos personales</h3></div>
+      <div class="hint-text" style="margin-bottom:16px;">Se usan dentro de la plataforma y en tu firma de correo.</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="nombre" value="${escapeHtml(u.nombre)}" required></div><div class="field"><label>Apellido</label><input name="apellido" value="${escapeHtml(u.apellido)}" required></div></div>
       <div class="field"><label>Teléfono</label><input name="telefono" value="${escapeHtml(u.telefono || '')}"></div>
       <div class="field"><label>Correo electrónico</label><input value="${escapeHtml(u.email)}" disabled></div>
-      <div class="field"><label>Cargo</label><select name="cargo">${cargoOptions}</select></div>
+      <div class="field"><label>Cargo</label><select id="perfil-cargo" name="cargo">${cargoOptions}</select></div>
       <div class="field"><label>Nueva contraseña (opcional)</label><input name="password" type="password" placeholder="Dejar en blanco para no cambiarla"></div>
       <button type="submit" class="btn btn-primary btn-block">Guardar cambios</button>
     </form></div>
     <div class="card card-narrow" style="margin-top:18px;">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Firma</div>
-      <div class="hint-text" style="margin-bottom:12px;">Se agrega automáticamente al responder tickets.</div>
+      <div class="perfil-section-head"><div class="perfil-section-icon">✍️</div><h3>Firma</h3></div>
+      <div class="hint-text" style="margin:4px 0 12px;">Se agrega automáticamente al responder tickets.</div>
       <div class="sign-toolbar">
         <button type="button" class="btn btn-ghost" onclick="signCmd('bold')"><b>N</b></button>
         <button type="button" class="btn btn-ghost" onclick="signCmd('italic')"><i>K</i></button>
@@ -1963,13 +1997,13 @@ function renderPerfil() {
       <div class="reply-actions" style="margin-top:12px;"><button type="button" class="btn btn-primary" onclick="saveFirma()">Guardar firma</button></div>
     </div>
     <div class="card card-narrow" style="margin-top:18px;">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:4px;">Telegram: recordatorios y respuestas</div>
+      <div class="perfil-section-head"><div class="perfil-section-icon">📨</div><h3>Telegram: recordatorios y respuestas</h3></div>
       ${u.telegram_chat_id ? `
-        <div class="hint-text" style="margin-bottom:12px;color:var(--stamp-green);font-weight:600;">✅ Tu Telegram ya está vinculado.</div>
+        <div class="hint-text" style="margin:8px 0 12px;color:var(--stamp-green);font-weight:600;">✅ Tu Telegram ya está vinculado.</div>
         <div class="hint-text" style="margin-bottom:12px;">Recibís ahí, por privado, el aviso cuando tomás un ticket y los recordatorios de los que llevan varios días sin atender. Para responderle al cliente, simplemente mantené presionado ese aviso y elegí <strong>"Responder"</strong> — no hace falta escribir ningún número, el sistema reconoce a qué ticket corresponde por el mensaje que citaste. (Si preferís escribir el número a mano igual funciona: <strong>T-2026-0001 tu mensaje</strong>). Esa respuesta le llega al cliente exactamente igual que si la hubieras escrito desde la plataforma.</div>
         <button type="button" class="btn btn-ghost btn-block" onclick="desvincularTelegram()">Desvincular Telegram</button>
       ` : `
-        <div class="hint-text" style="margin-bottom:12px;">Vinculá tu Telegram para recibir avisos privados de tickets sin atender, y para poder responder tickets directamente por Telegram sin necesidad de entrar a la plataforma.</div>
+        <div class="hint-text" style="margin:8px 0 12px;">Vinculá tu Telegram para recibir avisos privados de tickets sin atender, y para poder responder tickets directamente por Telegram sin necesidad de entrar a la plataforma.</div>
         <button type="button" class="btn btn-primary btn-block" onclick="generarCodigoTelegram()">Generar código para vincular</button>
         <div id="codigo-telegram" style="margin-top:10px;"></div>
       `}
