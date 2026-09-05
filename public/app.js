@@ -2049,12 +2049,32 @@ function renderPerfil() {
     </div>`;
 }
 
+function configStyleTag() {
+  return `<style id="config-style-v1">
+    .config-section-head{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
+    .config-section-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;flex:none;
+      background:var(--brand-tint);box-shadow:inset 0 0 0 1px var(--line);}
+    .config-section-head span.title{font-family:var(--font-display);font-weight:600;font-size:16.5px;}
+
+    .card-narrow{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.05),0 4px 14px -10px rgba(15,42,77,.15) !important;transition:box-shadow .15s ease;}
+    .card-narrow:hover{box-shadow:0 10px 26px -14px rgba(15,42,77,.22) !important;}
+
+    /* Interruptores en vez de checkboxes planos, para las opciones de activar/desactivar. */
+    .switch-row{display:flex;align-items:center;gap:10px;font-size:13.5px;margin-bottom:10px;cursor:pointer;}
+    .switch-row input[type=checkbox]{appearance:none;-webkit-appearance:none;width:38px;height:22px;border-radius:999px;background:var(--line-strong);position:relative;flex:none;cursor:pointer;transition:background .15s ease;outline:none;}
+    .switch-row input[type=checkbox]::before{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .15s ease;}
+    .switch-row input[type=checkbox]:checked{background:linear-gradient(135deg,var(--brand),var(--brand-2));}
+    .switch-row input[type=checkbox]:checked::before{transform:translateX(16px);}
+
+    .card-peligro{border:1.5px solid var(--stamp-red-tint) !important;background:linear-gradient(180deg,#fff 0%,#FDF4F4 100%);}
+  </style>`;
+}
 function configSectionHead(icon, title, hint) {
-  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-      <span style="font-size:18px;line-height:1;">${icon}</span>
-      <span style="font-family:var(--font-display);font-weight:600;font-size:16.5px;">${title}</span>
+  return `<div class="config-section-head">
+      <div class="config-section-icon">${icon}</div>
+      <span class="title">${title}</span>
     </div>
-    ${hint ? `<div class="hint-text" style="margin-bottom:16px;">${hint}</div>` : '<div style="margin-bottom:12px;"></div>'}`;
+    ${hint ? `<div class="hint-text" style="margin:8px 0 16px;">${hint}</div>` : '<div style="margin-bottom:12px;"></div>'}`;
 }
 
 function renderConfigTabs() {
@@ -2630,7 +2650,7 @@ function renderEstadisticas() {
 function renderConfiguracion() {
   const c = cache.configuracion;
   const tab = state.configTab || 'correo';
-  return `<div class="page-head"><div><h1>Configuración</h1><div class="sub">Ajustes generales del sistema, agrupados por tema</div></div></div>
+  return `${configStyleTag()}<div class="page-head"><div><h1>Configuración</h1><div class="sub">Ajustes generales del sistema, agrupados por tema</div></div></div>
     ${renderConfigTabs()}
     <div style="height:16px;"></div>
     <form onsubmit="return submitConfiguracion(event)">
@@ -2640,7 +2660,7 @@ function renderConfiguracion() {
         <div class="field"><label>Correo electrónico de la casilla</label><input name="casillaEmail" type="email" value="${escapeHtml(c.casillaEmail || '')}" placeholder="tickets@borcam.com.uy" required></div>
         <div class="field"><label>Nombre para mostrar</label><input name="casillaNombre" value="${escapeHtml(c.casillaNombre || '')}" placeholder="Ej: Mesa de Soporte"></div>
 
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:6px 0 16px;padding-top:12px;border-top:1px dashed var(--line-strong);">
+        <label class="switch-row" style="margin:6px 0 16px;padding-top:12px;border-top:1px dashed var(--line-strong);">
           <input type="checkbox" name="correoActivo" ${c.correoActivo ? 'checked' : ''}> Activar recepción y envío real (si está apagado, todo sigue funcionando como demo)
         </label>
 
@@ -2668,21 +2688,21 @@ function renderConfiguracion() {
 
       <div class="card card-narrow" style="max-width:560px;${tab === 'telegram' ? '' : 'display:none;'}">
         ${configSectionHead('✈️', 'Notificaciones en Telegram', `Cada vez que llega un ticket nuevo (no en respuestas posteriores), se manda un aviso a un grupo de Telegram con un resumen y un enlace para abrirlo. Los tickets que contengan la palabra "reserva" no se avisan por acá.${c.telegramConfiguradoServidor ? '' : '<br><strong style="color:var(--stamp-red);">Falta configurar el bot en el servidor (variable TELEGRAM_BOT_TOKEN).</strong>'}`)}
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="telegramActivo" ${c.telegramActivo ? 'checked' : ''}> Activar notificaciones en Telegram
         </label>
         <div class="field"><label>Chat ID del grupo</label><input name="telegramChatId" value="${escapeHtml(c.telegramChatId || '')}" placeholder="-1001234567890"></div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Recordatorio diario de tickets sin asignar</div>
         <div class="hint-text" style="margin-bottom:10px;">Todos los días, después de esta hora, se manda al grupo un mensaje aparte por cada ticket sin asignar (excepto los de reserva), para que cualquiera lo pueda tomar. Como mucho se manda una vez por día.</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="recordatorioSinAsignarActivo" ${c.recordatorioSinAsignarActivo !== false ? 'checked' : ''}> Activar recordatorio diario
         </label>
         <div class="field"><label>Mandarlo después de las</label><input type="time" name="recordatorioSinAsignarHora" value="${c.recordatorioSinAsignarHora || '18:00'}" style="max-width:140px;"></div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Seguimiento de tickets asignados</div>
         <div class="hint-text" style="margin-bottom:10px;">Si un ticket asignado a alguien lleva varios días sin actividad, se le avisa por Telegram al técnico (necesita vincular su Telegram desde "Mi perfil"). Si sigue sin resolverse, se puede escalar al grupo general.</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="seguimientoActivo" ${c.seguimientoActivo !== false ? 'checked' : ''}> Activar seguimiento de tickets asignados
         </label>
         <div class="field-row">
@@ -2704,14 +2724,14 @@ function renderConfiguracion() {
 
       <div class="card card-narrow" style="max-width:560px;${tab === 'notificaciones' ? '' : 'display:none;'}">
         ${configSectionHead('🔔', 'Aviso automático de fin de semana', 'Los sábados y domingos, cuando llega un mensaje nuevo, el sistema responde solo con este texto (una vez por día por ticket).')}
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="avisoFindeActivo" ${c.avisoFindeActivo !== false ? 'checked' : ''}> Activar aviso de fin de semana
         </label>
         <div class="field"><label>Mensaje del aviso</label><textarea name="avisoFindeMensaje">${escapeHtml(c.avisoFindeMensaje || '')}</textarea></div>
 
         <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Aviso automático fuera de horario (días hábiles)</div>
         <div class="hint-text" style="margin-bottom:10px;">De lunes a viernes, fuera del horario que definas acá, el sistema responde solo con este texto (una vez por día por ticket). Los fines de semana los cubre el aviso de arriba, no este.</div>
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="avisoFueraHorarioActivo" ${c.avisoFueraHorarioActivo !== false ? 'checked' : ''}> Activar aviso fuera de horario
         </label>
         <div class="field-row">
@@ -2723,7 +2743,7 @@ function renderConfiguracion() {
 
       <div class="card card-narrow" style="max-width:560px;${tab === 'respaldo' ? '' : 'display:none;'}">
         ${configSectionHead('💾', 'Respaldo automático del sistema', 'Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración). No incluye los archivos adjuntos en sí ni contraseñas.')}
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px;">
+        <label class="switch-row">
           <input type="checkbox" name="respaldoActivo" ${c.respaldoActivo ? 'checked' : ''}> Enviarme un respaldo automático por correo
         </label>
         <div class="field-row">
@@ -2751,7 +2771,7 @@ function renderConfiguracion() {
     </form>
 
     ${currentUser().es_superadmin ? `
-    <div class="card card-narrow" style="max-width:560px;margin-top:18px;border-color:var(--stamp-red-tint);${tab === 'peligro' ? '' : 'display:none;'}">
+    <div class="card card-narrow card-peligro" style="max-width:560px;margin-top:18px;${tab === 'peligro' ? '' : 'display:none;'}">
       ${configSectionHead('⚠️', 'Zona de peligro', 'Solo visible para Superadmin.')}
       <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer.</div>
       <button type="button" class="btn btn-danger btn-block" onclick="eliminarTodosLosTickets()">Eliminar TODOS los tickets</button>
