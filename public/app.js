@@ -1202,14 +1202,16 @@ function renderShell(inner) {
 
     /* Sistema de diseño general (aplica a toda la app: botones, etiquetas, sello del número de
        ticket) — degradés + sombra tipo "3D" y animaciones sutiles al interactuar. */
-    .btn{transition:transform .15s ease,box-shadow .15s ease,filter .15s ease,background .15s ease;}
+    .btn{transition:transform .15s ease,box-shadow .15s ease,filter .15s ease,background .15s ease,border-color .15s ease;border-radius:999px !important;gap:8px;}
     .btn-primary{background:linear-gradient(135deg,var(--brand) 0%,#2E6BE0 55%,var(--brand-2) 100%);box-shadow:0 4px 12px -4px rgba(30,86,199,.5);border:none;}
     .btn-primary:hover{transform:translateY(-1px);box-shadow:0 8px 18px -4px rgba(30,86,199,.6);filter:brightness(1.04);}
     .btn-primary:active{transform:translateY(0);box-shadow:0 2px 6px -2px rgba(30,86,199,.5);}
-    .btn-ghost{background:#fff;box-shadow:0 1px 2px rgba(15,42,77,.04),0 4px 10px -6px rgba(15,42,77,.15);}
-    .btn-ghost:hover{transform:translateY(-1px);box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 16px -6px rgba(15,42,77,.22);background:var(--brand-tint);}
-    .btn-danger{background:#fff;box-shadow:0 1px 2px rgba(196,61,61,.05),0 4px 10px -6px rgba(196,61,61,.15);}
-    .btn-danger:hover{transform:translateY(-1px);box-shadow:0 8px 16px -6px rgba(196,61,61,.25);background:var(--stamp-red-tint);}
+    /* Outline: fondo transparente, borde de color — para acciones secundarias (jerarquía clara
+       frente al botón principal, que va relleno con degradé). */
+    .btn-ghost{background:#fff;border:1.5px solid var(--brand-2) !important;color:var(--brand);box-shadow:0 1px 2px rgba(15,42,77,.04);}
+    .btn-ghost:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px rgba(30,86,199,.3);background:var(--brand-tint);}
+    .btn-danger{background:#fff;border:1.5px solid var(--stamp-red) !important;color:var(--stamp-red);box-shadow:0 1px 2px rgba(196,61,61,.05);}
+    .btn-danger:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px rgba(196,61,61,.3);background:var(--stamp-red-tint);}
 
     .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);transition:transform .12s ease;}
     .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
