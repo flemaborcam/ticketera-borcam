@@ -2287,17 +2287,34 @@ function kpiCard(label, value) {
 function barChartSvg(datos) {
   if (!datos.length || datos.every(d => d.value === 0)) return '<div class="hint-text">Sin tickets resueltos en este período.</div>';
   const max = Math.max(1, ...datos.map(d => d.value));
-  const barH = 26, gap = 12, leftW = 150, chartW = 380;
+  const barH = 28, gap = 14, leftW = 150, chartW = 380;
   const height = datos.length * (barH + gap) + gap;
   const bars = datos.map((d, i) => {
     const y = gap + i * (barH + gap);
     const w = Math.max(2, Math.round((d.value / max) * chartW));
     const label = d.label.length > 22 ? d.label.slice(0, 21) + '…' : d.label;
     return `<text x="0" y="${y + barH / 2 + 4}" font-size="12.5" fill="#1a2233">${escapeHtml(label)}</text>
-      <rect x="${leftW}" y="${y}" width="${w}" height="${barH}" rx="5" fill="#1E56C7"></rect>
+      <rect x="${leftW}" y="${y}" width="${chartW}" height="${barH}" rx="7" fill="var(--paper)"></rect>
+      <rect class="chart-bar-3d" x="${leftW}" y="${y}" width="${w}" height="${barH}" rx="7" fill="url(#barGrad3d)" filter="url(#barShadow3d)" style="transform-origin:${leftW}px ${y}px;animation-delay:${i * 70}ms;"></rect>
+      <rect x="${leftW}" y="${y}" width="${w}" height="${Math.round(barH * .4)}" rx="6" fill="rgba(255,255,255,.28)"></rect>
       <text x="${leftW + w + 8}" y="${y + barH / 2 + 4}" font-size="12.5" font-weight="600" fill="#1a2233">${d.value}</text>`;
   }).join('');
-  return `<svg viewBox="0 0 ${leftW + chartW + 50} ${height}" style="width:100%;height:auto;max-width:620px;display:block;">${bars}</svg>`;
+  return `<style>
+    .chart-bar-3d{animation:chartBarGrow .6s cubic-bezier(.2,.9,.25,1) both;}
+    @keyframes chartBarGrow{from{transform:scaleX(0);}to{transform:scaleX(1);}}
+    @media (prefers-reduced-motion: reduce){.chart-bar-3d{animation:none;}}
+  </style>
+  <svg viewBox="0 0 ${leftW + chartW + 50} ${height}" style="width:100%;height:auto;max-width:620px;display:block;">
+    <defs>
+      <linearGradient id="barGrad3d" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#4C8CF5"/><stop offset="55%" stop-color="#1E56C7"/><stop offset="100%" stop-color="#163F94"/>
+      </linearGradient>
+      <filter id="barShadow3d" x="-20%" y="-40%" width="140%" height="220%">
+        <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#1E56C7" flood-opacity="0.35"/>
+      </filter>
+    </defs>
+    ${bars}
+  </svg>`;
 }
 function lineChartSvg(serie) {
   if (!serie.length) return '<div class="hint-text">Sin datos suficientes.</div>';
@@ -2312,10 +2329,21 @@ function lineChartSvg(serie) {
     return `<line x1="${padL}" y1="${yy}" x2="${w - padR}" y2="${yy}" stroke="#e4e8ef" stroke-width="1"></line>`;
   }).join('');
   const labels = serie.map((s, i) => `<text x="${x(i)}" y="${h - 6}" font-size="11" text-anchor="middle" fill="#6b7280">${escapeHtml(s.mes.slice(5))}/${escapeHtml(s.mes.slice(2, 4))}</text>`).join('');
+  const areaFor = key => `${pathFor(key)} L ${x(serie.length - 1).toFixed(1)} ${(h - padB).toFixed(1)} L ${x(0).toFixed(1)} ${(h - padB).toFixed(1)} Z`;
+  const dotsFor = (key, color) => serie.map((s, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(s[key]).toFixed(1)}" r="4" fill="${color}" stroke="#fff" stroke-width="1.5" filter="url(#lineDotShadow)"></circle>`).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;max-width:680px;display:block;">
+      <defs>
+        <linearGradient id="areaGradRecibidos" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#8aa4c8" stop-opacity="0.35"/><stop offset="100%" stop-color="#8aa4c8" stop-opacity="0"/></linearGradient>
+        <linearGradient id="areaGradResueltos" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#1E56C7" stop-opacity="0.4"/><stop offset="100%" stop-color="#1E56C7" stop-opacity="0"/></linearGradient>
+        <filter id="lineDotShadow" x="-60%" y="-60%" width="220%" height="220%"><feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#0F2A4D" flood-opacity="0.3"/></filter>
+      </defs>
       ${gridLines}
-      <path d="${pathFor('recibidos')}" fill="none" stroke="#8aa4c8" stroke-width="2.5"></path>
-      <path d="${pathFor('resueltos')}" fill="none" stroke="#1E56C7" stroke-width="2.5"></path>
+      <path d="${areaFor('recibidos')}" fill="url(#areaGradRecibidos)" stroke="none"></path>
+      <path d="${areaFor('resueltos')}" fill="url(#areaGradResueltos)" stroke="none"></path>
+      <path d="${pathFor('recibidos')}" fill="none" stroke="#8aa4c8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+      <path d="${pathFor('resueltos')}" fill="none" stroke="#1E56C7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+      ${dotsFor('recibidos', '#8aa4c8')}
+      ${dotsFor('resueltos', '#1E56C7')}
       ${labels}
     </svg>
     <div style="display:flex;gap:16px;margin-top:8px;font-size:12.5px;">
