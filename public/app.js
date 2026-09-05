@@ -1183,9 +1183,9 @@ function renderShell(inner) {
        badge circular para el ícono, indicador activo con degradé + glow, avatar de usuario. */
     .sidebar{background:linear-gradient(190deg,#0A1830 0%,#0F2A4D 55%,#132F5C 100%);position:relative;box-shadow:2px 0 24px rgba(0,0,0,.25);}
     .sidebar::after{content:'';position:absolute;top:0;right:0;width:1px;height:100%;background:linear-gradient(180deg,transparent,rgba(61,126,240,.55),transparent);}
-    .sidebar .brand-mark{position:relative;padding-bottom:16px;margin-bottom:14px;}
+    .sidebar .brand-mark{position:relative;padding-bottom:16px;margin-bottom:14px;flex-direction:column;align-items:flex-start;gap:8px;}
     .sidebar .brand-mark::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.22),transparent);}
-    .sidebar .brand-mark .name{letter-spacing:.08em;}
+    .sidebar .brand-mark .name{letter-spacing:.05em;font-size:11px;white-space:normal;line-height:1.4;width:100%;}
     .sidebar nav{gap:4px;}
     .nav-btn{position:relative;border-radius:10px;padding:9px 12px 9px 10px;transition:background .15s ease,color .15s ease,transform .15s ease;}
     .nav-btn .ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.06);font-size:13px;flex:none;transition:background .15s ease,transform .15s ease;}
