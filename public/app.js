@@ -41,6 +41,8 @@ function mapTicket(row) {
     necesitaAtencion: !!row.necesita_atencion,
     mensajes: (row.mensajes || []).map(mapMensaje),
     mensajesTexto: row.mensajes_texto || (row.mensajes || []).map(m => m.cuerpo || '').join(' '),
+    ultimoMensajeTipo: row.ultimo_msg_tipo || null,
+    ultimoMensajeFecha: row.ultimo_msg_fecha || null,
     serviciosTecnicos: row.serviciosTecnicos || [],
     satisfaccion: row.satisfaccion || null,
     historialCliente: row.historialCliente || [],
@@ -215,6 +217,35 @@ function fechaLocal(iso) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function hoyStr() { return fechaLocal(new Date().toISOString()); }
+
+const SLA_HORAS = { Alta: 24, Media: 48, Baja: 72 };
+const SLA_HORA_INICIO = 9, SLA_HORA_FIN = 18; // horario laboral: lunes a viernes de 9 a 18hs
+function horasHabilesEntre(inicio, fin) {
+  if (!(fin > inicio)) return 0;
+  let horas = 0;
+  let cursor = new Date(inicio);
+  while (cursor < fin) {
+    const dia = cursor.getDay(); // 0=domingo, 6=sábado
+    if (dia === 0 || dia === 6) {
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1, 0, 0, 0, 0);
+      continue;
+    }
+    const inicioDia = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), SLA_HORA_INICIO, 0, 0, 0);
+    const finDia = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate(), SLA_HORA_FIN, 0, 0, 0);
+    const tramoInicio = cursor < inicioDia ? inicioDia : cursor;
+    const finVentana = fin < finDia ? fin : finDia;
+    if (tramoInicio < finVentana) horas += (finVentana - tramoInicio) / 3600000;
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1, 0, 0, 0, 0);
+  }
+  return horas;
+}
+function ticketVencido(t) {
+  if (['Esperando al Cliente', 'Cerrado', 'Resuelto'].includes(t.estado)) return false;
+  if (t.ultimoMensajeTipo !== 'entrante' || !t.ultimoMensajeFecha) return false;
+  const horas = horasHabilesEntre(new Date(t.ultimoMensajeFecha), new Date());
+  const umbral = SLA_HORAS[t.prioridad] || 48;
+  return horas >= umbral;
+}
 
 function filteredTickets() {
   const f = state.filters;
@@ -1260,6 +1291,7 @@ function renderShell(inner) {
     @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
     .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
     @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
+    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:#FBE9E9;color:#B23A3A;border:1px solid rgba(178,58,58,.3);}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
@@ -1309,6 +1341,7 @@ function dashboardStyleTag() {
 
     .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
     @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
+    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:#FBE9E9;color:#B23A3A;border:1px solid rgba(178,58,58,.3);}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
     .dash-profile-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:99px;padding:5px 14px 5px 5px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 18px -10px rgba(15,42,77,.25);transition:transform .15s ease,box-shadow .15s ease;}
@@ -1334,6 +1367,7 @@ function renderStub(t, clientMode, selectable) {
       <div class="stub-snippet">${escapeHtml(lastMsg ? lastMsg.cuerpo : '')}</div>
       <div class="stub-meta">
         ${!clientMode && t.necesitaAtencion ? `<span class="badge-atencion">🔔 Respondió el cliente</span>` : ''}
+        ${!clientMode && ticketVencido(t) ? `<span class="badge-vencido">⏰ Vencido</span>` : ''}
         <span class="tag tag-${slug(t.estado)}">${t.estado}</span><span class="tag tag-${slug(t.prioridad)}">${t.prioridad}</span><span class="tag tag-cat">${escapeHtml(t.categoria)}</span>
         ${!clientMode && grupo ? `<span class="tag tag-cliente">${escapeHtml(grupo.nombre)}</span>` : ''}
         ${!clientMode ? `<span class="tag tag-agente">${agente ? '👤 ' + escapeHtml(agente.nombre) + ' ' + escapeHtml(agente.apellido) : 'Sin asignar'}</span>` : ''}
@@ -1571,8 +1605,9 @@ function renderDashboard() {
     </div>` : '';
 
   const u = currentUser();
+  const vencidosCount = cache.tickets.filter(t => !esTicketDeReserva(t) && ticketVencido(t)).length;
   return `${dashboardStyleTag()}
-    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}</div></div>
+    <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}${vencidosCount ? ` · <span class="badge-vencido">⏰ ${vencidosCount} vencido${vencidosCount === 1 ? '' : 's'}</span>` : ''}</div></div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button>
         <button type="button" class="dash-profile-chip" onclick="go('perfil')" title="Ir a mi perfil">
