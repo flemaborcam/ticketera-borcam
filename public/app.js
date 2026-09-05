@@ -1976,8 +1976,8 @@ function perfilStyleTag() {
       font-family:var(--font-display);font-weight:700;font-size:26px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);
       box-shadow:0 0 0 4px rgba(255,255,255,.18),0 10px 20px -6px rgba(0,0,0,.35);cursor:pointer;}
     .perfil-avatar-wrap{position:relative;z-index:1;flex:none;}
-    .perfil-avatar-cam{position:absolute;bottom:-2px;right:-2px;width:26px;height:26px;border-radius:50%;background:#fff;color:var(--brand);
-      display:flex;align-items:center;justify-content:center;font-size:12.5px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid var(--ink);cursor:pointer;}
+    .perfil-avatar-cam{position:absolute;bottom:-8px;right:-6px;width:28px;height:28px;border-radius:50%;background:#fff;color:var(--brand);z-index:2;
+      display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 3px 8px rgba(0,0,0,.4);border:2.5px solid var(--ink);cursor:pointer;}
     .perfil-avatar-quitar{position:relative;z-index:1;display:block;margin-top:6px;font-size:11.5px;color:rgba(255,255,255,.75);text-decoration:underline;cursor:pointer;text-align:center;}
     .perfil-hero-info{position:relative;z-index:1;}
     .perfil-hero-info h1{margin:0 0 4px;font-family:var(--font-display);font-size:22px;}
