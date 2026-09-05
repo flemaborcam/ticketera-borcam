@@ -40,6 +40,7 @@ function mapTicket(row) {
     asignadoA: row.asignado_a, grupoId: row.cliente_id, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
     mensajes: (row.mensajes || []).map(mapMensaje),
+    mensajesTexto: row.mensajes_texto || (row.mensajes || []).map(m => m.cuerpo || '').join(' '),
     serviciosTecnicos: row.serviciosTecnicos || [],
     satisfaccion: row.satisfaccion || null,
     historialCliente: row.historialCliente || [],
@@ -226,7 +227,7 @@ function filteredTickets() {
     .filter(t => f.edificio === 'todos' || t.edificio === f.edificio)
     .filter(t => f.agente === 'todos' ? true : (f.agente === 'sin-asignar' ? !t.asignadoA : t.asignadoA === f.agente))
     .filter(t => !f.fecha || fechaLocal(t.creado) === f.fecha)
-    .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
+    .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s) || (t.edificio || '').toLowerCase().includes(s) || (t.mensajesTexto || '').toLowerCase().includes(s); })
     .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
 }
 function setFilter(k, v) { state.filters[k] = v; state.paginaTickets = 1; render(); }
