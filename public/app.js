@@ -1622,7 +1622,11 @@ function renderAdjuntos(ticketId, mensajeId, adjuntos) {
 function ticketStyleTag() {
   return `<style id="ticket-style-v2">
     .thread{gap:10px !important;}
-    .msg{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12) !important;position:relative;}
+    .msg{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12) !important;position:relative;max-width:100%;}
+    /* Evita que una URL larga sin espacios (frecuente en correos con imágenes embebidas) empuje
+       el ancho de la burbuja y desborde la pantalla. */
+    .msg-body{overflow-wrap:anywhere;word-break:break-word;}
+    .msg-html-frame{max-width:100%;}
     .msg-entrante{border-top-left-radius:4px !important;}
     .msg-entrante::before{content:'';position:absolute;left:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:#fff;border-left:0;transform:rotate(-8deg);}
     .msg-saliente{border-top-right-radius:4px !important;}
