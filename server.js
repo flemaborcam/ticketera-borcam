@@ -172,6 +172,8 @@ pool.query(`alter table configuracion add column if not exists checklist_categor
 pool.query(`alter table tickets add column if not exists checklist_estado jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_estado:', e.message));
 // Migración automática: pregunta "¿te entregaron la caja de domótica?" en el formulario de agendar turno.
 pool.query('alter table citas add column if not exists caja_domotica boolean').catch(e => console.error('No se pudo migrar caja_domotica:', e.message));
+// Migración automática: foto de perfil del usuario (se guarda como archivo en el mismo storage que los adjuntos).
+pool.query('alter table usuarios add column if not exists foto_path text').catch(e => console.error('No se pudo migrar foto_path:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -499,7 +501,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   if (!req.session || !req.session.type) return ok(res, { session: null });
   if (req.session.type === 'staff') {
-    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html,es_superadmin,telegram_chat_id,telegram_link_code from usuarios where id=$1', [req.session.userId])).rows[0];
+    const u = (await pool.query('select id,nombre,apellido,telefono,email,cargo,firma_html,es_superadmin,telegram_chat_id,telegram_link_code,foto_path from usuarios where id=$1', [req.session.userId])).rows[0];
     if (!u) return ok(res, { session: null });
     return ok(res, { session: { type: 'staff', usuario: u } });
   } else {
@@ -1295,6 +1297,47 @@ app.delete('/api/usuarios/:id', requireStaff, requireSuperadmin, async (req, res
 app.put('/api/usuarios/me/firma', requireStaff, async (req, res) => {
   await pool.query('update usuarios set firma_html=$1 where id=$2', [req.body.html || '', req.session.userId]);
   ok(res, { ok: true });
+});
+// Foto de perfil: recibe la imagen en base64 (dataUrl), la guarda en el mismo storage que los
+// adjuntos de tickets, y deja el path guardado en el usuario.
+app.put('/api/usuarios/me/foto', requireStaff, async (req, res) => {
+  const dataUrl = req.body.dataUrl || '';
+  const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (!m) return bad(res, 'Imagen inválida.');
+  const [, mime, base64] = m;
+  const buffer = Buffer.from(base64, 'base64');
+  if (buffer.length > 5 * 1024 * 1024) return bad(res, 'La imagen no puede pesar más de 5 MB.');
+  const ext = mime.split('/')[1].replace('jpeg', 'jpg');
+  const path = `avatars/${req.session.userId}-${Date.now()}.${ext}`;
+  try {
+    await subirArchivoStorage(path, buffer, mime);
+  } catch (e) {
+    return bad(res, 'No se pudo guardar la imagen: ' + e.message);
+  }
+  const anterior = (await pool.query('select foto_path from usuarios where id=$1', [req.session.userId])).rows[0];
+  await pool.query('update usuarios set foto_path=$1 where id=$2', [path, req.session.userId]);
+  if (anterior && anterior.foto_path) await eliminarArchivosStorage([anterior.foto_path]).catch(() => {});
+  ok(res, { fotoPath: path });
+});
+app.delete('/api/usuarios/me/foto', requireStaff, async (req, res) => {
+  const anterior = (await pool.query('select foto_path from usuarios where id=$1', [req.session.userId])).rows[0];
+  await pool.query('update usuarios set foto_path=null where id=$1', [req.session.userId]);
+  if (anterior && anterior.foto_path) await eliminarArchivosStorage([anterior.foto_path]).catch(() => {});
+  ok(res, { ok: true });
+});
+app.get('/api/usuarios/:id/foto', async (req, res) => {
+  if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
+  const u = (await pool.query('select foto_path from usuarios where id=$1', [req.params.id])).rows[0];
+  if (!u || !u.foto_path) return res.status(404).json({ error: 'No encontrada' });
+  try {
+    const upstream = await descargarArchivoStorage(u.foto_path);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', upstream.headers.get('content-type') || 'image/jpeg');
+    res.set('Cache-Control', 'private, max-age=300');
+    res.send(buf);
+  } catch (e) {
+    res.status(404).json({ error: 'No se pudo obtener la imagen' });
+  }
 });
 app.post('/api/usuarios/me/telegram/generar-codigo', requireStaff, async (req, res) => {
   const codigo = Math.random().toString(36).slice(2, 8).toUpperCase();
