@@ -1169,6 +1169,21 @@ async function descargarRespaldoAhora() {
   } catch (e) { showToast(e.message); }
 }
 
+async function descargarRespaldoArchivos() {
+  showToast('Armando el archivo, puede tardar unos segundos…');
+  try {
+    const r = await fetch('/api/respaldo/archivos', { credentials: 'same-origin' });
+    if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(data.error || 'No se pudo generar el respaldo de archivos.'); }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `respaldo-archivos-${new Date().toISOString().slice(0, 10)}.tar.gz`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Archivos adjuntos descargados.');
+  } catch (e) { showToast(e.message); }
+}
+
 async function restaurarRespaldo() {
   const input = document.getElementById('input-restaurar');
   const file = input.files && input.files[0];
@@ -2804,7 +2819,7 @@ function renderConfiguracion() {
       </div>
 
       <div class="card card-narrow" style="max-width:560px;${tab === 'respaldo' ? '' : 'display:none;'}">
-        ${configSectionHead('💾', 'Respaldo automático del sistema', 'Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración). No incluye los archivos adjuntos en sí ni contraseñas.')}
+        ${configSectionHead('💾', 'Respaldo automático del sistema', 'Manda por correo, cada tantos días, una copia completa de los datos (tickets, conversaciones, clientes, configuración) y un archivo comprimido con los adjuntos guardados (fotos, PDFs, videos). Si los adjuntos pesan demasiado para enviarlos por correo, se avisa en el mismo correo y se pueden descargar a mano abajo.')}
         <label class="switch-row">
           <input type="checkbox" name="respaldoActivo" ${c.respaldoActivo ? 'checked' : ''}> Enviarme un respaldo automático por correo
         </label>
@@ -2815,8 +2830,9 @@ function renderConfiguracion() {
         ${c.respaldoUltimo ? `<div class="hint-text" style="margin-top:-6px;">Último respaldo enviado: ${new Date(c.respaldoUltimo).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short' })}</div>` : ''}
 
         ${currentUser().es_superadmin ? `
-        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-          <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo ahora</button>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);display:flex;flex-direction:column;gap:8px;">
+          <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoAhora()">Descargar respaldo (datos)</button>
+          <button type="button" class="btn btn-ghost btn-block" onclick="descargarRespaldoArchivos()">Descargar archivos adjuntos</button>
         </div>
         <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
           <label style="font-weight:600;font-size:13px;color:var(--stamp-red);display:block;margin-bottom:6px;">Restaurar desde un archivo de respaldo</label>
