@@ -2643,6 +2643,10 @@ function renderEstadisticas() {
       ${barChartSvg(ranking)}
     </div>
     <div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Tickets recibidos por categoría — ${rangoTexto}</div>
+      ${(r.porCategoria || []).length ? barChartSvg((r.porCategoria || []).map(c => ({ label: c.categoria, value: c.cantidad }))) : `<div class="hint-text">No hay tickets en este período.</div>`}
+    </div>
+    <div class="card" style="margin-bottom:18px;">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución mensual — recibidos vs. resueltos</div>
       ${lineChartSvg(r.evolucion)}
     </div>
