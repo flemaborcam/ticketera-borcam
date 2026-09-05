@@ -2680,16 +2680,57 @@ function renderClienteTicket(id) {
 
 /* ---------------- Auth screens ---------------- */
 
+// Estilos + fondo animado de las pantallas de auth: se inyectan una sola vez, sin tocar index.html,
+// así este rediseño se puede sacar borrando este bloque y authStyleTag()/authBgHtml() de abajo.
+function authStyleTag() {
+  if (document.getElementById('auth-style-v2')) return '';
+  return `<style id="auth-style-v2">
+    .auth-wrap{position:relative;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;background:linear-gradient(160deg,#0A1830 0%,#0F2A4D 45%,#132F5C 100%);}
+    .auth-bg-anim{position:absolute;inset:0;overflow:hidden;z-index:0;}
+    .auth-blob{position:absolute;border-radius:50%;filter:blur(60px);opacity:.55;animation:authBlobFloat 18s ease-in-out infinite;}
+    .auth-blob-1{width:420px;height:420px;background:radial-gradient(circle,#3D7EF0,transparent 70%);top:-120px;left:-100px;animation-duration:22s;}
+    .auth-blob-2{width:360px;height:360px;background:radial-gradient(circle,#8B5CF6,transparent 70%);bottom:-100px;right:-80px;animation-duration:26s;animation-delay:-6s;}
+    .auth-blob-3{width:280px;height:280px;background:radial-gradient(circle,#1E9E7C,transparent 70%);bottom:20%;left:8%;animation-duration:20s;animation-delay:-11s;}
+    @keyframes authBlobFloat{0%,100%{transform:translate(0,0) scale(1);}33%{transform:translate(30px,-40px) scale(1.08);}66%{transform:translate(-25px,25px) scale(.95);}}
+    .auth-grid-overlay{position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:42px 42px;mask-image:radial-gradient(ellipse at center,#000 0%,transparent 75%);}
+    @media (prefers-reduced-motion: reduce){.auth-blob{animation:none;}}
+
+    .auth-card{position:relative;z-index:1;width:100%;max-width:400px;background:rgba(255,255,255,.9);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid rgba(255,255,255,.5);border-radius:20px;box-shadow:0 25px 60px -15px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.04);padding:0;overflow:hidden;animation:authCardIn .55s cubic-bezier(.2,.9,.25,1);}
+    @keyframes authCardIn{from{opacity:0;transform:translateY(18px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
+    .auth-card-brand{position:relative;background:linear-gradient(135deg,var(--ink) 0%,#1B3F73 60%,#264d8f 100%);padding:26px 28px;display:flex;justify-content:center;align-items:center;overflow:hidden;}
+    .auth-card-brand::after{content:'';position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.12) 50%,transparent 70%);background-size:220% 100%;animation:authSheen 5s ease-in-out infinite;}
+    @keyframes authSheen{0%{background-position:150% 0;}100%{background-position:-50% 0;}}
+    .auth-card-brand img{position:relative;z-index:1;height:36px;width:auto;max-width:100%;display:block;}
+    .auth-card-body{padding:34px 30px 30px;}
+    .auth-card h1{font-family:var(--font-display);font-size:23px;font-weight:600;margin:0 0 4px;letter-spacing:.01em;}
+    .auth-card .sub{color:var(--ink-soft);font-size:13.5px;margin:0 0 24px;}
+    .auth-field-icon{position:relative;}
+    .auth-field-icon svg{position:absolute;left:12px;top:38px;width:16px;height:16px;color:var(--ink-soft);opacity:.7;pointer-events:none;}
+    .auth-field-icon input{padding-left:36px !important;}
+    .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 4px rgba(61,126,240,.15);}
+    .field input,.field select,.field textarea{transition:box-shadow .15s ease,border-color .15s ease;}
+    .auth-card .btn-primary{background:linear-gradient(135deg,var(--brand) 0%,#2E6BE0 55%,#3D7EF0 100%);box-shadow:0 8px 20px -6px rgba(30,86,199,.55);transition:transform .15s ease,box-shadow .15s ease,filter .15s ease;}
+    .auth-card .btn-primary:hover{transform:translateY(-1px);box-shadow:0 12px 26px -6px rgba(30,86,199,.65);filter:brightness(1.05);}
+    .auth-card .btn-primary:active{transform:translateY(0);}
+    .auth-toggle{text-align:center;margin-top:16px;font-size:13.5px;color:var(--ink-soft);} .auth-toggle button{background:none;border:none;color:var(--brand);font-weight:600;padding:0;font-size:13.5px;}
+    @media (max-width:480px){.auth-blob{filter:blur(40px);}}
+  </style>`;
+}
+function authBgHtml() {
+  return `<div class="auth-bg-anim"><div class="auth-blob auth-blob-1"></div><div class="auth-blob auth-blob-2"></div><div class="auth-blob auth-blob-3"></div><div class="auth-grid-overlay"></div></div>`;
+}
+const icoMail = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6 8.5 7 8.5-7"/></svg>`;
+const icoLock = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>`;
 function renderAuth() {
   const mode = state.authView || 'login';
   if (mode === 'login') {
-    return `<div class="auth-wrap"><div class="auth-card">
+    return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
       <div class="auth-card-brand">${logoSvg('white')}</div>
       <div class="auth-card-body">
       <h1>Iniciar sesión</h1><p class="sub">Accedé con tu correo y contraseña.</p>
       <form onsubmit="return handleLogin(event)">
-        <div class="field"><label>Correo electrónico</label><input name="email" type="email" required></div>
-        <div class="field"><label>Contraseña</label><input name="password" type="password" required></div>
+        <div class="field auth-field-icon">${icoMail}<label>Correo electrónico</label><input name="email" type="email" required></div>
+        <div class="field auth-field-icon">${icoLock}<label>Contraseña</label><input name="password" type="password" required></div>
         ${state.authError ? `<div class="error-text">${escapeHtml(state.authError)}</div>` : ''}
         <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
       </form>
@@ -2698,7 +2739,7 @@ function renderAuth() {
     </div></div>`;
   }
   if (mode === 'register-choice') {
-    return `<div class="auth-wrap"><div class="auth-card">
+    return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
       <div class="auth-card-brand">${logoSvg('white')}</div>
       <div class="auth-card-body">
       <h1>Crear cuenta</h1><p class="sub">Contanos primero quién sos, así te llevamos al formulario correcto.</p>
@@ -2712,7 +2753,7 @@ function renderAuth() {
   }
   if (mode === 'register-cliente') {
     const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio']).map(r => `<option value="${r}">${r}</option>`).join('');
-    return `<div class="auth-wrap"><div class="auth-card">
+    return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
     <div class="auth-card-brand">${logoSvg('white')}</div>
     <div class="auth-card-body">
     <h1>Crear cuenta de cliente</h1><p class="sub">Registrate para ver y responder tus tickets desde el portal.</p>
@@ -2729,7 +2770,7 @@ function renderAuth() {
     </div>
   </div></div>`;
   }
-  return `<div class="auth-wrap"><div class="auth-card">
+  return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
     <div class="auth-card-brand">${logoSvg('white')}</div>
     <div class="auth-card-body">
     <h1>Crear cuenta de empleado</h1><p class="sub">Registrate para gestionar tickets.</p>
