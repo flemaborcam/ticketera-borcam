@@ -1345,6 +1345,7 @@ function renderShell(inner) {
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub-asunto{color:var(--ink);}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
     .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);position:relative;overflow:hidden;}
     .stub-num::before,.stub-num::after{background:var(--paper);}
@@ -1404,6 +1405,7 @@ function dashboardStyleTag() {
     .filters input[type=search]{border-radius:99px;padding-left:14px;}
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub-asunto{color:var(--ink);}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
     .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);}
     .stub-num::before,.stub-num::after{background:var(--paper);}
