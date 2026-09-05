@@ -97,6 +97,11 @@ async function refreshTicket(id) {
 /* ---------------- Auth ---------------- */
 
 function currentUser() { return session && session.type === 'staff' ? session.usuario : null; }
+// Devuelve el contenido del círculo de avatar: la foto de perfil si el usuario ya subió una,
+// o sus iniciales como antes. Se usa en el menú lateral, el chip del panel y "Mi perfil".
+function avatarInner(u) {
+  return u.foto_path ? `<img src="/api/usuarios/${u.id}/foto" alt="">` : escapeHtml(initials(u.nombre, u.apellido));
+}
 function currentGrupo() { return session && session.type === 'cliente' ? session.cliente : null; }
 
 async function handleLogin(ev) {
@@ -524,6 +529,30 @@ function insertFirmaImage(input) {
   reader.readAsDataURL(file); input.value = '';
 }
 function clearFirma() { const e = document.getElementById('firma-editor'); e.innerHTML = ''; e.focus(); }
+async function subirFotoPerfil(input) {
+  const file = input.files[0]; if (!file) return;
+  if (!file.type.startsWith('image/')) { showToast('Elegí un archivo de imagen.'); input.value = ''; return; }
+  if (file.size > 5 * 1024 * 1024) { showToast('La imagen no puede pesar más de 5 MB.'); input.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const r = await api('PUT', '/api/usuarios/me/foto', { dataUrl: reader.result });
+      session.usuario.foto_path = r.fotoPath;
+      showToast('Foto de perfil actualizada.');
+      render();
+    } catch (e) { showToast(e.message); }
+  };
+  reader.readAsDataURL(file); input.value = '';
+}
+async function quitarFotoPerfil() {
+  if (!confirm('¿Quitar tu foto de perfil?')) return;
+  try {
+    await api('DELETE', '/api/usuarios/me/foto');
+    session.usuario.foto_path = null;
+    showToast('Foto de perfil eliminada.');
+    render();
+  } catch (e) { showToast(e.message); }
+}
 async function saveFirma() {
   const html = document.getElementById('firma-editor').innerHTML.trim();
   await api('PUT', '/api/usuarios/me/firma', { html });
@@ -1196,7 +1225,8 @@ function renderShell(inner) {
     .nav-btn.active::before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:4px;height:22px;border-radius:0 4px 4px 0;background:#fff;box-shadow:0 0 10px 2px rgba(255,255,255,.6);}
     .sidebar-foot{border-top-color:rgba(255,255,255,.1);}
     .sidebar-foot .who{display:flex;align-items:center;gap:10px;padding:4px 4px 12px;}
-    .sidebar-avatar{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 0 0 2px rgba(255,255,255,.15);}
+    .sidebar-avatar{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 0 0 2px rgba(255,255,255,.15);overflow:hidden;}
+    .sidebar-avatar img,.dash-profile-avatar img,.perfil-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;}
     .sidebar-foot .who-text strong{display:block;color:#fff;font-size:13.5px;}
     .sidebar-foot .who-text{font-size:12px;color:#8FAAD4;}
 
@@ -1238,7 +1268,7 @@ function renderShell(inner) {
   <div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
-      <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div></div>
+      <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${avatarInner(u)}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div></div>
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
@@ -1278,7 +1308,7 @@ function dashboardStyleTag() {
 
     .dash-profile-chip{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:99px;padding:5px 14px 5px 5px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 18px -10px rgba(15,42,77,.25);transition:transform .15s ease,box-shadow .15s ease;}
     .dash-profile-chip:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(15,42,77,.05),0 12px 22px -8px rgba(15,42,77,.32);border-color:var(--line-strong);}
-    .dash-profile-avatar{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 2px 6px rgba(30,86,199,.4);}
+    .dash-profile-avatar{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 2px 6px rgba(30,86,199,.4);overflow:hidden;}
     .dash-profile-name{font-size:13.5px;font-weight:600;color:var(--ink);}
     @media (max-width:600px){.dash-profile-name{display:none;}}
   </style>`;
@@ -1540,7 +1570,7 @@ function renderDashboard() {
       <div style="display:flex;align-items:center;gap:12px;">
         <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button>
         <button type="button" class="dash-profile-chip" onclick="go('perfil')" title="Ir a mi perfil">
-          <span class="dash-profile-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</span>
+          <span class="dash-profile-avatar">${avatarInner(u)}</span>
           <span class="dash-profile-name">${escapeHtml(u.nombre)}</span>
         </button>
       </div></div>
@@ -1944,7 +1974,11 @@ function perfilStyleTag() {
     .perfil-hero::after{content:'';position:absolute;bottom:-80px;left:20%;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.25),transparent 70%);}
     .perfil-avatar{position:relative;z-index:1;flex:none;width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;
       font-family:var(--font-display);font-weight:700;font-size:26px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);
-      box-shadow:0 0 0 4px rgba(255,255,255,.18),0 10px 20px -6px rgba(0,0,0,.35);}
+      box-shadow:0 0 0 4px rgba(255,255,255,.18),0 10px 20px -6px rgba(0,0,0,.35);cursor:pointer;}
+    .perfil-avatar-wrap{position:relative;z-index:1;flex:none;}
+    .perfil-avatar-cam{position:absolute;bottom:-2px;right:-2px;width:26px;height:26px;border-radius:50%;background:#fff;color:var(--brand);
+      display:flex;align-items:center;justify-content:center;font-size:12.5px;box-shadow:0 2px 8px rgba(0,0,0,.3);border:2px solid var(--ink);cursor:pointer;}
+    .perfil-avatar-quitar{position:relative;z-index:1;display:block;margin-top:6px;font-size:11.5px;color:rgba(255,255,255,.75);text-decoration:underline;cursor:pointer;text-align:center;}
     .perfil-hero-info{position:relative;z-index:1;}
     .perfil-hero-info h1{margin:0 0 4px;font-family:var(--font-display);font-size:22px;}
     .perfil-hero-cargo{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:600;margin-top:4px;}
@@ -1965,7 +1999,12 @@ function renderPerfil() {
   const cargoOptions = CAT.CARGOS.map(c => `<option value="${c}" ${u.cargo === c ? 'selected' : ''}>${c}</option>`).join('');
   return `${perfilStyleTag()}
     <div class="perfil-hero">
-      <div class="perfil-avatar">${escapeHtml(initials(u.nombre, u.apellido))}</div>
+      <div class="perfil-avatar-wrap">
+        <div class="perfil-avatar" title="Cambiar foto" onclick="document.getElementById('perfil-foto-input').click()">${avatarInner(u)}</div>
+        <div class="perfil-avatar-cam" title="Cambiar foto" onclick="document.getElementById('perfil-foto-input').click()">📷</div>
+        <input type="file" id="perfil-foto-input" accept="image/*" style="display:none" onchange="subirFotoPerfil(this)">
+        ${u.foto_path ? `<span class="perfil-avatar-quitar" onclick="quitarFotoPerfil()">Quitar foto</span>` : ''}
+      </div>
       <div class="perfil-hero-info">
         <h1>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</h1>
         <div class="perfil-hero-cargo">💼 ${escapeHtml(u.cargo)}</div>
