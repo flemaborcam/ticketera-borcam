@@ -1213,6 +1213,12 @@ function renderShell(inner) {
     .btn-danger{background:#fff;border:1.5px solid var(--stamp-red) !important;color:var(--stamp-red);box-shadow:0 1px 2px rgba(196,61,61,.05);}
     .btn-danger:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px rgba(196,61,61,.3);background:var(--stamp-red-tint);}
 
+    /* Botón nativo "Elegir archivos" — mismo estilo píldora/degradé que "Enviar respuesta",
+       en un color distinto (violeta) para diferenciarlo como acción secundaria de adjuntar. */
+    input[type=file]::file-selector-button{border:none;border-radius:999px;padding:9px 18px;margin-right:10px;font-weight:600;font-size:13.5px;color:#fff;background:linear-gradient(135deg,#7C3AED 0%,#9D5CFF 55%,#B47CFF 100%);box-shadow:0 4px 12px -4px rgba(124,58,237,.5);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,filter .15s ease;}
+    input[type=file]::file-selector-button:hover{transform:translateY(-1px);box-shadow:0 8px 18px -4px rgba(124,58,237,.6);filter:brightness(1.05);}
+    input[type=file]::file-selector-button:active{transform:translateY(0);}
+
     .tag{position:relative;padding-left:20px;font-weight:700;box-shadow:0 1px 2px rgba(15,42,77,.06);transition:transform .12s ease;}
     .tag::before{content:'';position:absolute;left:9px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:currentColor;}
     .tag-urgente{animation:tagPulseUrgente 1.8s ease-in-out infinite;}
