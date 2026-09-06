@@ -11,7 +11,7 @@ async function api(method, url, body) {
 }
 
 let session = null;
-let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {} };
+let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [] };
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
@@ -180,10 +180,10 @@ async function verificarTicketsNuevos() {
 }
 
 async function loadStaffData() {
-  const [tickets, usuarios, clientes, respuestas, automatizaciones, configuracion, catalogos, documentosLegales] = await Promise.all([
+  const [tickets, usuarios, clientes, respuestas, automatizaciones, configuracion, catalogos, documentosLegales, documentosEdificio] = await Promise.all([
     api('GET', '/api/tickets'), api('GET', '/api/usuarios'), api('GET', '/api/clientes'),
     api('GET', '/api/respuestas'), api('GET', '/api/automatizaciones'), api('GET', '/api/configuracion'),
-    api('GET', '/api/catalogos'), api('GET', '/api/documentos-legales')
+    api('GET', '/api/catalogos'), api('GET', '/api/documentos-legales'), api('GET', '/api/documentos')
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
@@ -192,6 +192,7 @@ async function loadStaffData() {
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
   cache.documentosLegales = documentosLegales;
+  cache.documentosEdificio = documentosEdificio;
   CAT = catalogos;
 }
 
@@ -271,8 +272,8 @@ async function handleRegisterCliente(ev) {
 
 async function logout() {
   await api('POST', '/api/auth/logout');
-  session = null; state.view = 'login'; state.authView = 'login';
-  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {} };
+  session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
+  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [] };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
   render();
 }
@@ -416,7 +417,7 @@ async function eliminarTicket(id) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.documentoEdificioArchivo = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -582,6 +583,81 @@ function renderDocumentos() {
     </div>`).join('');
   const list = cache.documentosLegales.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay documentos cargados</div></div>`;
   return `<div class="page-head"><div><h1>Documentos</h1><div class="sub">Descargos u otros textos que el cliente puede leer y aceptar con firma electrónica al responder un ticket</div></div><button class="btn btn-primary" onclick="openNuevoDocumentoModal()">+ Nuevo documento</button></div>${list}`;
+}
+
+/* ---------------- Documentos del edificio (actas, manuales, contratos) ---------------- */
+const CATEGORIAS_DOCUMENTO_EDIFICIO = ['Acta de servicio', 'Manual', 'Contrato', 'Reglamento', 'Otro'];
+function renderDocumentosEdificio() {
+  const rows = cache.documentosEdificio.map(d => `
+    <div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+            <span style="font-weight:600;font-size:14.5px;">${escapeHtml(d.nombre)}</span>
+            <span class="tag">${escapeHtml(d.categoria)}</span>
+          </div>
+          <div style="font-size:13px;color:var(--ink-soft);">${d.cliente_nombre ? `Edificio: ${escapeHtml(d.cliente_nombre)}` : 'Visible para todos los clientes'} · Subido por ${escapeHtml(d.subido_por || '—')} · ${fmtDateTime(d.creado)}</div>
+        </div>
+        <div style="display:flex;gap:8px;flex:none;">
+          <a class="btn btn-ghost" href="/api/documentos/${d.id}/descargar" target="_blank" rel="noopener">Ver</a>
+          <button class="btn btn-danger" onclick="deleteDocumentoEdificio('${d.id}')">Eliminar</button>
+        </div>
+      </div>
+    </div>`).join('');
+  const list = cache.documentosEdificio.length ? rows : `<div class="empty-state"><div class="big">Todavía no subiste documentos</div></div>`;
+  return `<div class="page-head"><div><h1>Documentos edificio</h1><div class="sub">Actas de servicio, manuales o contratos que el cliente puede ver y descargar desde su portal</div></div><button class="btn btn-primary" onclick="openNuevoDocumentoEdificioModal()">+ Subir documento</button></div>${list}`;
+}
+function openNuevoDocumentoEdificioModal() { state.modal = 'nuevo-documento-edificio'; state.documentoEdificioArchivo = null; render(); }
+function onDocumentoEdificioFileChange(input) {
+  const file = (input.files || [])[0];
+  if (!file) return;
+  if (file.size > ATTACH_MAX_BYTES) { showToast('El archivo pesa demasiado (máx. 20 MB).'); input.value = ''; return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    state.documentoEdificioArchivo = { nombre: file.name, size: file.size, dataUrl: reader.result };
+    const nombreInput = document.querySelector('#nuevo-documento-edificio-form [name="nombre"]');
+    if (nombreInput && !nombreInput.value) nombreInput.value = file.name;
+    const info = document.getElementById('documento-edificio-archivo-info');
+    if (info) info.textContent = `Archivo elegido: ${file.name}`;
+  };
+  reader.readAsDataURL(file);
+}
+function renderNuevoDocumentoEdificioModal() {
+  const clientesOpts = cache.clientes.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Subir documento</h2><p class="sub">El cliente lo va a ver en su portal, en la sección Documentos.</p>
+    <form id="nuevo-documento-edificio-form" onsubmit="return submitNuevoDocumentoEdificio(event)">
+      <div class="field"><label>Archivo</label><input type="file" accept="image/*,application/pdf" onchange="onDocumentoEdificioFileChange(this)" required><div class="hint-text" id="documento-edificio-archivo-info">PDF o imagen, máx. 20 MB.</div></div>
+      <div class="field"><label>Nombre</label><input name="nombre" placeholder="Ej: Acta de asamblea marzo 2026" required></div>
+      <div class="field"><label>Categoría</label><select name="categoria">${CATEGORIAS_DOCUMENTO_EDIFICIO.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Edificio / cliente</label><select name="clienteId"><option value="">Todos los clientes</option>${clientesOpts}</select></div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Subir</button></div>
+    </form></div></div>`;
+}
+async function submitNuevoDocumentoEdificio(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const nombre = fd.get('nombre').trim();
+  const categoria = fd.get('categoria');
+  const clienteId = fd.get('clienteId') || null;
+  if (!nombre) return false;
+  if (!state.documentoEdificioArchivo) { showToast('Elegí un archivo.'); return false; }
+  try {
+    await api('POST', '/api/documentos', { nombre, categoria, clienteId, dataUrl: state.documentoEdificioArchivo.dataUrl });
+    cache.documentosEdificio = await api('GET', '/api/documentos');
+    state.documentoEdificioArchivo = null;
+    closeModal();
+    showToast('Documento subido.');
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+async function deleteDocumentoEdificio(id) {
+  if (!confirm('¿Eliminar este documento? El cliente ya no va a poder verlo.')) return;
+  try {
+    await api('DELETE', '/api/documentos/' + id);
+    cache.documentosEdificio = cache.documentosEdificio.filter(d => d.id !== id);
+    render();
+  } catch (e) { showToast(e.message); }
 }
 
 /* ---------------- Automatizaciones ---------------- */
@@ -1317,6 +1393,38 @@ async function loadClienteTickets() {
   const rows = await api('GET', '/api/portal/tickets');
   cache.tickets = rows.map(mapTicket);
 }
+function goCliente(view) {
+  state.view = view;
+  render();
+  if (view === 'cliente-documentos' && !state.clienteDocumentosCargados) {
+    state.clienteDocumentosCargados = true;
+    loadClienteDocumentos();
+  }
+}
+async function loadClienteDocumentos() {
+  cache.documentosCliente = await api('GET', '/api/portal/documentos');
+  render();
+}
+function iconoDocumento(mime) {
+  if ((mime || '').startsWith('image/')) return '&#128247;';
+  if (mime === 'application/pdf') return '&#128196;';
+  return '&#128196;';
+}
+function renderClienteDocumentos() {
+  const rows = cache.documentosCliente.map(d => `
+    <div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">${iconoDocumento(d.mime)}</span>
+          <div><div style="font-weight:600;font-size:14.5px;">${escapeHtml(d.nombre)}</div>
+            <div style="font-size:12.5px;color:var(--ink-soft);">${escapeHtml(d.categoria)} · ${fmtDateTime(d.creado)}</div></div>
+        </div>
+        <a class="btn btn-primary" href="/api/portal/documentos/${d.id}/descargar" target="_blank" rel="noopener">Ver / descargar</a>
+      </div>
+    </div>`).join('');
+  const list = cache.documentosCliente.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay documentos cargados</div><div class="sub">Acá vas a encontrar actas, manuales o contratos de tu edificio cuando los subamos.</div></div>`;
+  return `<div class="page-head"><div><h1>Documentos</h1><div class="sub">Actas de servicio, manuales y contratos de tu edificio</div></div></div>${list}`;
+}
 function openClienteTicket(id) { state.view = 'cliente-ticket'; state.ticketId = id; state.pendingAttachments = []; render(); loadClienteTicketDetalle(id); }
 async function loadClienteTicketDetalle(id) {
   const t = await api('GET', '/api/portal/tickets/' + id);
@@ -1366,7 +1474,8 @@ function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
@@ -3144,6 +3253,7 @@ function renderActiveModal() {
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
   if (state.modal === 'nuevo-ticket-cliente') return renderNuevoTicketClienteModal();
+  if (state.modal === 'nuevo-documento-edificio') return renderNuevoDocumentoEdificioModal();
   return '';
 }
 function renderDocumentoModal() {
@@ -3256,16 +3366,24 @@ function renderAutomatizacionModal() {
 
 /* ---------------- Portal de cliente ---------------- */
 
+function navItemsCliente(activeView) {
+  const items = [
+    { v: 'cliente-dashboard', label: 'Mis tickets', ico: '&#9776;' },
+    { v: 'cliente-documentos', label: 'Documentos', ico: '&#128193;' }
+  ];
+  const activo = (v) => v === activeView || (v === 'cliente-dashboard' && activeView === 'cliente-ticket');
+  return items.map(it => `<button class="nav-btn ${activo(it.v) ? 'active' : ''}" onclick="goCliente('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+}
 function renderClientShell(inner) {
   const g = currentGrupo();
   return `<div class="shell">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
-      <nav><button class="nav-btn active"><span class="ico">&#9776;</span><span>Mis tickets</span></button></nav>
+      <nav>${navItemsCliente(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
-      <div class="bottomnav"><button class="nav-btn active"><span class="ico">&#9776;</span><span>Tickets</span></button></div>
+      <div class="bottomnav">${navItemsCliente(state.view)}</div>
     </div></div>
   ${renderActiveModal()}
   ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ''}`;
@@ -3443,7 +3561,10 @@ function render() {
   const app = document.getElementById('app');
   if (!session) { app.innerHTML = renderAuth(); return; }
   if (session.type === 'cliente') {
-    const inner = (state.view === 'cliente-ticket' && state.ticketId) ? renderClienteTicket(state.ticketId) : renderClienteDashboard();
+    let inner;
+    if (state.view === 'cliente-ticket' && state.ticketId) inner = renderClienteTicket(state.ticketId);
+    else if (state.view === 'cliente-documentos') inner = renderClienteDocumentos();
+    else inner = renderClienteDashboard();
     app.innerHTML = renderClientShell(inner);
     return;
   }
@@ -3455,6 +3576,7 @@ function render() {
   else if (state.view === 'grupos') inner = renderGrupos();
   else if (state.view === 'reservas') inner = renderReservas();
   else if (state.view === 'documentos') inner = renderDocumentos();
+  else if (state.view === 'documentos-edificio') inner = renderDocumentosEdificio();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
