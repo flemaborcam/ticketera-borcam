@@ -416,7 +416,7 @@ async function eliminarTicket(id) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -1317,7 +1317,7 @@ async function loadClienteTickets() {
   const rows = await api('GET', '/api/portal/tickets');
   cache.tickets = rows.map(mapTicket);
 }
-function openClienteTicket(id) { state.view = 'cliente-ticket'; state.ticketId = id; render(); loadClienteTicketDetalle(id); }
+function openClienteTicket(id) { state.view = 'cliente-ticket'; state.ticketId = id; state.pendingAttachments = []; render(); loadClienteTicketDetalle(id); }
 async function loadClienteTicketDetalle(id) {
   const t = await api('GET', '/api/portal/tickets/' + id);
   const mapped = mapTicket(t);
@@ -1330,9 +1330,29 @@ async function submitClienteReply(ev, ticketId) {
   const fd = new FormData(ev.target);
   const cuerpo = fd.get('cuerpo').trim();
   if (!cuerpo) return false;
-  await api('POST', `/api/portal/tickets/${ticketId}/mensajes`, { cuerpo });
-  ev.target.reset();
-  await loadClienteTicketDetalle(ticketId);
+  try {
+    await api('POST', `/api/portal/tickets/${ticketId}/mensajes`, { cuerpo, adjuntos: state.pendingAttachments });
+    state.pendingAttachments = [];
+    ev.target.reset();
+    await loadClienteTicketDetalle(ticketId);
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+function openNuevoTicketClienteModal() { state.modal = 'nuevo-ticket-cliente'; state.pendingAttachments = []; render(); }
+async function submitNuevoTicketCliente(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const asunto = fd.get('asunto').trim();
+  const cuerpo = fd.get('cuerpo').trim();
+  if (!asunto || !cuerpo) return false;
+  try {
+    const t = await api('POST', '/api/portal/tickets', { asunto, cuerpo, adjuntos: state.pendingAttachments });
+    state.pendingAttachments = [];
+    state.modal = null;
+    await loadClienteTickets();
+    showToast('Ticket creado.');
+    openClienteTicket(t.id);
+  } catch (e) { showToast(e.message); }
   return false;
 }
 
@@ -3123,6 +3143,7 @@ function renderActiveModal() {
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
+  if (state.modal === 'nuevo-ticket-cliente') return renderNuevoTicketClienteModal();
   return '';
 }
 function renderDocumentoModal() {
@@ -3163,6 +3184,16 @@ function renderAceptacionesTicket(t) {
   </div>`;
 }
 
+function renderNuevoTicketClienteModal() {
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Nuevo ticket</h2><p class="sub">Contanos qué necesitás y, si hace falta, adjuntá fotos o un video.</p>
+    <form onsubmit="return submitNuevoTicketCliente(event)">
+      <div class="field"><label>Asunto</label><input name="asunto" placeholder="Ej: Cámara del garage sin imagen" required></div>
+      <div class="field"><label>Descripción</label><textarea name="cuerpo" placeholder="Contanos con el mayor detalle posible qué está pasando…" required></textarea></div>
+      <div class="field"><label>Adjuntar fotos o video (opcional)</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Crear ticket</button></div>
+    </form></div></div>`;
+}
 function renderNuevoCorreoModal() {
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>Simular correo entrante</h2><p class="sub">Crea un ticket nuevo como si llegara a ${cache.configuracion.casillaEmail ? `<strong>${escapeHtml(cache.configuracion.casillaEmail)}</strong>` : 'la casilla de soporte'}.</p>
@@ -3236,13 +3267,15 @@ function renderClientShell(inner) {
       <div class="content">${inner}</div>
       <div class="bottomnav"><button class="nav-btn active"><span class="ico">&#9776;</span><span>Tickets</span></button></div>
     </div></div>
+  ${renderActiveModal()}
   ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ''}`;
 }
 function renderClienteDashboard() {
   const g = currentGrupo();
   const tickets = [...cache.tickets].sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, true)).join('')}</div>` : `<div class="empty-state"><div class="big">Todavía no tenés tickets</div></div>`;
-  return `<div class="page-head"><div><h1>Mis tickets</h1><div class="sub">Todos los tickets abiertos a nombre de ${escapeHtml(g.nombre)}</div></div></div>${list}`;
+  return `<div class="page-head"><div><h1>Mis tickets</h1><div class="sub">Todos los tickets abiertos a nombre de ${escapeHtml(g.nombre)}</div></div>
+    <button class="btn btn-primary" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>${list}`;
 }
 function renderClienteTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
@@ -3255,6 +3288,7 @@ function renderClienteTicket(id) {
     <div class="thread">${thread}</div>
     <div class="reply-box"><form onsubmit="return submitClienteReply(event, '${t.id}')">
       <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="Escribí tu respuesta…" required></textarea></div>
+      <div class="field" style="margin-top:12px;"><label>Adjuntar fotos o video (opcional)</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
       <div class="reply-actions"><button type="submit" class="btn btn-primary">Enviar respuesta</button></div>
     </form></div>`;
 }
