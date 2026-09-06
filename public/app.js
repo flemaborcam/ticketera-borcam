@@ -2701,6 +2701,53 @@ function lineChartSvg(serie) {
       <span><span style="display:inline-block;width:10px;height:10px;background:#1E56C7;border-radius:2px;margin-right:6px;"></span>Resueltos</span>
     </div>`;
 }
+function csvEscape(v) {
+  const s = String(v ?? '');
+  return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+// Arma un .csv (se abre directo en Excel) con todos los números del reporte que está en pantalla
+// en ese momento (mismo período y filtro de agente que tengas elegidos).
+function descargarReporteExcel() {
+  if (!state.reportes) return;
+  const r = state.reportes;
+  const filas = [];
+  filas.push(['Reporte de Estadísticas']);
+  filas.push(['Período', `${fmtDateShort(r.rango.desde)} - ${fmtDateShort(r.rango.hasta)}`]);
+  filas.push(['Emitido', fmtDateShort(new Date().toISOString())]);
+  filas.push([]);
+  filas.push(['Resumen general']);
+  filas.push(['Tickets recibidos', r.general.recibidos]);
+  filas.push(['Resueltos/Cerrados', r.general.resueltos]);
+  filas.push(['% resueltos', pctReporte(r.general.resueltos, r.general.recibidos) + '%']);
+  filas.push(['Sin asignar (hoy)', r.general.sinAsignar]);
+  filas.push(['Abiertos actuales', r.general.abiertosActuales]);
+  filas.push(['Prom. 1ra respuesta', fmtHoras(r.general.promedioPrimeraRespuestaHoras)]);
+  filas.push(['Prom. resolución', fmtHoras(r.general.promedioResolucionHoras)]);
+  filas.push([]);
+  filas.push(['Tickets resueltos por técnico']);
+  filas.push(['Agente', 'Tickets resueltos']);
+  [...r.porUsuario].sort((a, b) => b.ticketsResueltos - a.ticketsResueltos).forEach(u => filas.push([`${u.nombre} ${u.apellido}`, u.ticketsResueltos]));
+  filas.push([]);
+  filas.push(['Tickets recibidos por categoría']);
+  filas.push(['Categoría', 'Cantidad']);
+  (r.porCategoria || []).forEach(c => filas.push([c.categoria, c.cantidad]));
+  filas.push([]);
+  filas.push(['Tickets recibidos por edificio']);
+  filas.push(['Edificio', 'Cantidad']);
+  (r.porEdificio || []).forEach(e => filas.push([e.edificio, e.cantidad]));
+  filas.push([]);
+  filas.push(['Evolución mensual']);
+  filas.push(['Mes', 'Recibidos', 'Resueltos']);
+  (r.evolucion || []).forEach(m => filas.push([m.mes, m.recibidos, m.resueltos]));
+  const csv = '﻿' + filas.map(fila => fila.map(csvEscape).join(';')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `estadisticas-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  showToast('Excel descargado.');
+}
 function renderEstadisticas() {
   const rangoOpts = [
     ['este-mes', 'Este mes'], ['mes-pasado', 'Mes pasado'], ['ultimos-3-meses', 'Últimos 3 meses'],
@@ -2715,6 +2762,7 @@ function renderEstadisticas() {
         <input type="date" value="${escapeHtml(state.reportesHasta)}" onchange="setReportesFechaPersonalizada('reportesHasta', this.value)">
         <button class="btn btn-ghost" onclick="cargarReportes()">Aplicar</button>` : ''}
       <select onchange="setReportesUsuario(this.value)">${usuarioOpts}</select>
+      <button class="btn btn-ghost" onclick="descargarReporteExcel()">📊 Exportar Excel</button>
       <button class="btn btn-primary" onclick="window.print()">🖨️ Exportar PDF</button>
     </div>`;
   const estilos = `<style>
