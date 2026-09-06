@@ -1341,7 +1341,7 @@ function renderShell(inner) {
     @keyframes tagPulseUrgente{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.35);}50%{box-shadow:0 0 0 5px rgba(196,61,61,0);}}
     .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
     @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
-    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:#FBE9E9;color:#B23A3A;border:1px solid rgba(178,58,58,.3);}
+    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--stamp-red-tint);color:var(--stamp-red);border:1px solid var(--stamp-red);}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
     .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
@@ -1420,7 +1420,7 @@ function dashboardStyleTag() {
 
     .badge-atencion{box-shadow:0 1px 3px rgba(196,61,61,.25);animation:badgeGlow 2s ease-in-out infinite;}
     @keyframes badgeGlow{0%,100%{box-shadow:0 0 0 0 rgba(196,61,61,.3);}50%{box-shadow:0 0 0 6px rgba(196,61,61,0);}}
-    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:#FBE9E9;color:#B23A3A;border:1px solid rgba(178,58,58,.3);}
+    .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--stamp-red-tint);color:var(--stamp-red);border:1px solid var(--stamp-red);}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
     .dash-profile-chip{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:99px;padding:5px 14px 5px 5px;box-shadow:0 1px 2px rgba(15,42,77,.05),0 8px 18px -10px rgba(15,42,77,.25);transition:transform .15s ease,box-shadow .15s ease;}
@@ -1428,6 +1428,14 @@ function dashboardStyleTag() {
     .dash-profile-avatar{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 2px 6px rgba(30,86,199,.4);overflow:hidden;}
     .dash-profile-name{font-size:13.5px;font-weight:600;color:var(--ink);}
     @media (max-width:600px){.dash-profile-name{display:none;}}
+
+    .carga-trabajo{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:14px;}
+    .carga-trabajo-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-right:2px;}
+    .carga-chip{display:inline-flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line-strong);border-radius:99px;padding:5px 6px 5px 12px;font-size:12.5px;font-weight:600;color:var(--ink);transition:transform .12s ease,box-shadow .12s ease;}
+    .carga-chip:hover{transform:translateY(-1px);box-shadow:0 4px 10px -4px rgba(15,42,77,.25);border-color:var(--brand-2);}
+    .carga-chip .n{background:var(--brand-tint);color:var(--brand);border-radius:99px;min-width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;padding:0 6px;}
+    .carga-chip-alerta{border-color:var(--stamp-red);}
+    .carga-chip-alerta .n{background:var(--stamp-red-tint);color:var(--stamp-red);}
   </style>`;
 }
 function renderStub(t, clientMode, selectable) {
@@ -1660,6 +1668,30 @@ function renderReservas() {
     ${paginacion}`;
 }
 
+// Carga de trabajo actual: cuenta, por cada agente, cuántos tickets tiene abiertos ahora mismo
+// (sin contar Cerrados ni Resueltos), para poder repartir mejor al asignar uno nuevo.
+function cargaTrabajoPorAgente() {
+  const activos = cache.tickets.filter(t => !esTicketDeReserva(t) && t.estado !== 'Cerrado' && t.estado !== 'Resuelto');
+  const conteos = {};
+  let sinAsignar = 0;
+  activos.forEach(t => {
+    if (!t.asignadoA) { sinAsignar++; return; }
+    conteos[t.asignadoA] = (conteos[t.asignadoA] || 0) + 1;
+  });
+  const filas = cache.usuarios
+    .map(u => ({ id: u.id, label: `${u.nombre} ${u.apellido}`, count: conteos[u.id] || 0 }))
+    .filter(f => f.count > 0)
+    .sort((a, b) => b.count - a.count);
+  if (sinAsignar > 0) filas.push({ id: 'sin-asignar', label: 'Sin asignar', count: sinAsignar, alerta: true });
+  return filas;
+}
+function renderCargaTrabajo() {
+  const filas = cargaTrabajoPorAgente();
+  if (!filas.length) return '';
+  const chips = filas.map(f => `<button type="button" class="carga-chip${f.alerta ? ' carga-chip-alerta' : ''}" onclick="setFilter('agente','${f.id}')" title="Ver los tickets de ${escapeHtml(f.label)}">${escapeHtml(f.label)}<span class="n">${f.count}</span></button>`).join('');
+  return `<div class="carga-trabajo"><span class="carga-trabajo-label">Carga actual:</span>${chips}</div>`;
+}
+
 function renderDashboard() {
   const todos = filteredTickets();
   const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
@@ -1694,6 +1726,7 @@ function renderDashboard() {
           <span class="dash-profile-name">${escapeHtml(u.nombre)}</span>
         </button>
       </div></div>
+    ${renderCargaTrabajo()}
     <div class="filters">
       <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>
       <input type="date" value="${state.filters.fecha}" onchange="setFilter('fecha', this.value)" title="Buscar tickets de un día específico">
