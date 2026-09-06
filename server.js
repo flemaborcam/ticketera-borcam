@@ -2376,6 +2376,52 @@ function cuerpoATextoConBotones(cuerpo) {
   }).join('');
 }
 /* ---------------- Portal de cliente ---------------- */
+// Sube a Storage una lista de adjuntos que llegan como dataUrl en base64 (foto/video elegidos en
+// el navegador) y devuelve el array listo para guardar en mensajes.adjuntos. Se usa desde el
+// portal de clientes (crear ticket y responder uno existente).
+async function procesarAdjuntosBase64(ticketId, adjuntos) {
+  const procesados = [];
+  for (const a of (adjuntos || [])) {
+    try {
+      const base64 = (a.dataUrl || '').split(',')[1] || '';
+      const mime = (a.dataUrl || '').match(/^data:(.*?);base64,/)?.[1] || 'application/octet-stream';
+      const attId = a.id || crypto.randomUUID();
+      const path = `${ticketId}/${attId}-${encodeURIComponent(a.nombre)}`;
+      await subirArchivoStorage(path, Buffer.from(base64, 'base64'), mime);
+      procesados.push({ id: attId, nombre: a.nombre, tipo: a.tipo, mime, size: a.size, path });
+    } catch (e) { console.error('Error subiendo adjunto del portal:', e.message); }
+  }
+  return procesados;
+}
+app.post('/api/portal/tickets', requireCliente, async (req, res) => {
+  const asunto = (req.body.asunto || '').trim();
+  const cuerpo = (req.body.cuerpo || '').trim();
+  if (!asunto || !cuerpo) return bad(res, 'Faltan datos.');
+  const cliente = (await pool.query('select * from clientes where id=$1', [req.session.clienteId])).rows[0];
+  if (!cliente) return bad(res, 'No encontrado', 404);
+  const remitenteNombre = cliente.contacto_nombre || cliente.nombre;
+  const remitenteEmail = cliente.correo || '';
+  const numero = await nextTicketNumero();
+  const r = await pool.query(
+    `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, cliente_id, necesita_atencion)
+     values ($1,$2,'Otro','Media','Abierto',$3,$4,$5,true) returning id`,
+    [numero, asunto, remitenteNombre, remitenteEmail, cliente.id]
+  );
+  const ticketId = r.rows[0].id;
+  const adjuntosProcesados = await procesarAdjuntosBase64(ticketId, req.body.adjuntos);
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`,
+    [ticketId, remitenteNombre, cuerpo, JSON.stringify(adjuntosProcesados)]
+  );
+  const automatizado = await aplicarAutomatizacionSiCorresponde(ticketId, asunto + ' ' + cuerpo, true);
+  await aplicarAvisoFinDeSemana(ticketId);
+  await aplicarAvisoFueraHorario(ticketId);
+  await notificarTelegramNuevoTicket(
+    { id: ticketId, numero, asunto, remitenteNombre, remitenteEmail, cuerpoResumen: cuerpo },
+    `${req.protocol}://${req.get('host')}`
+  ).catch(e => console.error('Error avisando por Telegram:', e.message));
+  ok(res, await ticketConMensajes(ticketId));
+});
 app.get('/api/portal/tickets', requireCliente, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.session.clienteId])).rows;
   ok(res, tickets);
@@ -2393,7 +2439,8 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
   if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
   const cliente = (await pool.query('select nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
-  await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, cliente.nombre, cuerpo]);
+  const adjuntosProcesados = await procesarAdjuntosBase64(id, req.body.adjuntos);
+  await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`, [id, cliente.nombre, cuerpo, JSON.stringify(adjuntosProcesados)]);
   await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
   if (['Resuelto', 'Cerrado', 'Esperando al Cliente'].includes(t.estado)) {
     await pool.query('update tickets set estado=$1 where id=$2', ['Abierto', id]);
