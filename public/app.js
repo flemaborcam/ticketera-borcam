@@ -93,6 +93,7 @@ async function boot() {
     const r = await api('GET', '/api/auth/me');
     if (r.session && r.session.type === 'staff') {
       session = r.session; state.view = 'dashboard'; await loadStaffData();
+      iniciarSondeoDeNotificaciones();
       const idDesdeUrl = new URLSearchParams(window.location.search).get('ticket');
       if (idDesdeUrl) { state.view = 'ticket'; state.ticketId = idDesdeUrl; }
     } else if (r.session && r.session.type === 'cliente') {
@@ -101,6 +102,81 @@ async function boot() {
   } catch (e) {}
   render();
   if (state.view === 'ticket' && state.ticketId) refreshTicket(state.ticketId).then(render);
+}
+
+/* ---------------- Aviso de tickets nuevos / respuestas del cliente ---------------- */
+// Cada 60 segundos, mientras hay una sesión de staff abierta (aunque la pestaña esté en segundo
+// plano), se fija si aparecieron tickets nuevos o si un cliente respondió uno existente, y si es
+// así suena un aviso y muestra un toast. La primera vez que corre solo guarda la "foto" de cómo
+// está todo, para no sonar apenas se abre la página con tickets que ya estaban ahí.
+let notifSondeoIniciado = false;
+let notifTicketsConocidos = null;
+function iniciarSondeoDeNotificaciones() {
+  if (notifSondeoIniciado) return;
+  notifSondeoIniciado = true;
+  notifTicketsConocidos = new Map(cache.tickets.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
+  setInterval(verificarTicketsNuevos, 60000);
+}
+// Evita pisar lo que el agente está escribiendo (una respuesta, un formulario) si justo en ese
+// momento se dispara el chequeo automático: en ese caso los datos igual se actualizan, pero la
+// pantalla no se refresca hasta la próxima acción del agente.
+function puedeRefrescarSinInterrumpir() {
+  const activo = document.activeElement;
+  if (activo && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activo.tagName)) return false;
+  if (state.modal) return false;
+  return true;
+}
+function reproducirSonidoAviso() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    const ahora = ctx.currentTime;
+    [880, 1108].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const t0 = ahora + i * 0.15;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(0.2, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + 0.32);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 800);
+  } catch (e) {}
+}
+async function verificarTicketsNuevos() {
+  if (!session || session.type !== 'staff') return;
+  try {
+    const filas = await api('GET', '/api/tickets');
+    const nuevos = filas.map(mapTicket);
+    if (!notifTicketsConocidos) {
+      cache.tickets = nuevos;
+      notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
+      return;
+    }
+    let ticketsNuevos = 0, respuestasCliente = 0;
+    nuevos.forEach(t => {
+      if (esTicketDeReserva(t)) return;
+      if (!notifTicketsConocidos.has(t.id)) ticketsNuevos++;
+      else if (t.necesitaAtencion && !notifTicketsConocidos.get(t.id)) respuestasCliente++;
+    });
+    cache.tickets = nuevos;
+    notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
+    if (ticketsNuevos || respuestasCliente) {
+      reproducirSonidoAviso();
+      // showToast() hace un render() completo de la pantalla: si el agente está justo escribiendo
+      // algo (una respuesta, un formulario), lo salteamos para no borrarle lo que tiene sin
+      // guardar — el sonido ya le avisó, y la cantidad se va a actualizar sola en el próximo render.
+      if (puedeRefrescarSinInterrumpir()) {
+        const partes = [];
+        if (ticketsNuevos) partes.push(`${ticketsNuevos} ticket${ticketsNuevos === 1 ? '' : 's'} nuevo${ticketsNuevos === 1 ? '' : 's'}`);
+        if (respuestasCliente) partes.push(`${respuestasCliente} respuesta${respuestasCliente === 1 ? '' : 's'} de cliente`);
+        showToast('🔔 ' + partes.join(' · '));
+      }
+    }
+  } catch (e) {}
 }
 
 async function loadStaffData() {
@@ -149,7 +225,7 @@ async function handleLogin(ev) {
     const me = await api('GET', '/api/auth/me');
     session = me.session;
     state.authError = '';
-    if (r.type === 'staff') { state.view = 'dashboard'; await loadStaffData(); }
+    if (r.type === 'staff') { state.view = 'dashboard'; await loadStaffData(); iniciarSondeoDeNotificaciones(); }
     else { state.view = 'cliente-dashboard'; await loadClienteTickets(); }
   } catch (e) { state.authError = e.message; }
   render();
@@ -169,6 +245,7 @@ async function handleRegister(ev) {
     const me = await api('GET', '/api/auth/me');
     session = me.session; state.regError = ''; state.view = 'dashboard';
     await loadStaffData();
+    iniciarSondeoDeNotificaciones();
   } catch (e) { state.regError = e.message; }
   render();
   return false;
@@ -196,6 +273,7 @@ async function logout() {
   await api('POST', '/api/auth/logout');
   session = null; state.view = 'login'; state.authView = 'login';
   cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {} };
+  notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
   render();
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
