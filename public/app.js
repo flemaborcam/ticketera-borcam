@@ -3388,12 +3388,42 @@ function renderClientShell(inner) {
   ${renderActiveModal()}
   ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ''}`;
 }
+function clienteResumenStyleTag() {
+  if (document.getElementById('cliente-resumen-style-v1')) return '';
+  return `<style id="cliente-resumen-style-v1">
+    .cliente-resumen{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;}
+    .cliente-resumen-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+    .cliente-resumen-num{font-size:24px;font-weight:700;line-height:1.2;}
+    .cliente-resumen-label{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+  </style>`;
+}
+// Resumen simple para que el cliente vea de un vistazo cómo le viene funcionando el soporte:
+// cuántos tickets tuvo, cuántos ya se resolvieron, y en cuánto tiempo en promedio (aproximado por
+// la diferencia entre "creado" y "actualizado" del ticket, que se pisa cada vez que cambia de
+// estado, así que en un ticket resuelto queda muy cerca del momento real de resolución).
+function renderClienteResumen(tickets) {
+  const total = tickets.length;
+  if (!total) return '';
+  const resueltos = tickets.filter(t => t.estado === 'Resuelto' || t.estado === 'Cerrado');
+  const abiertos = total - resueltos.length;
+  let promedioTexto = '—';
+  if (resueltos.length) {
+    const horasProm = resueltos.reduce((acc, t) => acc + (new Date(t.actualizado) - new Date(t.creado)), 0) / resueltos.length / 3600000;
+    promedioTexto = horasProm < 24 ? `${Math.max(1, Math.round(horasProm))} h` : `${(horasProm / 24).toFixed(1)} días`;
+  }
+  return `${clienteResumenStyleTag()}<div class="cliente-resumen">
+    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${total}</div><div class="cliente-resumen-label">Tickets totales</div></div>
+    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${resueltos.length}</div><div class="cliente-resumen-label">Resueltos</div></div>
+    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${abiertos}</div><div class="cliente-resumen-label">En curso</div></div>
+    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${promedioTexto}</div><div class="cliente-resumen-label">Tiempo prom. de resolución</div></div>
+  </div>`;
+}
 function renderClienteDashboard() {
   const g = currentGrupo();
   const tickets = [...cache.tickets].sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, true)).join('')}</div>` : `<div class="empty-state"><div class="big">Todavía no tenés tickets</div></div>`;
   return `<div class="page-head"><div><h1>Mis tickets</h1><div class="sub">Todos los tickets abiertos a nombre de ${escapeHtml(g.nombre)}</div></div>
-    <button class="btn btn-primary" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>${list}`;
+    <button class="btn btn-primary" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>${renderClienteResumen(tickets)}${list}`;
 }
 function clienteTicketStyleTag() {
   if (document.getElementById('cliente-ticket-style-v1')) return '';
