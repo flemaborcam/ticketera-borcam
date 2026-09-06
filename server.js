@@ -200,6 +200,19 @@ pool.query(`create table if not exists tags_pedidos (
   fecha_entrega timestamptz
 )`).catch(e => console.error('No se pudo crear tags_pedidos:', e.message));
 // Migración automática: crea la tabla de turnos de Servicio Técnico (submenú de Calendario) si todavía no existe.
+// Migración automática: documentos del edificio (actas, manuales, contratos) que el cliente ve desde
+// el portal. Si cliente_id es null, el documento es general y lo ven todos los clientes con portal.
+pool.query(`create table if not exists documentos_edificio (
+  id uuid primary key,
+  cliente_id integer,
+  nombre text not null,
+  categoria text not null default 'Otro',
+  path text not null,
+  mime text,
+  size bigint,
+  subido_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear documentos_edificio:', e.message));
 pool.query(`create table if not exists servicios_tecnicos (
   id serial primary key,
   ticket_id uuid,
@@ -2464,6 +2477,79 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   await aplicarAvisoFueraHorario(id);
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
+});
+// Documentos del edificio: el cliente ve los suyos (cliente_id = el suyo) más los generales
+// (cliente_id null, por ejemplo un manual que aplica a todos los edificios).
+app.get('/api/portal/documentos', requireCliente, async (req, res) => {
+  const docs = (await pool.query(
+    `select id, nombre, categoria, mime, size, creado from documentos_edificio
+     where cliente_id=$1 or cliente_id is null order by creado desc`,
+    [req.session.clienteId]
+  )).rows;
+  ok(res, docs);
+});
+app.get('/api/portal/documentos/:id/descargar', requireCliente, async (req, res) => {
+  const doc = (await pool.query('select * from documentos_edificio where id=$1', [req.params.id])).rows[0];
+  if (!doc) return bad(res, 'No encontrado', 404);
+  if (doc.cliente_id !== null && doc.cliente_id !== req.session.clienteId) return bad(res, 'No autorizado', 403);
+  try {
+    const upstream = await descargarArchivoStorage(doc.path);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', doc.mime || 'application/octet-stream');
+    res.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.nombre)}"`);
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+/* ---------------- Documentos del edificio (Servicio Técnico / Encargado) ---------------- */
+const CATEGORIAS_DOCUMENTO = ['Acta de servicio', 'Manual', 'Contrato', 'Reglamento', 'Otro'];
+app.get('/api/documentos', requireStaff, async (req, res) => {
+  const docs = (await pool.query(
+    `select d.*, c.nombre as cliente_nombre from documentos_edificio d
+     left join clientes c on c.id = d.cliente_id order by d.creado desc`
+  )).rows;
+  ok(res, docs);
+});
+app.post('/api/documentos', requireStaff, async (req, res) => {
+  const { nombre, categoria, clienteId, dataUrl } = req.body;
+  if (!nombre || !dataUrl) return bad(res, 'Faltan datos.');
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const base64 = (dataUrl || '').split(',')[1] || '';
+  const mime = (dataUrl || '').match(/^data:(.*?);base64,/)?.[1] || 'application/octet-stream';
+  const id = crypto.randomUUID();
+  const storagePath = `documentos/${id}-${encodeURIComponent(nombre)}`;
+  try {
+    const buffer = Buffer.from(base64, 'base64');
+    await subirArchivoStorage(storagePath, buffer, mime);
+    await pool.query(
+      `insert into documentos_edificio (id, cliente_id, nombre, categoria, path, mime, size, subido_por)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, clienteId || null, nombre, categoria || 'Otro', storagePath, mime, buffer.length, staff ? `${staff.nombre} ${staff.apellido}` : '']
+    );
+    ok(res, { id });
+  } catch (e) {
+    bad(res, e.message);
+  }
+});
+app.get('/api/documentos/:id/descargar', requireStaff, async (req, res) => {
+  const doc = (await pool.query('select * from documentos_edificio where id=$1', [req.params.id])).rows[0];
+  if (!doc) return bad(res, 'No encontrado', 404);
+  try {
+    const upstream = await descargarArchivoStorage(doc.path);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', doc.mime || 'application/octet-stream');
+    res.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.nombre)}"`);
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.delete('/api/documentos/:id', requireStaff, async (req, res) => {
+  const doc = (await pool.query('select path from documentos_edificio where id=$1', [req.params.id])).rows[0];
+  if (doc) await eliminarArchivosStorage([doc.path]).catch(e => console.error('No se pudo borrar el documento de Storage:', e.message));
+  await pool.query('delete from documentos_edificio where id=$1', [req.params.id]);
+  ok(res, { ok: true });
 });
 /* ---------------- Recepción real de correo (IMAP) ---------------- */
 function esFinDeSemanaUruguay() {
