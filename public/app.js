@@ -3389,12 +3389,30 @@ function renderClientShell(inner) {
   ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ''}`;
 }
 function clienteResumenStyleTag() {
-  if (document.getElementById('cliente-resumen-style-v1')) return '';
-  return `<style id="cliente-resumen-style-v1">
-    .cliente-resumen{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px;}
-    .cliente-resumen-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
-    .cliente-resumen-num{font-size:24px;font-weight:700;line-height:1.2;}
-    .cliente-resumen-label{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+  if (document.getElementById('cliente-resumen-style-v2')) return '';
+  return `<style id="cliente-resumen-style-v2">
+    .cliente-resumen{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px;}
+    .cliente-resumen-card{
+      position:relative;display:flex;align-items:center;gap:12px;background:var(--card);
+      border:1px solid var(--line);border-radius:14px;padding:16px 18px;overflow:hidden;
+      box-shadow:0 1px 2px rgba(15,42,77,.04),0 6px 16px -8px rgba(15,42,77,.18);
+      transition:transform .15s ease,box-shadow .15s ease;
+    }
+    .cliente-resumen-card:hover{transform:translateY(-3px);box-shadow:0 2px 4px rgba(15,42,77,.06),0 14px 26px -10px rgba(15,42,77,.26);}
+    .cliente-resumen-card::after{content:'';position:absolute;inset:0;border-radius:14px;pointer-events:none;
+      background:linear-gradient(160deg,rgba(255,255,255,.35),rgba(255,255,255,0) 45%);}
+    :root[data-theme="dark"] .cliente-resumen-card::after{background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,0) 45%);}
+    .cliente-resumen-ico{
+      flex:none;width:42px;height:42px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+      font-size:19px;box-shadow:inset 0 1px 1px rgba(255,255,255,.4),0 3px 8px -2px rgba(0,0,0,.25);
+    }
+    .cliente-resumen-ico-total{background:linear-gradient(145deg,#3D7EF0,#1E56C7);}
+    .cliente-resumen-ico-resueltos{background:linear-gradient(145deg,#4CAF6E,#2E7D32);}
+    .cliente-resumen-ico-curso{background:linear-gradient(145deg,#FFB84D,#E08A00);}
+    .cliente-resumen-ico-tiempo{background:linear-gradient(145deg,#8E7CF0,#6247C7);}
+    .cliente-resumen-num{font-size:22px;font-weight:700;line-height:1.15;}
+    .cliente-resumen-label{font-size:12px;color:var(--ink-soft);margin-top:1px;}
+    @media (max-width:480px){.cliente-resumen{grid-template-columns:repeat(2,1fr);}}
   </style>`;
 }
 // Resumen simple para que el cliente vea de un vistazo cómo le viene funcionando el soporte:
@@ -3411,12 +3429,17 @@ function renderClienteResumen(tickets) {
     const horasProm = resueltos.reduce((acc, t) => acc + (new Date(t.actualizado) - new Date(t.creado)), 0) / resueltos.length / 3600000;
     promedioTexto = horasProm < 24 ? `${Math.max(1, Math.round(horasProm))} h` : `${(horasProm / 24).toFixed(1)} días`;
   }
-  return `${clienteResumenStyleTag()}<div class="cliente-resumen">
-    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${total}</div><div class="cliente-resumen-label">Tickets totales</div></div>
-    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${resueltos.length}</div><div class="cliente-resumen-label">Resueltos</div></div>
-    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${abiertos}</div><div class="cliente-resumen-label">En curso</div></div>
-    <div class="cliente-resumen-card"><div class="cliente-resumen-num">${promedioTexto}</div><div class="cliente-resumen-label">Tiempo prom. de resolución</div></div>
-  </div>`;
+  const tarjetas = [
+    { ico: '&#127919;', clase: 'total', num: total, label: 'Tickets totales' },
+    { ico: '&#9989;', clase: 'resueltos', num: resueltos.length, label: 'Resueltos' },
+    { ico: '&#9203;', clase: 'curso', num: abiertos, label: 'En curso' },
+    { ico: '&#9889;', clase: 'tiempo', num: promedioTexto, label: 'Tiempo prom. de resolución' }
+  ];
+  return `${clienteResumenStyleTag()}<div class="cliente-resumen">${tarjetas.map(t => `
+    <div class="cliente-resumen-card">
+      <div class="cliente-resumen-ico cliente-resumen-ico-${t.clase}">${t.ico}</div>
+      <div><div class="cliente-resumen-num">${t.num}</div><div class="cliente-resumen-label">${t.label}</div></div>
+    </div>`).join('')}</div>`;
 }
 function renderClienteDashboard() {
   const g = currentGrupo();
