@@ -204,7 +204,7 @@ pool.query(`create table if not exists tags_pedidos (
 // el portal. Si cliente_id es null, el documento es general y lo ven todos los clientes con portal.
 pool.query(`create table if not exists documentos_edificio (
   id uuid primary key,
-  cliente_id integer,
+  cliente_id uuid,
   nombre text not null,
   categoria text not null default 'Otro',
   path text not null,
@@ -213,6 +213,10 @@ pool.query(`create table if not exists documentos_edificio (
   subido_por text,
   creado timestamptz not null default now()
 )`).catch(e => console.error('No se pudo crear documentos_edificio:', e.message));
+// Corrige el tipo de cliente_id si la tabla se llegó a crear antes con el tipo equivocado (integer):
+// clientes.id es uuid, y esa discrepancia hacía caer el servidor al hacer el join con clientes.
+pool.query('alter table documentos_edificio alter column cliente_id type uuid using cliente_id::text::uuid')
+  .catch(e => console.error('No se pudo corregir el tipo de cliente_id en documentos_edificio:', e.message));
 pool.query(`create table if not exists servicios_tecnicos (
   id serial primary key,
   ticket_id uuid,
