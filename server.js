@@ -355,6 +355,19 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
   if (nuevoEstado === 'Resuelto' && t.estado !== 'Resuelto') {
     await enviarEncuestaSatisfaccion(ticketId).catch(e => console.error('Error enviando encuesta de satisfacción:', e.message));
   }
+  // Si se cierra el ticket directamente (sin pasar por "Resuelto", que ya avisa con la encuesta),
+  // igual le avisamos al cliente por correo para que no se entere solo si entra al portal.
+  if (nuevoEstado === 'Cerrado' && t.estado !== 'Cerrado' && t.estado !== 'Resuelto') {
+    const ccs = await collectTicketCCs(ticketId);
+    const cuerpo = 'Cerramos tu ticket. Si el tema vuelve a repetirse o necesitás algo más, podés responder este mismo correo o crear un ticket nuevo desde el portal.';
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, destinatarios)
+       values ($1,'sistema','Notificación automática',$2,$3)`,
+      [ticketId, cuerpo, [t.remitente_email, ...ccs]]
+    );
+    const ctx = await contextoTicket(ticketId);
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
+  }
 }
 // Al resolver un ticket, se manda un correo aparte con dos enlaces (Sí / No) para que el cliente
 // confirme si quedó conforme. Cada vez se genera un token nuevo, así una respuesta vieja no cuenta dos veces.
