@@ -3277,14 +3277,48 @@ function renderClienteDashboard() {
   return `<div class="page-head"><div><h1>Mis tickets</h1><div class="sub">Todos los tickets abiertos a nombre de ${escapeHtml(g.nombre)}</div></div>
     <button class="btn btn-primary" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>${list}`;
 }
+function clienteTicketStyleTag() {
+  if (document.getElementById('cliente-ticket-style-v1')) return '';
+  return `<style id="cliente-ticket-style-v1">
+    .estado-timeline{display:flex;align-items:flex-start;margin-top:18px;padding-top:16px;border-top:1px dashed var(--line-strong);}
+    .estado-paso{display:flex;flex-direction:column;align-items:center;gap:6px;flex:none;width:110px;text-align:center;}
+    .estado-paso-punto{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;border:2px solid var(--line-strong);color:var(--ink-soft);background:var(--card);}
+    .estado-paso-label{font-size:11.5px;font-weight:600;color:var(--ink-soft);}
+    .estado-paso-hecho .estado-paso-punto{background:var(--stamp-green);border-color:var(--stamp-green);color:#fff;}
+    .estado-paso-hecho .estado-paso-label{color:var(--stamp-green);}
+    .estado-paso-activo .estado-paso-punto{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 0 0 4px var(--brand-tint);}
+    .estado-paso-activo .estado-paso-label{color:var(--brand);}
+    .estado-paso-linea{flex:1;height:2px;background:var(--line-strong);margin-top:14px;min-width:16px;}
+    @media (max-width:560px){.estado-paso{width:auto;}.estado-paso-label{font-size:10px;}}
+  </style>`;
+}
+// Traduce el estado real del ticket a un paso (0 a 3) de una línea de tiempo simple, pensada para
+// que el cliente entienda de un vistazo en qué anda su ticket sin tener que leer el nombre técnico
+// del estado. "Cerrado" se muestra igual que "Resuelto" (para el cliente es lo mismo: ya terminó).
+const ESTADO_TIMELINE_PASOS = ['Recibido', 'En progreso', 'Esperando tu respuesta', 'Resuelto'];
+function pasoDeEstadoCliente(estado) {
+  if (estado === 'En progreso') return 1;
+  if (estado === 'Esperando al Cliente') return 2;
+  if (estado === 'Resuelto' || estado === 'Cerrado') return 3;
+  return 0; // Abierto
+}
+function renderEstadoTimelineCliente(estado) {
+  const actual = pasoDeEstadoCliente(estado);
+  const pasos = ESTADO_TIMELINE_PASOS.map((label, i) => {
+    const clase = i < actual ? 'hecho' : i === actual ? 'activo' : 'pendiente';
+    return `<div class="estado-paso estado-paso-${clase}"><div class="estado-paso-punto">${i < actual ? '✓' : i + 1}</div><div class="estado-paso-label">${label}</div></div>`;
+  }).join('<div class="estado-paso-linea"></div>');
+  return `<div class="estado-timeline">${pasos}</div>`;
+}
 function renderClienteTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
   if (!t) return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver</button><div class="empty-state">Cargando…</div>`;
   const thread = renderThreadHtml(t);
-  return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
+  return `${clienteTicketStyleTag()}<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
     <div class="ticket-head"><div class="ticket-head-top"><div><div class="ticket-num-big">${t.numero}</div><h1>${escapeHtml(t.asunto)}</h1>
       <div class="ticket-from">Categoría: ${escapeHtml(t.categoria)} · Prioridad: ${t.prioridad} · Creado ${fmtDateTime(t.creado)}</div></div>
-      <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div></div></div>
+      <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div></div>
+      ${renderEstadoTimelineCliente(t.estado)}</div>
     <div class="thread">${thread}</div>
     <div class="reply-box"><form onsubmit="return submitClienteReply(event, '${t.id}')">
       <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="Escribí tu respuesta…" required></textarea></div>
