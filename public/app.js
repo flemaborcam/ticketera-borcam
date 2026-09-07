@@ -2242,13 +2242,15 @@ function renderTicket(id) {
 
 function renderGrupos() {
   const rows = cache.clientes.map(g => `
-    <button class="stub" style="align-items:stretch;" onclick="openGrupoDetail('${g.id}')">
+    <div class="stub" role="button" tabindex="0" style="align-items:stretch;" onclick="openGrupoDetail('${g.id}')" onkeydown="if(event.key==='Enter'){openGrupoDetail('${g.id}')}">
       <div class="stub-num" style="width:64px;"><div class="n" style="font-size:18px;">${g.tienePortal ? '🔐' : '—'}</div><div class="y">portal</div></div>
       <div class="stub-body"><div class="stub-top"><div class="stub-asunto">${escapeHtml(g.nombre)}</div></div>
         <div class="stub-remitente">${[g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         ${g.direccion ? `<div class="stub-snippet">${escapeHtml(g.direccion)}</div>` : ''}
         ${g.rolCliente || g.administradoPorNombre ? `<div class="stub-meta">${g.rolCliente ? `<span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span>` : ''}${g.administradoPorNombre ? `<span class="tag">Administrado por ${escapeHtml(g.administradoPorNombre)}</span>` : ''}</div>` : ''}
-      </div></button>`).join('');
+      </div>
+      <button type="button" class="btn btn-danger" style="flex:none;align-self:center;" onclick="event.stopPropagation();deleteGrupo('${g.id}')">Eliminar</button>
+    </div>`).join('');
   const list = cache.clientes.length ? `<div class="stub-list">${rows}</div>` : `<div class="empty-state"><div class="big">Todavía no hay clientes</div><div>Dá de alta un cliente para agrupar sus tickets.</div></div>`;
   return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Listado de clientes, cada uno con sus propios tickets</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>${list}`;
 }
