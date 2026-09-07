@@ -11,7 +11,7 @@ async function api(method, url, body) {
 }
 
 let session = null;
-let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [] };
+let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null };
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
@@ -273,7 +273,7 @@ async function handleRegisterCliente(ev) {
 async function logout() {
   await api('POST', '/api/auth/logout');
   session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
-  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [] };
+  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
   render();
 }
@@ -1400,6 +1400,58 @@ function goCliente(view) {
     state.clienteDocumentosCargados = true;
     loadClienteDocumentos();
   }
+  if (view === 'cliente-perfil' && !cache.perfilCliente) loadClientePerfil();
+}
+async function loadClientePerfil() {
+  cache.perfilCliente = await api('GET', '/api/portal/perfil');
+  render();
+}
+function renderClientePerfil() {
+  const p = cache.perfilCliente;
+  if (!p) return `<div class="empty-state">Cargando…</div>`;
+  return `<div class="page-head"><div><h1>Mi perfil</h1><div class="sub">Tus datos de contacto y tu contraseña de acceso al portal</div></div></div>
+    <div class="card" style="max-width:520px;">
+      <form onsubmit="return submitClientePerfilDatos(event)">
+        <div class="field"><label>Edificio / cuenta</label><input value="${escapeHtml(p.nombre)}" disabled></div>
+        <div class="field"><label>Correo de acceso</label><input value="${escapeHtml(p.correo || '')}" disabled></div>
+        <div class="field"><label>Nombre de contacto</label><input name="contactoNombre" value="${escapeHtml(p.contacto_nombre || '')}" placeholder="Quién responde habitualmente los tickets"></div>
+        <div class="field"><label>Teléfono</label><input name="telefono" value="${escapeHtml(p.telefono || '')}"></div>
+        <div class="modal-actions" style="justify-content:flex-start;"><button type="submit" class="btn btn-primary">Guardar cambios</button></div>
+      </form>
+    </div>
+    <div class="card" style="max-width:520px;margin-top:16px;">
+      <h3 style="margin-top:0;">Cambiar contraseña</h3>
+      <form onsubmit="return submitClientePerfilPassword(event)">
+        <div class="field"><label>Contraseña actual</label><input type="password" name="passwordActual" required></div>
+        <div class="field"><label>Contraseña nueva</label><input type="password" name="passwordNueva" minlength="6" required></div>
+        <div class="field"><label>Repetir contraseña nueva</label><input type="password" name="passwordNueva2" minlength="6" required></div>
+        <div class="modal-actions" style="justify-content:flex-start;"><button type="submit" class="btn btn-primary">Actualizar contraseña</button></div>
+      </form>
+    </div>`;
+}
+async function submitClientePerfilDatos(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  try {
+    await api('PUT', '/api/portal/perfil', { contactoNombre: fd.get('contactoNombre'), telefono: fd.get('telefono') });
+    cache.perfilCliente = await api('GET', '/api/portal/perfil');
+    showToast('Datos actualizados.');
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+async function submitClientePerfilPassword(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const passwordActual = fd.get('passwordActual');
+  const passwordNueva = fd.get('passwordNueva');
+  const passwordNueva2 = fd.get('passwordNueva2');
+  if (passwordNueva !== passwordNueva2) { showToast('Las contraseñas nuevas no coinciden.'); return false; }
+  try {
+    await api('PUT', '/api/portal/perfil', { passwordActual, passwordNueva });
+    ev.target.reset();
+    showToast('Contraseña actualizada.');
+  } catch (e) { showToast(e.message); }
+  return false;
 }
 async function loadClienteDocumentos() {
   cache.documentosCliente = await api('GET', '/api/portal/documentos');
@@ -3369,7 +3421,8 @@ function renderAutomatizacionModal() {
 function navItemsCliente(activeView) {
   const items = [
     { v: 'cliente-dashboard', label: 'Mis tickets', ico: '&#9776;' },
-    { v: 'cliente-documentos', label: 'Documentos', ico: '&#128193;' }
+    { v: 'cliente-documentos', label: 'Documentos', ico: '&#128193;' },
+    { v: 'cliente-perfil', label: 'Mi perfil', ico: '&#9998;' }
   ];
   const activo = (v) => v === activeView || (v === 'cliente-dashboard' && activeView === 'cliente-ticket');
   return items.map(it => `<button class="nav-btn ${activo(it.v) ? 'active' : ''}" onclick="goCliente('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
@@ -3617,6 +3670,7 @@ function render() {
     let inner;
     if (state.view === 'cliente-ticket' && state.ticketId) inner = renderClienteTicket(state.ticketId);
     else if (state.view === 'cliente-documentos') inner = renderClienteDocumentos();
+    else if (state.view === 'cliente-perfil') inner = renderClientePerfil();
     else inner = renderClienteDashboard();
     app.innerHTML = renderClientShell(inner);
     return;
