@@ -2452,6 +2452,31 @@ app.post('/api/portal/tickets', requireCliente, async (req, res) => {
   ).catch(e => console.error('Error avisando por Telegram:', e.message));
   ok(res, await ticketConMensajes(ticketId));
 });
+app.get('/api/portal/perfil', requireCliente, async (req, res) => {
+  const c = (await pool.query('select id, nombre, direccion, telefono, correo, contacto_nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
+  if (!c) return bad(res, 'No encontrado', 404);
+  ok(res, c);
+});
+app.put('/api/portal/perfil', requireCliente, async (req, res) => {
+  const { telefono, contactoNombre, passwordActual, passwordNueva } = req.body;
+  const c = (await pool.query('select * from clientes where id=$1', [req.session.clienteId])).rows[0];
+  if (!c) return bad(res, 'No encontrado', 404);
+  if (telefono !== undefined || contactoNombre !== undefined) {
+    await pool.query('update clientes set telefono=$1, contacto_nombre=$2 where id=$3', [
+      telefono !== undefined ? telefono.trim() : c.telefono,
+      contactoNombre !== undefined ? contactoNombre.trim() : c.contacto_nombre,
+      c.id
+    ]);
+  }
+  if (passwordNueva) {
+    if (!passwordActual || !c.portal_password_hash || !bcrypt.compareSync(passwordActual, c.portal_password_hash)) {
+      return bad(res, 'La contraseña actual no es correcta.');
+    }
+    if (passwordNueva.length < 6) return bad(res, 'La contraseña nueva debe tener al menos 6 caracteres.');
+    await pool.query('update clientes set portal_password_hash=$1 where id=$2', [bcrypt.hashSync(passwordNueva, 10), c.id]);
+  }
+  ok(res, { ok: true });
+});
 app.get('/api/portal/tickets', requireCliente, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.session.clienteId])).rows;
   ok(res, tickets);
@@ -2641,6 +2666,18 @@ async function procesarCorreoEntrante(parsed) {
   if (!fromAddr) return;
   const remitenteEmail = fromAddr.address;
   const remitenteNombre = fromAddr.name || remitenteEmail;
+  // Si el remitente es la propia casilla de soporte o el correo de alguien del equipo, no es un
+  // cliente escribiendo: es una respuesta nuestra que volvió a entrar (por ejemplo, un cliente que
+  // puso por error a alguien del equipo en copia, y esa persona respondió con "Responder a todos",
+  // haciendo que su propia respuesta le llegue de nuevo a la casilla). La ignoramos para no crearla
+  // como si fuera un mensaje nuevo del cliente.
+  const cfgCorreo = await getConfig();
+  const esCasillaPropia = cfgCorreo.casilla_email && remitenteEmail.toLowerCase() === cfgCorreo.casilla_email.toLowerCase();
+  const esStaff = !esCasillaPropia && (await pool.query('select 1 from usuarios where lower(email)=$1', [remitenteEmail.toLowerCase()])).rows[0];
+  if (esCasillaPropia || esStaff) {
+    console.log(`Correo entrante ignorado (viene de una casilla interna, no de un cliente): ${remitenteEmail}`);
+    return;
+  }
   const ccOriginal = (parsed.cc && parsed.cc.value ? parsed.cc.value : [])
     .map(x => x.address).filter(Boolean).filter(a => a.toLowerCase() !== remitenteEmail.toLowerCase());
   const asunto = parsed.subject || '(sin asunto)';
