@@ -60,6 +60,16 @@ try {
 function uid() { return 'tmp-' + Math.random().toString(36).slice(2, 10); }
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fmtDateTime(iso) { return new Date(iso).toLocaleString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+// Junta todas las direcciones que estuvieron en copia en el ticket para pre-cargar el campo "CC" al
+// responder, sacando siempre la propia casilla de soporte: nunca tiene sentido ponerse en copia a uno
+// mismo, y si quedó guardada en algún mensaje viejo (de antes de filtrarla en el ingreso), no la
+// arrastramos al formulario para evitar que alguien la mande sin darse cuenta.
+function ccSugeridoParaTicket(t) {
+  const casilla = (cache.configuracion.casillaEmail || '').toLowerCase();
+  return (t.mensajes || []).flatMap(m => m.cc || [])
+    .filter((v, i, arr) => v && arr.indexOf(v) === i && v.toLowerCase() !== casilla)
+    .join(', ');
+}
 function fmtRel(iso) { const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000); if (m < 1) return 'ahora'; if (m < 60) return m + ' min'; const h = Math.floor(m / 60); if (h < 24) return h + ' h'; return Math.floor(h / 24) + ' d'; }
 function slug(s) { return s.toLowerCase().replace(/\s+/g, '-'); }
 function initials(n, a) { return ((n?.[0] || '') + (a?.[0] || '')).toUpperCase(); }
@@ -2219,7 +2229,7 @@ function renderTicket(id) {
         <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="${state.replyTab === 'saliente' ? 'Escribí tu respuesta…' : state.replyTab === 'nota' ? 'Escribí la nota interna…' : 'Escribí el correo que llegaría del solicitante…'}" required></textarea></div>
         ${state.replyTab === 'saliente' && u.firma_html ? `<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" name="incluirFirma" checked> Incluir mi firma</label>` : ''}
         ${state.replyTab === 'saliente' ? `
-        <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" value="${escapeHtml((t.mensajes || []).flatMap(m => m.cc || []).filter((v, i, arr) => v && arr.indexOf(v) === i).join(', '))}" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Se completa solo con quienes estuvieron en copia en este ticket. Podés editarlo antes de enviar.</div></div>
+        <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" value="${escapeHtml(ccSugeridoParaTicket(t))}" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Se completa solo con quienes estuvieron en copia en este ticket. Podés editarlo antes de enviar.</div></div>
         <div class="field"><label>Adjuntar archivos</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
         ${cache.documentosLegales.filter(d => d.activo).length ? `
         <div class="field"><label>Pedir aceptación de un documento (opcional)</label><select name="documentoLegalId"><option value="">Ninguno</option>${cache.documentosLegales.filter(d => d.activo).map(d => `<option value="${d.id}">${escapeHtml(d.nombre)}</option>`).join('')}</select><div class="hint-text">Se le agrega al cliente un enlace para leer y aceptar ese documento, con registro de fecha, hora e IP.</div></div>` : ''}` : ''}
