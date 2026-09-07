@@ -162,6 +162,11 @@ const pool = new Pool({
 // Migración automática: agrega la columna de nombre de contacto si todavía no existe (no rompe nada si ya está).
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
 pool.query('alter table clientes add column if not exists rol_cliente text').catch(e => console.error('No se pudo migrar rol_cliente:', e.message));
+// Migración automática: permite que un cliente "Edificio" quede gestionado por un cliente
+// "Administración" (una misma administración puede manejar varios edificios sin tener que
+// duplicar su usuario del portal). Es un solo nivel: el que administra no puede a la vez estar
+// administrado por otro.
+pool.query('alter table clientes add column if not exists administrado_por_id uuid').catch(e => console.error('No se pudo migrar administrado_por_id:', e.message));
 pool.query('alter table telegram_notificaciones_ticket add column if not exists es_grupo boolean default false').catch(e => console.error('No se pudo migrar es_grupo:', e.message));
 // Migración automática: columnas para la encuesta de satisfacción que se manda al resolver un ticket.
 pool.query('alter table tickets add column if not exists satisfaccion_token text').catch(e => console.error('No se pudo migrar satisfaccion_token:', e.message));
@@ -252,6 +257,14 @@ function requireCliente(req, res, next) {
 }
 function ok(res, data) { res.json(data); }
 function bad(res, msg, code) { res.status(code || 400).json({ error: msg }); }
+// Una cuenta de portal (por ejemplo, una Administración) puede gestionar varios edificios a la vez.
+// Devuelve el propio id del cliente más el de todos los edificios que tiene a cargo, para que el
+// portal le muestre los tickets de todos ellos aunque el ticket haya llegado directo del residente
+// (sin pasar por la administración) y esté asignado al cliente del edificio, no al de la administración.
+async function idsClienteGestionados(clienteId) {
+  const r = await pool.query('select id from clientes where id=$1 or administrado_por_id=$1', [clienteId]);
+  return r.rows.map(row => row.id);
+}
 async function nextTicketNumero() {
   const anio = new Date().getFullYear();
   const client = await pool.connect();
@@ -1065,7 +1078,12 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
 });
 /* ---------------- Clientes ---------------- */
 app.get('/api/clientes', requireStaff, async (req, res) => {
-  const clientes = (await pool.query('select id,nombre,direccion,telefono,correo,rol,rol_cliente,contacto_nombre,(portal_password_hash is not null) as tiene_portal from clientes order by nombre')).rows;
+  const clientes = (await pool.query(
+    `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.rol,c.rol_cliente,c.contacto_nombre,
+            (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id,
+            a.nombre as administrado_por_nombre
+     from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
+  )).rows;
   ok(res, clientes);
 });
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
@@ -1073,28 +1091,31 @@ app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   ok(res, tickets);
 });
 app.post('/api/clientes', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId } = req.body;
   if (!nombre) return bad(res, 'Falta el nombre del cliente.');
   const hash = portalPassword ? bcrypt.hashSync(portalPassword, 10) : null;
   const r = await pool.query(
-    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre, rol_cliente)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim()]
+    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre, rol_cliente, administrado_por_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorId || null]
   );
   ok(res, { id: r.rows[0].id });
 });
 app.put('/api/clientes/:id', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId } = req.body;
+  // Evita crear un ciclo (A administrado por B, y B administrado por A) y que un cliente quede
+  // "administrado por sí mismo" si lo elige por error.
+  const administradoPorFinal = (administradoPorId && administradoPorId !== req.params.id) ? administradoPorId : null;
   if (portalPassword) {
     const hash = bcrypt.hashSync(portalPassword, 10);
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7,rol_cliente=$8 where id=$9`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7,rol_cliente=$8,administrado_por_id=$9 where id=$10`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, req.params.id]
     );
   } else {
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6,rol_cliente=$7 where id=$8`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), (rolCliente || '').trim(), req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6,rol_cliente=$7,administrado_por_id=$8 where id=$9`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, req.params.id]
     );
   }
   ok(res, { ok: true });
@@ -2423,11 +2444,21 @@ async function procesarAdjuntosBase64(ticketId, adjuntos) {
   }
   return procesados;
 }
+app.get('/api/portal/edificios', requireCliente, async (req, res) => {
+  const ids = await idsClienteGestionados(req.session.clienteId);
+  const edificios = (await pool.query('select id, nombre from clientes where id = any($1) order by nombre', [ids])).rows;
+  ok(res, edificios);
+});
 app.post('/api/portal/tickets', requireCliente, async (req, res) => {
   const asunto = (req.body.asunto || '').trim();
   const cuerpo = (req.body.cuerpo || '').trim();
   if (!asunto || !cuerpo) return bad(res, 'Faltan datos.');
-  const cliente = (await pool.query('select * from clientes where id=$1', [req.session.clienteId])).rows[0];
+  const ids = await idsClienteGestionados(req.session.clienteId);
+  // Si la cuenta gestiona más de un edificio, el formulario tiene que decir para cuál es el ticket;
+  // si solo gestiona el suyo, usamos ese directamente sin pedirle nada extra.
+  const edificioId = ids.length > 1 ? req.body.edificioClienteId : req.session.clienteId;
+  if (!edificioId || !ids.includes(edificioId)) return bad(res, 'Elegí para qué edificio es el ticket.');
+  const cliente = (await pool.query('select * from clientes where id=$1', [edificioId])).rows[0];
   if (!cliente) return bad(res, 'No encontrado', 404);
   const remitenteNombre = cliente.contacto_nombre || cliente.nombre;
   const remitenteEmail = cliente.correo || '';
@@ -2478,12 +2509,18 @@ app.put('/api/portal/perfil', requireCliente, async (req, res) => {
   ok(res, { ok: true });
 });
 app.get('/api/portal/tickets', requireCliente, async (req, res) => {
-  const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.session.clienteId])).rows;
+  const ids = await idsClienteGestionados(req.session.clienteId);
+  const tickets = (await pool.query(
+    `select t.*, c.nombre as edificio_nombre from tickets t left join clientes c on c.id = t.cliente_id
+     where t.cliente_id = any($1) order by t.actualizado desc`,
+    [ids]
+  )).rows;
   ok(res, tickets);
 });
 app.get('/api/portal/tickets/:id', requireCliente, async (req, res) => {
+  const ids = await idsClienteGestionados(req.session.clienteId);
   const t = await ticketConMensajes(req.params.id);
-  if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
+  if (!t || !ids.includes(t.cliente_id)) return bad(res, 'No encontrado', 404);
   t.mensajes = t.mensajes.filter(m => m.tipo !== 'nota');
   ok(res, t);
 });
@@ -2491,9 +2528,16 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   const id = req.params.id;
   const cuerpo = (req.body.cuerpo || '').trim();
   if (!cuerpo) return bad(res, 'El mensaje no puede estar vacío.');
+  const ids = await idsClienteGestionados(req.session.clienteId);
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
-  if (!t || t.cliente_id !== req.session.clienteId) return bad(res, 'No encontrado', 404);
+  if (!t || !ids.includes(t.cliente_id)) return bad(res, 'No encontrado', 404);
+  // Si la cuenta que responde es la administración (no el propio edificio dueño del ticket),
+  // aclaramos quién escribe para que en el hilo quede claro que no fue el edificio directamente.
   const cliente = (await pool.query('select nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
+  if (t.cliente_id !== req.session.clienteId) {
+    const edificio = (await pool.query('select nombre from clientes where id=$1', [t.cliente_id])).rows[0];
+    cliente.nombre = `${cliente.nombre} (Administración de ${edificio ? edificio.nombre : 'edificio'})`;
+  }
   const adjuntosProcesados = await procesarAdjuntosBase64(id, req.body.adjuntos);
   await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo, adjuntos) values ($1,'entrante',$2,$3,$4)`, [id, cliente.nombre, cuerpo, JSON.stringify(adjuntosProcesados)]);
   await pool.query('update tickets set necesita_atencion=true where id=$1', [id]);
@@ -2510,17 +2554,19 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
 // Documentos del edificio: el cliente ve los suyos (cliente_id = el suyo) más los generales
 // (cliente_id null, por ejemplo un manual que aplica a todos los edificios).
 app.get('/api/portal/documentos', requireCliente, async (req, res) => {
+  const ids = await idsClienteGestionados(req.session.clienteId);
   const docs = (await pool.query(
     `select id, nombre, categoria, mime, size, creado from documentos_edificio
-     where cliente_id=$1 or cliente_id is null order by creado desc`,
-    [req.session.clienteId]
+     where cliente_id = any($1) or cliente_id is null order by creado desc`,
+    [ids]
   )).rows;
   ok(res, docs);
 });
 app.get('/api/portal/documentos/:id/descargar', requireCliente, async (req, res) => {
+  const ids = await idsClienteGestionados(req.session.clienteId);
   const doc = (await pool.query('select * from documentos_edificio where id=$1', [req.params.id])).rows[0];
   if (!doc) return bad(res, 'No encontrado', 404);
-  if (doc.cliente_id !== null && doc.cliente_id !== req.session.clienteId) return bad(res, 'No autorizado', 403);
+  if (doc.cliente_id !== null && !ids.includes(doc.cliente_id)) return bad(res, 'No autorizado', 403);
   try {
     const upstream = await descargarArchivoStorage(doc.path);
     const buf = Buffer.from(await upstream.arrayBuffer());
