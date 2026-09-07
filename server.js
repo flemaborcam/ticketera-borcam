@@ -336,9 +336,15 @@ async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAut
       console.warn('Envío automático pausado por exceso de volumen en la última hora (posible reprocesamiento masivo).');
       return false;
     }
+    // Barrera extra: nunca se manda una copia a la propia casilla (ni al usuario de SMTP/IMAP), sin
+    // importar de dónde haya salido ese CC (un cliente que puso mal la dirección, un campo escrito a
+    // mano). Mandarse copia a uno mismo es justamente lo que arma el ida y vuelta infinito de correos.
+    const direccionesPropias = [cfg.casilla_email, cfg.smtp_usuario, cfg.imap_usuario]
+      .filter(Boolean).map(a => a.toLowerCase());
+    const ccFiltrado = (cc || []).filter(a => a && !direccionesPropias.includes(a.toLowerCase()));
     await transport.sendMail({
       from: `"${cfg.casilla_nombre || 'Soporte'}" <${cfg.smtp_usuario}>`,
-      to, cc: (cc && cc.length) ? cc.join(',') : undefined,
+      to, cc: ccFiltrado.length ? ccFiltrado.join(',') : undefined,
       subject, text, html: html || undefined,
       attachments: attachments && attachments.length ? attachments : undefined
     });
@@ -932,6 +938,31 @@ app.delete('/api/tickets/:id', requireStaff, async (req, res) => {
   await eliminarAdjuntosDeTicket(req.params.id);
   await pool.query('delete from tickets where id=$1', [req.params.id]);
   ok(res, { ok: true });
+});
+// Fusiona dos tickets que en realidad son el mismo tema (por ejemplo, un residente que escribió por
+// mail sin poner el número de ticket en el asunto, y el sistema abrió uno nuevo en vez de sumarlo al
+// que ya existía). Todos los mensajes del ticket "origen" pasan a vivir dentro del "destino" (el que
+// se sigue usando) y el origen se borra. Los adjuntos siguen funcionando igual: cada uno guarda su
+// propia ruta en Storage, así que moverlos de ticket no los rompe.
+app.post('/api/tickets/:id/fusionar', requireStaff, async (req, res) => {
+  const destinoId = req.params.id;
+  const origenId = req.body.otroTicketId;
+  if (!origenId) return bad(res, 'Elegí con qué ticket fusionar.');
+  if (origenId === destinoId) return bad(res, 'No podés fusionar un ticket consigo mismo.');
+  const destino = (await pool.query('select * from tickets where id=$1', [destinoId])).rows[0];
+  const origen = (await pool.query('select * from tickets where id=$1', [origenId])).rows[0];
+  if (!destino || !origen) return bad(res, 'No encontrado', 404);
+  await pool.query('update mensajes set ticket_id=$1 where ticket_id=$2', [destinoId, origenId]);
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+    [destinoId, staff ? `${staff.nombre} ${staff.apellido}` : 'Sistema',
+     `Se fusionó el ticket ${origen.numero} ("${origen.asunto}") dentro de este ticket. Los mensajes de ambos quedaron juntos acá.`]
+  );
+  await pool.query('update tickets set necesita_atencion=$1, actualizado=now() where id=$2',
+    [destino.necesita_atencion || origen.necesita_atencion, destinoId]);
+  await pool.query('delete from tickets where id=$1', [origenId]);
+  ok(res, await ticketConMensajes(destinoId));
 });
 // Asigna un ticket a un técnico: manda el aviso automático al cliente, le avisa al técnico por Telegram
 // si tiene su cuenta vinculada, y le saca el botón "Tomar ticket" al aviso del grupo si lo tenía.
@@ -2724,8 +2755,16 @@ async function procesarCorreoEntrante(parsed) {
     console.log(`Correo entrante ignorado (viene de una casilla interna, no de un cliente): ${remitenteEmail}`);
     return;
   }
+  // Además de sacar al propio remitente de la lista de copia, sacamos también la casilla de soporte
+  // (y las direcciones de SMTP/IMAP configuradas, por si difieren): si alguien nos pone en copia por
+  // error y esa copia queda guardada en el ticket, la próxima respuesta la iba a volver a incluir en
+  // "CC" — y como esa respuesta sale firmada por la propia casilla, terminaba mandándose una copia a
+  // sí misma, generando un ida y vuelta infinito.
+  const direccionesPropias = [cfgCorreo.casilla_email, cfgCorreo.smtp_usuario, cfgCorreo.imap_usuario]
+    .filter(Boolean).map(a => a.toLowerCase());
   const ccOriginal = (parsed.cc && parsed.cc.value ? parsed.cc.value : [])
-    .map(x => x.address).filter(Boolean).filter(a => a.toLowerCase() !== remitenteEmail.toLowerCase());
+    .map(x => x.address).filter(Boolean)
+    .filter(a => a.toLowerCase() !== remitenteEmail.toLowerCase() && !direccionesPropias.includes(a.toLowerCase()));
   const asunto = parsed.subject || '(sin asunto)';
   const sinCitas = recortarCitas((parsed.text || '').trim());
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
