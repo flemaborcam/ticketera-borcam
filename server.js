@@ -1159,6 +1159,10 @@ app.put('/api/clientes/:id', requireStaff, async (req, res) => {
 });
 app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   await pool.query('update tickets set cliente_id=null where cliente_id=$1', [req.params.id]);
+  await pool.query('update documentos_edificio set cliente_id=null where cliente_id=$1', [req.params.id]);
+  // Si este cliente era una "Administración" que gestionaba otros edificios, esos edificios no se
+  // borran: solo quedan sueltos (sin administración a cargo), en vez de arrastrarlos en la eliminación.
+  await pool.query('update clientes set administrado_por_id=null where administrado_por_id=$1', [req.params.id]);
   await pool.query('delete from clientes where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
