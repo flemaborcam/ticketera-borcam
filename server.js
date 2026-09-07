@@ -954,10 +954,16 @@ app.post('/api/tickets/:id/fusionar', requireStaff, async (req, res) => {
   if (!destino || !origen) return bad(res, 'No encontrado', 404);
   await pool.query('update mensajes set ticket_id=$1 where ticket_id=$2', [destinoId, origenId]);
   const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  // Si el ticket fusionado tenía un remitente distinto al del ticket destino, lo dejamos en copia de
+  // esta nota (el formulario de respuesta arma el "CC" a partir de la copia de todos los mensajes del
+  // ticket), para que al contestar le llegue también a esa persona y no se pierda del hilo.
+  const ccMerge = (origen.remitente_email && origen.remitente_email.toLowerCase() !== (destino.remitente_email || '').toLowerCase())
+    ? [origen.remitente_email] : [];
   await pool.query(
-    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico, cc) values ($1,'sistema',$2,$3,true,$4)`,
     [destinoId, staff ? `${staff.nombre} ${staff.apellido}` : 'Sistema',
-     `Se fusionó el ticket ${origen.numero} ("${origen.asunto}") dentro de este ticket. Los mensajes de ambos quedaron juntos acá.`]
+     `Se fusionó el ticket ${origen.numero} ("${origen.asunto}") dentro de este ticket. Los mensajes de ambos quedaron juntos acá.${ccMerge.length ? ` A partir de ahora, ${origen.remitente_email} queda en copia de las respuestas.` : ''}`,
+     ccMerge.length ? ccMerge : null]
   );
   await pool.query('update tickets set necesita_atencion=$1, actualizado=now() where id=$2',
     [destino.necesita_atencion || origen.necesita_atencion, destinoId]);
