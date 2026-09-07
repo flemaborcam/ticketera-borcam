@@ -11,7 +11,7 @@ async function api(method, url, body) {
 }
 
 let session = null;
-let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null };
+let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [] };
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
@@ -70,7 +70,7 @@ function mapTicket(row) {
     id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, prioridad: row.prioridad, estado: row.estado,
     edificio: row.edificio || '',
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
-    asignadoA: row.asignado_a, grupoId: row.cliente_id, creado: row.creado, actualizado: row.actualizado,
+    asignadoA: row.asignado_a, grupoId: row.cliente_id, edificioNombre: row.edificio_nombre || null, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
     mensajes: (row.mensajes || []).map(mapMensaje),
     mensajesTexto: row.mensajes_texto || (row.mensajes || []).map(m => m.cuerpo || '').join(' '),
@@ -273,7 +273,7 @@ async function handleRegisterCliente(ev) {
 async function logout() {
   await api('POST', '/api/auth/logout');
   session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
-  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null };
+  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [] };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
   render();
 }
@@ -496,11 +496,11 @@ function openEditarGrupoModal(id) { state.modal = 'editar-grupo'; state.editGrup
 async function submitGrupo(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
-  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim() };
+  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null };
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre }));
     state.modal = null;
     render();
   } catch (e) { showToast(e.message); }
@@ -1390,8 +1390,12 @@ async function restaurarRespaldo() {
 /* ---------------- Portal de cliente ---------------- */
 
 async function loadClienteTickets() {
-  const rows = await api('GET', '/api/portal/tickets');
+  const [rows, edificios] = await Promise.all([
+    api('GET', '/api/portal/tickets'),
+    cache.edificiosCliente.length ? Promise.resolve(cache.edificiosCliente) : api('GET', '/api/portal/edificios')
+  ]);
   cache.tickets = rows.map(mapTicket);
+  cache.edificiosCliente = edificios;
 }
 function goCliente(view) {
   state.view = view;
@@ -1504,9 +1508,10 @@ async function submitNuevoTicketCliente(ev) {
   const fd = new FormData(ev.target);
   const asunto = fd.get('asunto').trim();
   const cuerpo = fd.get('cuerpo').trim();
+  const edificioClienteId = fd.get('edificioClienteId') || null;
   if (!asunto || !cuerpo) return false;
   try {
-    const t = await api('POST', '/api/portal/tickets', { asunto, cuerpo, adjuntos: state.pendingAttachments });
+    const t = await api('POST', '/api/portal/tickets', { asunto, cuerpo, edificioClienteId, adjuntos: state.pendingAttachments });
     state.pendingAttachments = [];
     state.modal = null;
     await loadClienteTickets();
@@ -1716,6 +1721,7 @@ function renderStub(t, clientMode, selectable) {
         ${!clientMode && ticketVencido(t) ? `<span class="badge-vencido">⏰ Vencido</span>` : ''}
         <span class="tag tag-${slug(t.estado)}">${t.estado}</span><span class="tag tag-${slug(t.prioridad)}">${t.prioridad}</span><span class="tag tag-cat">${escapeHtml(t.categoria)}</span>
         ${!clientMode && grupo ? `<span class="tag tag-cliente">${escapeHtml(grupo.nombre)}</span>` : ''}
+        ${clientMode && cache.edificiosCliente.length > 1 && t.edificioNombre ? `<span class="tag tag-cliente">${escapeHtml(t.edificioNombre)}</span>` : ''}
         ${!clientMode ? `<span class="tag tag-agente">${agente ? '👤 ' + escapeHtml(agente.nombre) + ' ' + escapeHtml(agente.apellido) : 'Sin asignar'}</span>` : ''}
       </div>
     </div>
@@ -2180,7 +2186,7 @@ function renderGrupos() {
       <div class="stub-body"><div class="stub-top"><div class="stub-asunto">${escapeHtml(g.nombre)}</div></div>
         <div class="stub-remitente">${[g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         ${g.direccion ? `<div class="stub-snippet">${escapeHtml(g.direccion)}</div>` : ''}
-        ${g.rolCliente ? `<div class="stub-meta"><span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span></div>` : ''}
+        ${g.rolCliente || g.administradoPorNombre ? `<div class="stub-meta">${g.rolCliente ? `<span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span>` : ''}${g.administradoPorNombre ? `<span class="tag">Administrado por ${escapeHtml(g.administradoPorNombre)}</span>` : ''}</div>` : ''}
       </div></button>`).join('');
   const list = cache.clientes.length ? `<div class="stub-list">${rows}</div>` : `<div class="empty-state"><div class="big">Todavía no hay clientes</div><div>Dá de alta un cliente para agrupar sus tickets.</div></div>`;
   return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Listado de clientes, cada uno con sus propios tickets</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>${list}`;
@@ -2196,7 +2202,10 @@ async function renderGrupoDetailAsync(id) {
     <div class="ticket-head">
       <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
         <div class="ticket-from">${[g.direccion, g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
-        <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div></div>
+        <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div>
+        ${g.administradoPorNombre ? `<div class="ticket-from">Administrado por: <strong>${escapeHtml(g.administradoPorNombre)}</strong></div>` : ''}
+        ${(() => { const edificios = cache.clientes.filter(c => c.administradoPorId === g.id); return edificios.length ? `<div class="ticket-from">Gestiona ${edificios.length} edificio${edificios.length === 1 ? '' : 's'}: ${edificios.map(e => escapeHtml(e.nombre)).join(', ')}</div>` : ''; })()}
+      </div>
         ${g.rolCliente ? `<div class="stamp stamp-abierto">${escapeHtml(g.rolCliente)}</div>` : ''}</div>
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line-strong);">
         <button class="btn btn-ghost" onclick="openEditarGrupoModal('${g.id}')">Editar cliente</button>
@@ -3347,9 +3356,11 @@ function renderAceptacionesTicket(t) {
 }
 
 function renderNuevoTicketClienteModal() {
+  const multiEdificio = cache.edificiosCliente.length > 1;
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>Nuevo ticket</h2><p class="sub">Contanos qué necesitás y, si hace falta, adjuntá fotos o un video.</p>
     <form onsubmit="return submitNuevoTicketCliente(event)">
+      ${multiEdificio ? `<div class="field"><label>Edificio</label><select name="edificioClienteId" required><option value="" disabled selected>Elegí para qué edificio es</option>${cache.edificiosCliente.map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`).join('')}</select></div>` : ''}
       <div class="field"><label>Asunto</label><input name="asunto" placeholder="Ej: Cámara del garage sin imagen" required></div>
       <div class="field"><label>Descripción</label><textarea name="cuerpo" placeholder="Contanos con el mayor detalle posible qué está pasando…" required></textarea></div>
       <div class="field"><label>Adjuntar fotos o video (opcional)</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
@@ -3388,6 +3399,9 @@ function renderGrupoModal() {
       <div class="field"><label>Dirección</label><input name="direccion" value="${g ? escapeHtml(g.direccion || '') : ''}"></div>
       <div class="field"><label>Correo electrónico</label><input name="correo" type="email" value="${g ? escapeHtml(g.correo || '') : ''}"></div>
       <div class="field"><label>Rol</label><select name="rolCliente"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+      <div class="field"><label>Administrado por</label>
+        <select name="administradoPorId"><option value="">Ninguna (cliente independiente)</option>${cache.clientes.filter(c => c.rolCliente === 'Administración' && (!g || c.id !== g.id)).map(c => `<option value="${c.id}" ${g && g.administradoPorId === c.id ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}</select>
+        <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá: sus tickets se van a ver también en el portal de esa administración, sin necesidad de crearle un login aparte.</div></div>
       <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
@@ -3538,9 +3552,10 @@ function renderClienteTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
   if (!t) return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver</button><div class="empty-state">Cargando…</div>`;
   const thread = renderThreadHtml(t);
+  const edificio = cache.edificiosCliente.length > 1 ? cache.edificiosCliente.find(e => e.id === t.grupoId) : null;
   return `${clienteTicketStyleTag()}<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
     <div class="ticket-head"><div class="ticket-head-top"><div><div class="ticket-num-big">${t.numero}</div><h1>${escapeHtml(t.asunto)}</h1>
-      <div class="ticket-from">Categoría: ${escapeHtml(t.categoria)} · Prioridad: ${t.prioridad} · Creado ${fmtDateTime(t.creado)}</div></div>
+      <div class="ticket-from">${edificio ? `Edificio: <strong>${escapeHtml(edificio.nombre)}</strong> · ` : ''}Categoría: ${escapeHtml(t.categoria)} · Prioridad: ${t.prioridad} · Creado ${fmtDateTime(t.creado)}</div></div>
       <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div></div>
       ${renderEstadoTimelineCliente(t.estado)}</div>
     <div class="thread">${thread}</div>
