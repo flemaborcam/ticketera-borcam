@@ -415,9 +415,59 @@ async function eliminarTicket(id) {
     go('dashboard');
   } catch (e) { showToast(e.message); }
 }
+function openFusionarTicketModal(id) { state.modal = 'fusionar-ticket'; state.fusionarTicketId = id; state.fusionarBusqueda = ''; render(); }
+function refreshFusionarLista() {
+  const el = document.getElementById('fusionar-lista');
+  if (el) el.innerHTML = renderFusionarLista();
+}
+function onFusionarBusquedaChange(input) { state.fusionarBusqueda = input.value; refreshFusionarLista(); }
+function renderFusionarLista() {
+  const q = (state.fusionarBusqueda || '').trim().toLowerCase();
+  const candidatos = cache.tickets
+    .filter(t => t.id !== state.fusionarTicketId)
+    .filter(t => !q || t.numero.toLowerCase().includes(q) || t.asunto.toLowerCase().includes(q) || (t.remitenteNombre || '').toLowerCase().includes(q) || (t.remitenteEmail || '').toLowerCase().includes(q))
+    .slice(0, 30);
+  if (!candidatos.length) return `<div class="empty-state" style="padding:20px;"><div class="big" style="font-size:14px;">Sin resultados</div></div>`;
+  return candidatos.map(t => `
+    <label class="stub" style="cursor:pointer;padding:10px 12px;">
+      <input type="radio" name="fusionarOtroId" value="${t.id}" style="margin-right:10px;">
+      <div class="stub-body" style="min-width:0;">
+        <div class="stub-top"><div class="stub-asunto" style="font-size:13.5px;">${t.numero} · ${escapeHtml(t.asunto)}</div></div>
+        <div class="stub-remitente" style="font-size:12px;">${escapeHtml(t.remitenteNombre)} · ${escapeHtml(t.remitenteEmail)}</div>
+      </div>
+    </label>`).join('');
+}
+function renderFusionarTicketModal() {
+  const t = cache.tickets.find(x => x.id === state.fusionarTicketId);
+  if (!t) return '';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Fusionar con otro ticket</h2>
+    <p class="sub">Vas a fusionar <strong>${t.numero} · ${escapeHtml(t.asunto)}</strong> con el que elijas abajo. Todos los mensajes van a quedar juntos en este ticket, y el otro se elimina.</p>
+    <form onsubmit="return submitFusionarTicket(event)">
+      <div class="field"><label>Buscar ticket (número, asunto o remitente)</label><input type="text" oninput="onFusionarBusquedaChange(this)" placeholder="Escribí para buscar…"></div>
+      <div id="fusionar-lista" style="max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:10px;">${renderFusionarLista()}</div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Fusionar</button></div>
+    </form></div></div>`;
+}
+async function submitFusionarTicket(ev) {
+  ev.preventDefault();
+  const otroTicketId = document.querySelector('input[name="fusionarOtroId"]:checked')?.value;
+  if (!otroTicketId) { showToast('Elegí con qué ticket fusionar.'); return false; }
+  if (!confirm('¿Fusionar los dos tickets? Esta acción no se puede deshacer.')) return false;
+  try {
+    const destinoId = state.fusionarTicketId;
+    await api('POST', `/api/tickets/${destinoId}/fusionar`, { otroTicketId });
+    cache.tickets = (await api('GET', '/api/tickets')).map(mapTicket);
+    state.modal = null;
+    showToast('Tickets fusionados.');
+    state.view = 'ticket'; state.ticketId = destinoId;
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.documentoEdificioArchivo = null; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -2138,6 +2188,7 @@ function renderTicket(id) {
         ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
+        <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
       </div>
       <div class="meta-grid">
@@ -3315,6 +3366,7 @@ function renderActiveModal() {
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
   if (state.modal === 'nuevo-ticket-cliente') return renderNuevoTicketClienteModal();
   if (state.modal === 'nuevo-documento-edificio') return renderNuevoDocumentoEdificioModal();
+  if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
   return '';
 }
 function renderDocumentoModal() {
