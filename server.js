@@ -2268,13 +2268,15 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   }
   const t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
   if (!t) return bad(res, 'El ticket asociado ya no existe.');
-  const totales = {};
+  // Los precios cargados son sin IVA; acá se suma el 22% (tasa básica en Uruguay) para el total final.
+  const IVA_RATE = 0.22;
+  const subtotales = {};
   for (const c of servicio.costos) {
-    totales[c.moneda] = (totales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
+    subtotales[c.moneda] = (subtotales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
   }
-  const totalesTexto = Object.entries(totales).map(([m, v]) => `${m} ${v.toFixed(2)}`).join(' + ') || 'sin costos cargados';
-  const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}`).join('\n');
-  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal: ${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés revisarlo y dar tu conformidad desde el portal para que podamos avanzar con la tarea.`;
+  const totalesTexto = Object.entries(subtotales).map(([m, sub]) => `${m} ${sub.toFixed(2)} + IVA (${m} ${(sub * IVA_RATE).toFixed(2)}) = ${m} ${(sub * (1 + IVA_RATE)).toFixed(2)}`).join('\n') || 'sin costos cargados';
+  const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)} + IVA`).join('\n');
+  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés revisarlo y dar tu conformidad desde el portal para que podamos avanzar con la tarea.`;
   await pool.query(
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Presupuesto enviado',$2,true)`,
     [servicio.ticket_id, cuerpo]
