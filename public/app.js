@@ -2802,8 +2802,8 @@ function renderTicket(id) {
 
 /* ---------------- Clientes ---------------- */
 
-function renderGrupos() {
-  const rows = cache.clientes.map(g => `
+function renderGrupoRow(g) {
+  return `
     <div class="stub" role="button" tabindex="0" style="align-items:stretch;" onclick="openGrupoDetail('${g.id}')" onkeydown="if(event.key==='Enter'){openGrupoDetail('${g.id}')}">
       <div class="stub-num" style="width:64px;"><div class="n" style="font-size:18px;">${g.tienePortal ? '🔐' : '—'}</div><div class="y">portal</div></div>
       <div class="stub-body"><div class="stub-top"><div class="stub-asunto">${escapeHtml(g.nombre)}</div></div>
@@ -2812,9 +2812,31 @@ function renderGrupos() {
         ${g.rolCliente || g.administradoPorNombre ? `<div class="stub-meta">${g.rolCliente ? `<span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span>` : ''}${g.administradoPorNombre ? `<span class="tag">Administrado por ${escapeHtml(g.administradoPorNombre)}</span>` : ''}</div>` : ''}
       </div>
       <button type="button" class="btn btn-danger" style="flex:none;align-self:center;" onclick="event.stopPropagation();deleteGrupo('${g.id}')">Eliminar</button>
-    </div>`).join('');
-  const list = cache.clientes.length ? `<div class="stub-list">${rows}</div>` : `<div class="empty-state"><div class="big">Todavía no hay clientes</div><div>Dá de alta un cliente para agrupar sus tickets.</div></div>`;
-  return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Listado de clientes, cada uno con sus propios tickets</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>${list}`;
+    </div>`;
+}
+// Clientes separados en Edificios / Administraciones / Otros, porque hoy conviven dos niveles de
+// agrupamiento (Administración → Edificios que gestiona, y Edificio → Apartamentos que lo integran)
+// usando el mismo campo "administrado por"; separarlos en pestañas evita que una lista larga mezcle
+// edificios, administraciones y apartamentos sin distinción.
+function renderGrupos() {
+  const tab = state.clientesTab || 'edificios';
+  const edificios = cache.clientes.filter(c => c.rolCliente === 'Edificio');
+  const administraciones = cache.clientes.filter(c => c.rolCliente === 'Administración');
+  const apartamentosSueltos = cache.clientes.filter(c => c.rolCliente === 'Apartamento' && !c.administradoPorId);
+  const otros = cache.clientes.filter(c => !['Edificio', 'Administración'].includes(c.rolCliente) && !(c.rolCliente === 'Apartamento' && c.administradoPorId));
+  const tabsHtml = [
+    { v: 'edificios', label: `🏢 Edificios (${edificios.length})` },
+    { v: 'administraciones', label: `🗂️ Administraciones (${administraciones.length})` },
+    { v: 'otros', label: `Otros clientes (${otros.length})` }
+  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="state.clientesTab='${t.v}'; render();">${t.label}</button>`).join('');
+  const grupo = tab === 'edificios' ? edificios : tab === 'administraciones' ? administraciones : otros;
+  const mensajeVacio = tab === 'edificios' ? 'Todavía no diste de alta ningún edificio.' : tab === 'administraciones' ? 'Todavía no diste de alta ninguna administración.' : 'No hay otros clientes cargados.';
+  const list = grupo.length ? `<div class="stub-list">${grupo.map(renderGrupoRow).join('')}</div>` : `<div class="empty-state"><div class="big">${mensajeVacio}</div></div>`;
+  const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
+    ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
+  return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>
+    <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
+    ${avisoApartamentosSueltos}${list}`;
 }
 
 async function renderGrupoDetailAsync(id) {
@@ -2829,15 +2851,24 @@ async function renderGrupoDetailAsync(id) {
         <div class="ticket-from">${[g.direccion, g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div>
         ${g.administradoPorNombre ? `<div class="ticket-from">Administrado por: <strong>${escapeHtml(g.administradoPorNombre)}</strong></div>` : ''}
-        ${(() => { const edificios = cache.clientes.filter(c => c.administradoPorId === g.id); return edificios.length ? `<div class="ticket-from">Gestiona ${edificios.length} edificio${edificios.length === 1 ? '' : 's'}: ${edificios.map(e => escapeHtml(e.nombre)).join(', ')}</div>` : ''; })()}
       </div>
         ${g.rolCliente ? `<div class="stamp stamp-abierto">${escapeHtml(g.rolCliente)}</div>` : ''}</div>
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line-strong);">
         <button class="btn btn-ghost" onclick="openEditarGrupoModal('${g.id}')">Editar cliente</button>
         <button class="btn btn-danger" onclick="deleteGrupo('${g.id}')">Eliminar</button></div>
     </div>
+    ${renderDependientesGrupo(g)}
     <div class="page-head"><div><h1 style="font-size:18px;">Tickets de este cliente</h1><div class="sub">${tickets.length} en total</div></div></div>
     ${list}`;
+}
+// Si este cliente es un "padre" (Administración o Edificio), lista a los clientes que tiene a cargo
+// (edificios o apartamentos, según el caso) para poder entrar a cada uno con un clic.
+function renderDependientesGrupo(g) {
+  const dependientes = cache.clientes.filter(c => c.administradoPorId === g.id);
+  if (!dependientes.length) return '';
+  const titulo = g.rolCliente === 'Administración' ? 'Edificios que administra' : g.rolCliente === 'Edificio' ? 'Apartamentos' : 'Clientes a cargo';
+  return `<div class="page-head"><div><h1 style="font-size:18px;">${titulo}</h1><div class="sub">${dependientes.length} en total</div></div></div>
+    <div class="stub-list">${dependientes.map(renderGrupoRow).join('')}</div>`;
 }
 
 /* ---------------- Respuestas / Automatizaciones / Usuarios / Perfil / Config ---------------- */
@@ -4028,8 +4059,8 @@ function renderGrupoModal() {
       <div class="field"><label>Correo electrónico</label><input name="correo" type="email" value="${g ? escapeHtml(g.correo || '') : ''}"></div>
       <div class="field"><label>Rol</label><select name="rolCliente"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>Administrado por</label>
-        <select name="administradoPorId"><option value="">Ninguna (cliente independiente)</option>${cache.clientes.filter(c => c.rolCliente === 'Administración' && (!g || c.id !== g.id)).map(c => `<option value="${c.id}" ${g && g.administradoPorId === c.id ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}</select>
-        <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá: sus tickets se van a ver también en el portal de esa administración, sin necesidad de crearle un login aparte.</div></div>
+        <select name="administradoPorId"><option value="">Ninguno (cliente independiente)</option>${cache.clientes.filter(c => (c.rolCliente === 'Administración' || c.rolCliente === 'Edificio') && (!g || c.id !== g.id)).map(c => `<option value="${c.id}" ${g && g.administradoPorId === c.id ? 'selected' : ''}>${escapeHtml(c.nombre)} (${c.rolCliente})</option>`).join('')}</select>
+        <div class="hint-text">Si este cliente es un edificio que gestiona una administración, o un apartamento dentro de un edificio, elegí acá su "padre": sus tickets se van a ver también en el portal de ese cliente, sin necesidad de crearle un login aparte.</div></div>
       <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
@@ -4301,7 +4332,7 @@ function renderAuth() {
     </div></div>`;
   }
   if (mode === 'register-cliente') {
-    const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio']).map(r => `<option value="${r}">${r}</option>`).join('');
+    const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento']).map(r => `<option value="${r}">${r}</option>`).join('');
     return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
     <div class="auth-card-brand">${logoSvg('white')}</div>
     <div class="auth-card-body">
