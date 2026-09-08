@@ -1076,6 +1076,24 @@ async function asegurarCatalogoCostosCargado() {
     try { cache.catalogoCostos = await api('GET', '/api/catalogo-costos'); } catch (e) { cache.catalogoCostos = cache.catalogoCostos || []; }
   }
 }
+// Al elegir un ítem del catálogo, completa Descripción/Precio/Moneda con lo que tiene cargado ese
+// ítem (igual se pueden pisar a mano antes de agregar el costo). "prefijo" es 'pendiente' (turno nuevo)
+// o 'costo' (servicio ya existente), porque los ids de los inputs no se llaman igual en cada editor.
+function autocompletarCostoDesdeCatalogo(prefijo) {
+  const ids = prefijo === 'pendiente'
+    ? { select: 'pendiente-costo-catalogo', desc: 'pendiente-costo-descripcion', precio: 'pendiente-costo-precio', moneda: 'pendiente-costo-moneda' }
+    : { select: 'costo-catalogo-select', desc: 'costo-descripcion', precio: 'costo-precio', moneda: 'costo-moneda' };
+  const catalogoItemId = document.getElementById(ids.select).value;
+  const descInput = document.getElementById(ids.desc);
+  const precioInput = document.getElementById(ids.precio);
+  const monedaInput = document.getElementById(ids.moneda);
+  if (!catalogoItemId) { descInput.value = ''; precioInput.value = ''; monedaInput.value = 'UYU'; return; }
+  const item = (cache.catalogoCostos || []).find(c => String(c.id) === String(catalogoItemId));
+  if (!item) return;
+  descInput.value = item.nombre;
+  precioInput.value = Number(item.precio);
+  monedaInput.value = item.moneda;
+}
 function renderCostosPendientesEditor() {
   const items = state.pendingCostosServicio || [];
   const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Number(c.precio).toFixed(2)} + IVA)</option>`).join('');
@@ -1089,7 +1107,7 @@ function renderCostosPendientesEditor() {
         </div>`).join('')}
     </div>
     <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
-      <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="pendiente-costo-catalogo"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+      <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="pendiente-costo-catalogo" onchange="autocompletarCostoDesdeCatalogo('pendiente')"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
       <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="pendiente-costo-cantidad" value="1" min="0.01" step="0.01"></div>
     </div>
     <div class="field-row" style="flex-wrap:wrap;">
@@ -1278,7 +1296,7 @@ function renderDetalleServicioTecnicoModal() {
       </div>
       ${costos.length ? `<div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>` : ''}
       <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
-        <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+        <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select" onchange="autocompletarCostoDesdeCatalogo('costo')"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
         <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
       </div>
       <div class="field-row" style="flex-wrap:wrap;">
