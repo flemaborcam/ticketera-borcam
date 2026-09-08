@@ -234,6 +234,35 @@ pool.query(`create table if not exists servicios_tecnicos (
   creado_por text,
   creado timestamptz not null default now()
 )`).catch(e => console.error('No se pudo crear servicios_tecnicos:', e.message));
+// Migración automática: módulo de Servicio Técnico completo (costos, presupuestos y aprobación del
+// cliente). Un servicio técnico siempre queda asociado a un cliente/edificio (para llevar historial),
+// pero el ticket sigue siendo opcional — se puede cargar una visita sin que exista un reclamo previo.
+pool.query('alter table servicios_tecnicos add column if not exists cliente_id uuid').catch(e => console.error('No se pudo migrar cliente_id en servicios_tecnicos:', e.message));
+pool.query(`alter table servicios_tecnicos add column if not exists presupuesto_adjuntos jsonb not null default '[]'::jsonb`).catch(e => console.error('No se pudo migrar presupuesto_adjuntos:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_enviado boolean not null default false').catch(e => console.error('No se pudo migrar presupuesto_enviado:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado boolean not null default false').catch(e => console.error('No se pudo migrar presupuesto_aprobado:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_fecha timestamptz').catch(e => console.error('No se pudo migrar presupuesto_aprobado_fecha:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_ip text').catch(e => console.error('No se pudo migrar presupuesto_aprobado_ip:', e.message));
+// Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
+// tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
+pool.query(`create table if not exists catalogo_costos_servicio (
+  id serial primary key,
+  nombre text not null,
+  precio numeric not null,
+  moneda text not null default 'UYU',
+  activo boolean not null default true
+)`).catch(e => console.error('No se pudo crear catalogo_costos_servicio:', e.message));
+// Cada ítem de costo cargado en un servicio técnico puntual (venga del catálogo o sea libre).
+pool.query(`create table if not exists costos_servicio_tecnico (
+  id serial primary key,
+  servicio_id integer not null,
+  descripcion text not null,
+  cantidad numeric not null default 1,
+  precio_unitario numeric not null,
+  moneda text not null default 'UYU',
+  catalogo_item_id integer,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear costos_servicio_tecnico:', e.message));
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -288,7 +317,10 @@ async function ticketConMensajes(ticketId) {
   const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return null;
   const mensajes = (await pool.query('select * from mensajes where ticket_id=$1 order by fecha asc', [ticketId])).rows;
-  const serviciosTecnicos = (await pool.query('select * from servicios_tecnicos where ticket_id=$1 order by fecha_hora asc', [ticketId])).rows;
+  const serviciosTecnicos = (await pool.query(
+    `select s.*, coalesce((select json_agg(c.* order by c.creado asc) from costos_servicio_tecnico c where c.servicio_id = s.id), '[]'::json) as costos
+     from servicios_tecnicos s where s.ticket_id=$1 order by s.fecha_hora asc`, [ticketId]
+  )).rows;
   const historialCliente = t.remitente_email
     ? (await pool.query(
         `select id, numero, asunto, estado, creado from tickets where remitente_email=$1 and id != $2 order by creado desc limit 15`,
@@ -2055,11 +2087,22 @@ app.post('/api/citas/:id/marcar-realizada', requireStaff, async (req, res) => {
 /* ---------------- Servicio Técnico (submenú de Calendario) ----------------
    Turnos que se cargan desde el botón "Agendar servicio técnico" de cualquier ticket. */
 app.get('/api/servicios-tecnicos', requireStaff, async (req, res) => {
-  const filas = (await pool.query(`select * from servicios_tecnicos order by fecha_hora desc`)).rows;
+  const filas = (await pool.query(
+    `select s.*, coalesce((select json_agg(c.* order by c.creado asc) from costos_servicio_tecnico c where c.servicio_id = s.id), '[]'::json) as costos
+     from servicios_tecnicos s order by s.fecha_hora desc`
+  )).rows;
   ok(res, filas);
 });
+// Trae un servicio técnico con sus costos (para no repetir el join en cada endpoint de abajo).
+async function servicioTecnicoConCostos(servicioId) {
+  const s = (await pool.query('select * from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+  if (!s) return null;
+  const costos = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [servicioId])).rows;
+  return { ...s, costos };
+}
 app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
-  const { ticketId, ticketNumero, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  const { ticketId, ticketNumero, clienteId, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!clienteId) return bad(res, 'Falta el cliente/edificio.');
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
@@ -2068,14 +2111,15 @@ app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
   const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
   const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
   const r = await pool.query(
-    `insert into servicios_tecnicos (ticket_id, ticket_numero, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por)
-     values ($1,$2,$3,$4,$5,$6,$7) returning *`,
-    [ticketId || null, ticketNumero || null, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null]
+    `insert into servicios_tecnicos (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por)
+     values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+    [ticketId || null, ticketNumero || null, clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null]
   );
-  ok(res, r.rows[0]);
+  ok(res, { ...r.rows[0], costos: [] });
 });
 app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
-  const { titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  const { clienteId, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!clienteId) return bad(res, 'Falta el cliente/edificio.');
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
@@ -2083,16 +2127,163 @@ app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   // escribió el usuario como si fuera UTC y el turno queda corrido varias horas.
   const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
   const r = await pool.query(
-    `update servicios_tecnicos set titulo=$1, fecha_hora=$2, duracion_minutos=$3, todo_el_dia=$4 where id=$5 returning *`,
-    [titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
+    `update servicios_tecnicos set cliente_id=$1, titulo=$2, fecha_hora=$3, duracion_minutos=$4, todo_el_dia=$5 where id=$6 returning *`,
+    [clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
-  ok(res, r.rows[0]);
+  ok(res, await servicioTecnicoConCostos(req.params.id));
 });
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
   const r = await pool.query(`update servicios_tecnicos set estado='realizado' where id=$1 returning *`, [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, r.rows[0]);
+});
+/* ---- Costos por visita: catálogo precargado + ítems puntuales cargados en cada servicio ---- */
+app.get('/api/catalogo-costos', requireStaff, async (req, res) => {
+  const filas = (await pool.query('select * from catalogo_costos_servicio order by nombre asc')).rows;
+  ok(res, filas);
+});
+app.post('/api/catalogo-costos', requireStaff, async (req, res) => {
+  const { nombre, precio, moneda } = req.body || {};
+  if (!nombre || !nombre.trim()) return bad(res, 'Falta el nombre del costo.');
+  if (precio === undefined || precio === null || isNaN(Number(precio))) return bad(res, 'Falta el precio.');
+  const r = await pool.query(
+    `insert into catalogo_costos_servicio (nombre, precio, moneda) values ($1,$2,$3) returning *`,
+    [nombre.trim(), Number(precio), (moneda === 'USD') ? 'USD' : 'UYU']
+  );
+  ok(res, r.rows[0]);
+});
+app.put('/api/catalogo-costos/:id', requireStaff, async (req, res) => {
+  const { nombre, precio, moneda, activo } = req.body || {};
+  if (!nombre || !nombre.trim()) return bad(res, 'Falta el nombre del costo.');
+  if (precio === undefined || precio === null || isNaN(Number(precio))) return bad(res, 'Falta el precio.');
+  const r = await pool.query(
+    `update catalogo_costos_servicio set nombre=$1, precio=$2, moneda=$3, activo=$4 where id=$5 returning *`,
+    [nombre.trim(), Number(precio), (moneda === 'USD') ? 'USD' : 'UYU', activo !== false, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'No encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/catalogo-costos/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from catalogo_costos_servicio where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+app.post('/api/servicios-tecnicos/:id/costos', requireStaff, async (req, res) => {
+  const servicioId = req.params.id;
+  const { catalogoItemId, descripcion, cantidad, precioUnitario, moneda } = req.body || {};
+  const servicio = (await pool.query('select id from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+  if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
+  let desc = descripcion, precio = precioUnitario, mon = moneda;
+  if (catalogoItemId) {
+    const item = (await pool.query('select * from catalogo_costos_servicio where id=$1', [catalogoItemId])).rows[0];
+    if (!item) return bad(res, 'Ese costo del catálogo ya no existe.');
+    desc = desc || item.nombre;
+    precio = precio !== undefined && precio !== null && precio !== '' ? precio : item.precio;
+    mon = mon || item.moneda;
+  }
+  if (!desc || !desc.trim()) return bad(res, 'Falta la descripción del costo.');
+  if (precio === undefined || precio === null || isNaN(Number(precio))) return bad(res, 'Falta el precio.');
+  const r = await pool.query(
+    `insert into costos_servicio_tecnico (servicio_id, descripcion, cantidad, precio_unitario, moneda, catalogo_item_id)
+     values ($1,$2,$3,$4,$5,$6) returning *`,
+    [servicioId, desc.trim(), Number(cantidad) || 1, Number(precio), (mon === 'USD') ? 'USD' : 'UYU', catalogoItemId || null]
+  );
+  ok(res, r.rows[0]);
+});
+app.delete('/api/costos-servicio/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from costos_servicio_tecnico where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+/* ---- Presupuestos adjuntos: se guardan en el mismo Storage que los adjuntos de mensajes ---- */
+app.post('/api/servicios-tecnicos/:id/presupuesto', requireStaff, async (req, res) => {
+  const servicioId = req.params.id;
+  const { adjuntos } = req.body || {};
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+  if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
+  const actuales = servicio.presupuesto_adjuntos || [];
+  const nuevos = [];
+  for (const a of (adjuntos || [])) {
+    try {
+      const base64 = (a.dataUrl || '').split(',')[1] || '';
+      const mime = (a.dataUrl || '').match(/^data:(.*?);base64,/)?.[1] || 'application/octet-stream';
+      const adjId = crypto.randomUUID();
+      const path = `servicios/${servicioId}/${adjId}-${encodeURIComponent(a.nombre)}`;
+      await subirArchivoStorage(path, Buffer.from(base64, 'base64'), mime);
+      nuevos.push({ id: adjId, nombre: a.nombre, mime, size: a.size, path });
+    } catch (e) { console.error('Error subiendo presupuesto:', e.message); }
+  }
+  const r = await pool.query(
+    `update servicios_tecnicos set presupuesto_adjuntos=$1 where id=$2 returning *`,
+    [JSON.stringify([...actuales, ...nuevos]), servicioId]
+  );
+  ok(res, await servicioTecnicoConCostos(servicioId));
+});
+app.delete('/api/servicios-tecnicos/:id/presupuesto/:adjId', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'No encontrado.', 404);
+  const actuales = servicio.presupuesto_adjuntos || [];
+  const adj = actuales.find(a => a.id === req.params.adjId);
+  const restantes = actuales.filter(a => a.id !== req.params.adjId);
+  if (adj) await eliminarArchivosStorage([adj.path]).catch(e => console.error('No se pudo borrar el presupuesto de Storage:', e.message));
+  await pool.query('update servicios_tecnicos set presupuesto_adjuntos=$1 where id=$2', [JSON.stringify(restantes), req.params.id]);
+  ok(res, await servicioTecnicoConCostos(req.params.id));
+});
+app.get('/api/servicios-tecnicos/:id/presupuesto/:adjId/descargar', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  const adj = servicio && (servicio.presupuesto_adjuntos || []).find(a => a.id === req.params.adjId);
+  if (!adj) return bad(res, 'No encontrado.', 404);
+  try {
+    const upstream = await descargarArchivoStorage(adj.path);
+    res.setHeader('Content-Type', adj.mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${adj.nombre}"`);
+    upstream.pipe(res);
+  } catch (e) { bad(res, 'No se pudo descargar el archivo.', 500); }
+});
+// El presupuesto solo se puede mandar al cliente cuando el servicio está asociado a un ticket (así el
+// aviso y la aprobación quedan registrados en la conversación de ese ticket). Manda un mensaje de sistema
+// con el detalle de costos y un correo avisando que hay un presupuesto esperando su conformidad.
+app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (req, res) => {
+  let servicio = await servicioTecnicoConCostos(req.params.id);
+  if (!servicio) return bad(res, 'No encontrado.', 404);
+  if (!servicio.costos.length && !(servicio.presupuesto_adjuntos || []).length) return bad(res, 'Cargá al menos un costo o un archivo de presupuesto antes de enviarlo.');
+  // Si el servicio no nació de un ticket, se crea uno acá mismo para poder notificar al cliente y
+  // dejar registrado el presupuesto y su aprobación — no hace falta cargarlo a mano de antemano.
+  if (!servicio.ticket_id) {
+    const cliente = (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0];
+    if (!cliente) return bad(res, 'El cliente de este servicio técnico ya no existe.');
+    const numero = await nextTicketNumero();
+    const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+    const r = await pool.query(
+      `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, cliente_id, asignado_a)
+       values ($1,$2,'Soporte Técnico','Media','En progreso',$3,$4,$5,$6) returning id`,
+      [numero, servicio.titulo, cliente.contacto_nombre || cliente.nombre, cliente.correo || '', cliente.id, req.session.userId]
+    );
+    const ticketId = r.rows[0].id;
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+      [ticketId, staff ? `${staff.nombre} ${staff.apellido}` : 'Sistema', `Ticket creado automáticamente al enviar el presupuesto de "${servicio.titulo}".`]
+    );
+    await pool.query('update servicios_tecnicos set ticket_id=$1, ticket_numero=$2 where id=$3', [ticketId, numero, servicio.id]);
+    servicio = { ...servicio, ticket_id: ticketId, ticket_numero: numero };
+  }
+  const t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
+  if (!t) return bad(res, 'El ticket asociado ya no existe.');
+  const totales = {};
+  for (const c of servicio.costos) {
+    totales[c.moneda] = (totales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
+  }
+  const totalesTexto = Object.entries(totales).map(([m, v]) => `${m} ${v.toFixed(2)}`).join(' + ') || 'sin costos cargados';
+  const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}`).join('\n');
+  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal: ${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés revisarlo y dar tu conformidad desde el portal para que podamos avanzar con la tarea.`;
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Presupuesto enviado',$2,true)`,
+    [servicio.ticket_id, cuerpo]
+  );
+  await pool.query('update servicios_tecnicos set presupuesto_enviado=true where id=$1', [servicio.id]);
+  await pool.query('update tickets set actualizado=now() where id=$1', [servicio.ticket_id]);
+  const ccs = await collectTicketCCs(servicio.ticket_id);
+  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true });
+  ok(res, await ticketConMensajes(servicio.ticket_id));
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
 async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
@@ -2591,6 +2782,28 @@ app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) =>
   await aplicarAvisoFueraHorario(id);
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
   ok(res, await ticketConMensajes(id));
+});
+// El cliente da conformidad con un presupuesto ya enviado. Requiere que el servicio esté vinculado a
+// un ticket de alguno de los edificios que gestiona la cuenta (propio o los que administra).
+app.post('/api/portal/servicios/:id/aprobar', requireCliente, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio || !servicio.ticket_id) return bad(res, 'No encontrado', 404);
+  const t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
+  const ids = await idsClienteGestionados(req.session.clienteId);
+  if (!t || !ids.includes(t.cliente_id)) return bad(res, 'No encontrado', 404);
+  if (!servicio.presupuesto_enviado) return bad(res, 'Todavía no se envió un presupuesto para este servicio.');
+  if (servicio.presupuesto_aprobado) return ok(res, await ticketConMensajes(servicio.ticket_id));
+  const cliente = (await pool.query('select nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
+  await pool.query(
+    `update servicios_tecnicos set presupuesto_aprobado=true, presupuesto_aprobado_fecha=now(), presupuesto_aprobado_ip=$1 where id=$2`,
+    [req.ip || null, servicio.id]
+  );
+  await pool.query(
+    `insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'sistema',$2,$3)`,
+    [servicio.ticket_id, cliente ? cliente.nombre : 'Cliente', `Dio conformidad con el presupuesto de "${servicio.titulo}". Ya se puede avanzar con la tarea.`]
+  );
+  await pool.query('update tickets set necesita_atencion=true, actualizado=now() where id=$1', [servicio.ticket_id]);
+  ok(res, await ticketConMensajes(servicio.ticket_id));
 });
 // Documentos del edificio: el cliente ve los suyos (cliente_id = el suyo) más los generales
 // (cliente_id null, por ejemplo un manual que aplica a todos los edificios).
