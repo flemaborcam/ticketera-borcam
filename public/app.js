@@ -1088,14 +1088,14 @@ function renderCostosPendientesEditor() {
           <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="quitarCostoPendiente(${i})">Quitar</button>
         </div>`).join('')}
     </div>
-    <div class="field-row" style="align-items:flex-end;">
-      <div class="field" style="flex:1.4;"><label>Del catálogo</label><select id="pendiente-costo-catalogo"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
-      <div class="field" style="flex:0.7;"><label>Cant.</label><input type="number" id="pendiente-costo-cantidad" value="1" min="0.01" step="0.01"></div>
+    <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
+      <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="pendiente-costo-catalogo"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+      <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="pendiente-costo-cantidad" value="1" min="0.01" step="0.01"></div>
     </div>
-    <div class="field-row">
-      <div class="field" style="flex:1.6;"><label>Descripción (si es puntual)</label><input type="text" id="pendiente-costo-descripcion" placeholder="Ej: Mano de obra"></div>
-      <div class="field"><label>Precio unitario (sin IVA)</label><input type="number" id="pendiente-costo-precio" min="0" step="0.01"></div>
-      <div class="field" style="flex:0.6;"><label>Moneda</label><select id="pendiente-costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
+    <div class="field-row" style="flex-wrap:wrap;">
+      <div class="field" style="flex:1.6;min-width:160px;"><label>Descripción (si es puntual)</label><input type="text" id="pendiente-costo-descripcion" placeholder="Ej: Mano de obra"></div>
+      <div class="field" style="flex:1;min-width:120px;"><label>Precio unitario (sin IVA)</label><input type="number" id="pendiente-costo-precio" min="0" step="0.01"></div>
+      <div class="field" style="flex:0.6;min-width:100px;"><label>Moneda</label><select id="pendiente-costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
     </div>
     <button type="button" class="btn btn-ghost" onclick="agregarCostoPendiente()">+ Agregar costo</button>
   </div>`;
@@ -1274,15 +1274,15 @@ function renderDetalleServicioTecnicoModal() {
             <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="borrarCostoServicioTecnico('${c.id}', '${s.id}')">Quitar</button>
           </div>`).join('') : `<div class="hint-text">Sin costos cargados todavía.</div>`}
       </div>
-      <div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>
-      <div class="field-row" style="align-items:flex-end;">
-        <div class="field" style="flex:1.4;"><label>Del catálogo</label><select id="costo-catalogo-select"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
-        <div class="field" style="flex:0.7;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
+      ${costos.length ? `<div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>` : ''}
+      <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
+        <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+        <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
       </div>
-      <div class="field-row">
-        <div class="field" style="flex:1.6;"><label>Descripción (si es puntual)</label><input type="text" id="costo-descripcion" placeholder="Ej: Mano de obra"></div>
-        <div class="field"><label>Precio unitario (sin IVA)</label><input type="number" id="costo-precio" min="0" step="0.01"></div>
-        <div class="field" style="flex:0.6;"><label>Moneda</label><select id="costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
+      <div class="field-row" style="flex-wrap:wrap;">
+        <div class="field" style="flex:1.6;min-width:160px;"><label>Descripción (si es puntual)</label><input type="text" id="costo-descripcion" placeholder="Ej: Mano de obra"></div>
+        <div class="field" style="flex:1;min-width:120px;"><label>Precio unitario (sin IVA)</label><input type="number" id="costo-precio" min="0" step="0.01"></div>
+        <div class="field" style="flex:0.6;min-width:100px;"><label>Moneda</label><select id="costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
       </div>
       <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>
     </div>
