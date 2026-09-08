@@ -1326,6 +1326,7 @@ function renderDetalleServicioTecnicoModal() {
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
+      <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
       ${costos.length ? `<button type="button" class="btn btn-ghost" onclick="generarComprobanteServicioTecnico('${s.id}')">🧾 Generar comprobante</button>` : ''}
       ${!s.presupuesto_enviado ? `<button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
@@ -1579,6 +1580,17 @@ async function guardarEdicionServicioTecnico(id) {
     state.editandoServicioTecnicoId = null;
     showToast('Servicio técnico actualizado.');
     render();
+  } catch (e) { showToast(e.message); }
+}
+async function eliminarServicioTecnico(id) {
+  if (!confirm('¿Eliminar este servicio técnico? Se borran también sus costos y presupuesto adjunto. Esta acción no se puede deshacer.')) return;
+  try {
+    await api('DELETE', `/api/servicios-tecnicos/${id}`);
+    cache.serviciosTecnicos = (cache.serviciosTecnicos || []).filter(x => String(x.id) !== String(id));
+    closeModal();
+    showToast('Servicio técnico eliminado.');
+    render();
+    refrescarVistaServicioTecnico();
   } catch (e) { showToast(e.message); }
 }
 /* ---- Catálogo de costos precargados (mano de obra, viáticos, etc.) ---- */
