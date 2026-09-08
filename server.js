@@ -2167,6 +2167,21 @@ app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, await servicioTecnicoConCostos(req.params.id));
 });
+// Borra un servicio técnico cargado por error: sus costos, comprobantes y adjuntos de presupuesto
+// (estos últimos también se borran de Storage). El ticket asociado, si lo hay, NO se toca — solo se
+// pierde el vínculo con este turno en particular.
+app.delete('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'Turno no encontrado.', 404);
+  const adjuntos = servicio.presupuesto_adjuntos || [];
+  if (adjuntos.length) {
+    await eliminarArchivosStorage(adjuntos.map(a => a.path)).catch(e => console.error('No se pudo borrar presupuesto de Storage:', e.message));
+  }
+  await pool.query('delete from costos_servicio_tecnico where servicio_id=$1', [req.params.id]);
+  await pool.query('delete from comprobantes_servicio_tecnico where servicio_id=$1', [req.params.id]);
+  await pool.query('delete from servicios_tecnicos where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
   const r = await pool.query(`update servicios_tecnicos set estado='realizado' where id=$1 returning *`, [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
