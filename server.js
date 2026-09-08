@@ -308,7 +308,7 @@ const ESTADOS = ['Abierto', 'En progreso', 'Esperando al Cliente', 'Resuelto', '
 const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'Recursos Humanos', 'Otro'];
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
-const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio'];
+const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento'];
 /* ---------------- Helpers ---------------- */
 function requireStaff(req, res, next) {
   if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
