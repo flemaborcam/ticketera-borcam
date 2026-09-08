@@ -477,7 +477,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -1067,11 +1067,77 @@ function renderServicioTecnicoLista(filtro, mensajeVacio) {
     <div class="user-list">${html}</div>`;
 }
 /* ---- Nuevo turno sin partir de un ticket (siempre pide cliente/edificio) ---- */
+// Editor de costos reutilizado en los modales de "Nuevo turno" (con o sin ticket): permite dejar
+// cargado desde el arranque el costo de la visita (del catálogo o puntual), sin tener que entrar
+// después al detalle del turno ya creado. Los ítems quedan en state.pendingCostosServicio y recién
+// se mandan al servidor cuando se confirma la creación del turno.
+async function asegurarCatalogoCostosCargado() {
+  if (!cache.catalogoCostos || !cache.catalogoCostos.length) {
+    try { cache.catalogoCostos = await api('GET', '/api/catalogo-costos'); } catch (e) { cache.catalogoCostos = cache.catalogoCostos || []; }
+  }
+}
+function renderCostosPendientesEditor() {
+  const items = state.pendingCostosServicio || [];
+  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Number(c.precio).toFixed(2)} + IVA)</option>`).join('');
+  return `<div style="border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:14px;">
+    <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos (opcional)</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:${items.length ? '10px' : '0'};">
+      ${items.map((c, i) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
+          <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precioUnitario)).toFixed(2)}</strong> <span style="color:var(--ink-soft);">+ IVA</span></div>
+          <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="quitarCostoPendiente(${i})">Quitar</button>
+        </div>`).join('')}
+    </div>
+    <div class="field-row" style="align-items:flex-end;">
+      <div class="field" style="flex:1.4;"><label>Del catálogo</label><select id="pendiente-costo-catalogo"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+      <div class="field" style="flex:0.7;"><label>Cant.</label><input type="number" id="pendiente-costo-cantidad" value="1" min="0.01" step="0.01"></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:1.6;"><label>Descripción (si es puntual)</label><input type="text" id="pendiente-costo-descripcion" placeholder="Ej: Mano de obra"></div>
+      <div class="field"><label>Precio unitario (sin IVA)</label><input type="number" id="pendiente-costo-precio" min="0" step="0.01"></div>
+      <div class="field" style="flex:0.6;"><label>Moneda</label><select id="pendiente-costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
+    </div>
+    <button type="button" class="btn btn-ghost" onclick="agregarCostoPendiente()">+ Agregar costo</button>
+  </div>`;
+}
+function agregarCostoPendiente() {
+  const catalogoItemId = document.getElementById('pendiente-costo-catalogo').value || null;
+  const cantidad = document.getElementById('pendiente-costo-cantidad').value || 1;
+  let descripcion = document.getElementById('pendiente-costo-descripcion').value;
+  let precioUnitario = document.getElementById('pendiente-costo-precio').value;
+  let moneda = document.getElementById('pendiente-costo-moneda').value;
+  if (catalogoItemId) {
+    const item = (cache.catalogoCostos || []).find(c => String(c.id) === String(catalogoItemId));
+    if (!item) { showToast('Ese costo del catálogo ya no existe.'); return; }
+    descripcion = descripcion && descripcion.trim() ? descripcion : item.nombre;
+    precioUnitario = precioUnitario !== '' ? precioUnitario : item.precio;
+    moneda = moneda || item.moneda;
+  }
+  if (!descripcion || !descripcion.trim()) { showToast('Escribí una descripción, o elegí un costo del catálogo.'); return; }
+  if (precioUnitario === '' || isNaN(Number(precioUnitario))) { showToast('Escribí un precio.'); return; }
+  state.pendingCostosServicio = state.pendingCostosServicio || [];
+  state.pendingCostosServicio.push({ catalogoItemId, descripcion: descripcion.trim(), cantidad: Number(cantidad) || 1, precioUnitario: Number(precioUnitario), moneda: moneda === 'USD' ? 'USD' : 'UYU' });
+  render();
+}
+function quitarCostoPendiente(i) {
+  state.pendingCostosServicio = (state.pendingCostosServicio || []).filter((_, idx) => idx !== i);
+  render();
+}
+// Aplica, después de crear el turno, los costos que se hayan dejado cargados en el modal.
+async function aplicarCostosPendientes(servicioId) {
+  const items = state.pendingCostosServicio || [];
+  for (const c of items) {
+    try { await api('POST', `/api/servicios-tecnicos/${servicioId}/costos`, c); } catch (e) { showToast(`No se pudo cargar el costo "${c.descripcion}": ${e.message}`); }
+  }
+  state.pendingCostosServicio = [];
+}
 function openNuevoServicioTecnicoModal() {
   state.modal = 'nuevo-servicio-tecnico';
   state.nuevoServicioTicketBusqueda = '';
   state.nuevoServicioTicketId = '';
+  state.pendingCostosServicio = [];
   render();
+  asegurarCatalogoCostosCargado().then(() => { if (state.modal === 'nuevo-servicio-tecnico') render(); });
 }
 function renderNuevoServicioTecnicoModal() {
   const ahora = new Date(Date.now() + 60 * 60000);
@@ -1101,6 +1167,7 @@ function renderNuevoServicioTecnicoModal() {
       <div class="field" id="nuevo-servicio-hora-wrap"><label>Hora</label><input type="time" id="nuevo-servicio-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="nuevo-servicio-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="nuevo-servicio-duracion" min="15" step="15" value="60"></div>
+    ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarNuevoServicioTecnico()">📅 Agendar</button></div>
   </div></div>`;
 }
@@ -1136,7 +1203,9 @@ async function guardarNuevoServicioTecnico() {
       clienteId, ticketId: ticketElegido ? ticketElegido.id : null, ticketNumero: ticketElegido ? ticketElegido.numero : null,
       titulo, fecha, hora, duracion, todoElDia
     });
-    cache.serviciosTecnicos = [nuevo, ...(cache.serviciosTecnicos || [])];
+    await aplicarCostosPendientes(nuevo.id);
+    const filas = await api('GET', '/api/servicios-tecnicos');
+    cache.serviciosTecnicos = filas;
     showToast('Servicio técnico agendado.');
     closeModal();
     refrescarVistaServicioTecnico();
@@ -2226,7 +2295,9 @@ function irAPedidoDeTagDesdeTicket(ticketId) {
 function openAgendarServicioModal(ticketId) {
   state.modal = 'agendar-servicio';
   state.agendarServicioTicketId = ticketId;
+  state.pendingCostosServicio = [];
   render();
+  asegurarCatalogoCostosCargado().then(() => { if (state.modal === 'agendar-servicio') render(); });
 }
 function renderAgendarServicioModal() {
   const t = cache.tickets.find(x => x.id === state.agendarServicioTicketId);
@@ -2244,6 +2315,7 @@ function renderAgendarServicioModal() {
       <div class="field" id="servicio-ics-hora-wrap"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="servicio-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
+    ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarServicioTecnico()">📅 Agendar</button></div>
   </div></div>`;
 }
@@ -2260,7 +2332,9 @@ async function guardarServicioTecnico() {
   if (!t.grupoId) { showToast('Este ticket no está vinculado a ningún cliente/edificio. Asignalo a un cliente antes de agendar el servicio técnico.'); return; }
   // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Servicio Técnico.
   try {
-    await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia });
+    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia });
+    await aplicarCostosPendientes(nuevo.id);
+    await refreshTicket(t.id);
     showToast('Servicio técnico agendado.');
     closeModal();
   } catch (e) { showToast(e.message); }
