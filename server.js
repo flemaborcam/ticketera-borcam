@@ -263,6 +263,40 @@ pool.query(`create table if not exists costos_servicio_tecnico (
   catalogo_item_id integer,
   creado timestamptz not null default now()
 )`).catch(e => console.error('No se pudo crear costos_servicio_tecnico:', e.message));
+// Comprobante de Servicio Técnico: recibo no fiscal (no sustituye a la factura DGI) que se le entrega
+// al cliente con el detalle de una visita ya con costos cargados. Numeración correlativa propia (serie
+// "A", ej. A-00001) guardada en una fila única, igual de espíritu que el contador de tickets de arriba.
+pool.query(`create table if not exists comprobantes_contador (
+  id smallint primary key default 1,
+  valor integer not null default 0
+)`).catch(e => console.error('No se pudo crear comprobantes_contador:', e.message));
+pool.query(`create table if not exists comprobantes_servicio_tecnico (
+  id serial primary key,
+  servicio_id integer not null,
+  numero text not null,
+  correlativo integer not null,
+  generado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear comprobantes_servicio_tecnico:', e.message));
+async function nextComprobanteNumero() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query(
+      `insert into comprobantes_contador (id, valor) values (1, 1)
+       on conflict (id) do update set valor = comprobantes_contador.valor + 1
+       returning valor`
+    );
+    await client.query('COMMIT');
+    const correlativo = r.rows[0].valor;
+    return { correlativo, numero: `A-${String(correlativo).padStart(5, '0')}` };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 app.use(express.json({ limit: '30mb' }));
 app.use(cookieSession({
   name: 'ticketera_session',
@@ -2286,6 +2320,26 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   const ccs = await collectTicketCCs(servicio.ticket_id);
   await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true });
   ok(res, await ticketConMensajes(servicio.ticket_id));
+});
+// Genera (o, si ya existía, devuelve) el comprobante no fiscal de un servicio técnico: número
+// correlativo propio (serie A) + todos los datos que necesita el frontend para armar el PDF.
+// Es idempotente a propósito: si Federico aprieta el botón de nuevo para el mismo servicio, no se
+// gasta un número correlativo nuevo, se reusa el que ya se generó la primera vez.
+app.post('/api/servicios-tecnicos/:id/comprobante', requireStaff, async (req, res) => {
+  const servicio = await servicioTecnicoConCostos(req.params.id);
+  if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
+  if (!servicio.costos.length) return bad(res, 'Cargá al menos un costo antes de generar el comprobante.');
+  const cliente = (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0];
+  let comprobante = (await pool.query('select * from comprobantes_servicio_tecnico where servicio_id=$1 order by creado desc limit 1', [servicio.id])).rows[0];
+  if (!comprobante) {
+    const { correlativo, numero } = await nextComprobanteNumero();
+    const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+    comprobante = (await pool.query(
+      `insert into comprobantes_servicio_tecnico (servicio_id, numero, correlativo, generado_por) values ($1,$2,$3,$4) returning *`,
+      [servicio.id, numero, correlativo, staff ? `${staff.nombre} ${staff.apellido}` : null]
+    )).rows[0];
+  }
+  ok(res, { comprobante, servicio, cliente: cliente || null });
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
 async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
