@@ -11,7 +11,7 @@ async function api(method, url, body) {
 }
 
 let session = null;
-let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [] };
+let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [] };
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
@@ -283,7 +283,7 @@ async function handleRegisterCliente(ev) {
 async function logout() {
   await api('POST', '/api/auth/logout');
   session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
-  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [] };
+  cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [] };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
   render();
 }
@@ -477,7 +477,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -990,8 +990,7 @@ function renderCalendarioHtml() {
   const subTab = state.calendarioSubTab || 'config';
   const subTabsHtml = [
     { v: 'config', label: 'Configuración' },
-    { v: 'domotica', label: '🏠 Domótica' },
-    { v: 'servicio-tecnico', label: '🛠️ Servicio Técnico' }
+    { v: 'domotica', label: '🏠 Domótica' }
   ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
 
   const tab = state.calendarioTab || 'turnos';
@@ -1003,58 +1002,169 @@ function renderCalendarioHtml() {
   let contenido;
   if (subTab === 'config') {
     contenido = renderCalendarioConfigTab(c, filasDias);
-  } else if (subTab === 'domotica') {
+  } else {
     contenido = `
       <div class="reply-tabs">${tabsHtml}</div>
       ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
       ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}`;
-  } else {
-    contenido = renderServicioTecnicoTab();
   }
 
   return `
-    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Configuración general, agenda de instalaciones (domótica) y turnos de servicio técnico</div></div></div>
+    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Configuración general y agenda de instalaciones (domótica). El servicio técnico ahora tiene su propia sección.</div></div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
     ${contenido}`;
 }
 function cambiarCalendarioSubTab(t) { state.calendarioSubTab = t; render(); }
 function cambiarCalendarioTab(t) { state.calendarioTab = t; render(); }
-/* ---------------- Servicio Técnico (submenú de Calendario) ----------------
-   Turnos que se cargan desde el botón "📅 Agendar servicio técnico" de cualquier ticket. */
+/* ---------------- Servicio Técnico (módulo propio del panel lateral) ----------------
+   Turnos que se cargan desde el botón "📅 Agendar servicio técnico" de un ticket, o desde
+   "+ Nuevo turno" acá mismo (sin ticket). Cada turno puede llevar costos (catálogo o puntuales,
+   en pesos o dólares, sin conversión entre monedas) y presupuestos adjuntos que el cliente ve y
+   aprueba desde el portal antes de que se pueda avanzar con la tarea. */
+async function renderServicioTecnicoModuloAsync() {
+  const [servicios, catalogo] = await Promise.all([api('GET', '/api/servicios-tecnicos'), api('GET', '/api/catalogo-costos')]);
+  cache.serviciosTecnicos = servicios;
+  cache.catalogoCostos = catalogo;
+  return renderServicioTecnicoTab();
+}
+function refrescarVistaServicioTecnico() {
+  const el = document.querySelector('.content');
+  if (el && state.view === 'servicio-tecnico') el.innerHTML = renderServicioTecnicoTab();
+}
 function renderServicioTecnicoTab() {
   const tab = state.servicioTecnicoTab || 'turnos';
   const tabsHtml = [
     { v: 'turnos', label: 'Próximos turnos' },
-    { v: 'realizados', label: 'Servicios Realizados' }
+    { v: 'realizados', label: 'Servicios Realizados' },
+    { v: 'catalogo', label: '💲 Costos precargados' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
-  const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
-  const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
+  let contenido;
+  if (tab === 'catalogo') {
+    contenido = renderCatalogoCostosTab();
+  } else {
+    const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
+    const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
+    contenido = renderServicioTecnicoLista(filtro, mensajeVacio);
+  }
   return `
-    <div class="reply-tabs">${tabsHtml}</div>
-    ${renderServicioTecnicoLista(filtro, mensajeVacio)}`;
+    <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
+      ${tab !== 'catalogo' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+    </div>
+    <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
+    ${contenido}`;
 }
 function cambiarServicioTecnicoTab(t) { state.servicioTecnicoTab = t; render(); }
+function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
 function renderServicioTecnicoLista(filtro, mensajeVacio) {
   const turnos = (cache.serviciosTecnicos || []).filter(filtro);
   const html = turnos.length ? turnos.map(s => `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
       <div class="avatar">🛠️</div>
-      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : ''}</div>
-      <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
+      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
+      <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
     </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list">${html}</div>`;
 }
+/* ---- Nuevo turno sin partir de un ticket (siempre pide cliente/edificio) ---- */
+function openNuevoServicioTecnicoModal() {
+  state.modal = 'nuevo-servicio-tecnico';
+  state.nuevoServicioTicketBusqueda = '';
+  state.nuevoServicioTicketId = '';
+  render();
+}
+function renderNuevoServicioTecnicoModal() {
+  const ahora = new Date(Date.now() + 60 * 60000);
+  const fechaDefault = ahora.toISOString().slice(0, 10);
+  const horaDefault = ahora.toTimeString().slice(0, 5);
+  const busqueda = (state.nuevoServicioTicketBusqueda || '').toLowerCase();
+  const ticketsFiltrados = busqueda ? cache.tickets.filter(t => !esTicketDeReserva(t) && (t.numero.toLowerCase().includes(busqueda) || t.asunto.toLowerCase().includes(busqueda))).slice(0, 8) : [];
+  const ticketElegido = cache.tickets.find(t => t.id === state.nuevoServicioTicketId);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🛠️ Nuevo turno de servicio técnico</h2>
+    <div class="field"><label>Cliente / edificio</label>
+      <select id="nuevo-servicio-cliente">
+        <option value="">Elegí un cliente…</option>
+        ${cache.clientes.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field"><label>Ticket asociado (opcional)</label>
+      ${ticketElegido
+        ? `<div style="display:flex;align-items:center;gap:8px;"><span class="tag tag-cat">${escapeHtml(ticketElegido.numero)} — ${escapeHtml(ticketElegido.asunto)}</span><button type="button" class="btn btn-ghost" onclick="state.nuevoServicioTicketId='';render();">Quitar</button></div>`
+        : `<input type="text" placeholder="Buscar por número o asunto…" value="${escapeHtml(state.nuevoServicioTicketBusqueda || '')}" oninput="state.nuevoServicioTicketBusqueda=this.value;refrescarBusquedaTicketNuevoServicio();">
+           <div id="nuevo-servicio-ticket-resultados">${renderResultadosTicketNuevoServicio(ticketsFiltrados)}</div>`}
+    </div>
+    <div class="field"><label>Título del evento</label><input type="text" id="nuevo-servicio-titulo" placeholder="Ej: Revisión de cámaras"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="nuevo-servicio-todo-el-dia" onchange="toggleTodoElDiaIcs('nuevo-servicio')"> Todo el día</label>
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input type="date" id="nuevo-servicio-fecha" value="${fechaDefault}"></div>
+      <div class="field" id="nuevo-servicio-hora-wrap"><label>Hora</label><input type="time" id="nuevo-servicio-hora" value="${horaDefault}"></div>
+    </div>
+    <div class="field" id="nuevo-servicio-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="nuevo-servicio-duracion" min="15" step="15" value="60"></div>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarNuevoServicioTecnico()">📅 Agendar</button></div>
+  </div></div>`;
+}
+function renderResultadosTicketNuevoServicio(lista) {
+  if (!state.nuevoServicioTicketBusqueda) return '';
+  if (!lista.length) return `<div class="hint-text">Sin resultados.</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;max-height:160px;overflow-y:auto;">
+    ${lista.map(t => `<button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;padding:6px 10px;" onclick="state.nuevoServicioTicketId='${t.id}';state.nuevoServicioTicketBusqueda='';render();">
+      <div style="font-size:13px;"><strong>${escapeHtml(t.numero)}</strong> — ${escapeHtml(t.asunto)}</div>
+    </button>`).join('')}</div>`;
+}
+function refrescarBusquedaTicketNuevoServicio() {
+  const el = document.getElementById('nuevo-servicio-ticket-resultados');
+  if (!el) return;
+  const busqueda = (state.nuevoServicioTicketBusqueda || '').toLowerCase();
+  const lista = busqueda ? cache.tickets.filter(t => !esTicketDeReserva(t) && (t.numero.toLowerCase().includes(busqueda) || t.asunto.toLowerCase().includes(busqueda))).slice(0, 8) : [];
+  el.innerHTML = renderResultadosTicketNuevoServicio(lista);
+}
+async function guardarNuevoServicioTecnico() {
+  const clienteId = document.getElementById('nuevo-servicio-cliente').value;
+  const titulo = document.getElementById('nuevo-servicio-titulo').value;
+  const fecha = document.getElementById('nuevo-servicio-fecha').value;
+  const hora = document.getElementById('nuevo-servicio-hora').value;
+  const duracion = document.getElementById('nuevo-servicio-duracion').value;
+  const todoElDia = document.getElementById('nuevo-servicio-todo-el-dia').checked;
+  if (!clienteId) { showToast('Elegí un cliente/edificio.'); return; }
+  if (!titulo || !titulo.trim()) { showToast('Escribí un título para el evento.'); return; }
+  if (!fecha) { showToast('Elegí una fecha.'); return; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
+  const ticketElegido = cache.tickets.find(t => t.id === state.nuevoServicioTicketId);
+  try {
+    const nuevo = await api('POST', '/api/servicios-tecnicos', {
+      clienteId, ticketId: ticketElegido ? ticketElegido.id : null, ticketNumero: ticketElegido ? ticketElegido.numero : null,
+      titulo, fecha, hora, duracion, todoElDia
+    });
+    cache.serviciosTecnicos = [nuevo, ...(cache.serviciosTecnicos || [])];
+    showToast('Servicio técnico agendado.');
+    closeModal();
+    refrescarVistaServicioTecnico();
+  } catch (e) { showToast(e.message); }
+}
 function abrirDetalleServicioTecnico(id) {
   state.modal = 'detalle-servicio-tecnico';
   state.servicioTecnicoDetalleId = id;
+  state.pendingPresupuestos = [];
   render();
+}
+function totalesPorMoneda(costos) {
+  const t = {};
+  (costos || []).forEach(c => { t[c.moneda] = (t[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
+  return t;
+}
+function renderTotalesPorMoneda(costos) {
+  const t = totalesPorMoneda(costos);
+  const entradas = Object.entries(t);
+  if (!entradas.length) return '<div class="hint-text">Todavía no hay costos cargados.</div>';
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;">${entradas.map(([m, v]) => `<span class="tag tag-cat" style="font-weight:700;">${m} ${v.toFixed(2)}</span>`).join('')}</div>`;
 }
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
   if (!s) return '';
   if (state.editandoServicioTecnicoId != null && String(state.editandoServicioTecnicoId) === String(s.id)) return renderEditarServicioTecnicoModal(s);
   const filas = [
+    ['Cliente / edificio', escapeHtml(nombreClientePorId(s.cliente_id))],
     ['Título', escapeHtml(s.titulo)],
     ['Ticket', s.ticket_numero ? escapeHtml(s.ticket_numero) : '—'],
     ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
@@ -1063,18 +1173,131 @@ function renderDetalleServicioTecnicoModal() {
     ['Estado', s.estado === 'realizado' ? 'Realizado' : 'Pendiente']
   ];
   const puedeMarcar = s.estado !== 'realizado';
-  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+  const costos = s.costos || [];
+  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Number(c.precio).toFixed(2)})</option>`).join('');
+  const adjuntos = s.presupuesto_adjuntos || [];
+  const estadoPresupuesto = s.presupuesto_aprobado
+    ? `<span class="tag tag-resuelto">✅ Aprobado por el cliente${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</span>`
+    : (s.presupuesto_enviado ? `<span class="tag tag-cat">📤 Enviado, esperando conformidad</span>` : `<span class="hint-text" style="margin:0;">Todavía no se envió al cliente.</span>`);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px;">
     <h2>🛠️ Detalle del servicio técnico</h2>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:${puedeMarcar ? '18px' : '4px'};">
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
+
+    <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+        ${costos.length ? costos.map(c => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
+            <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}</strong></div>
+            <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="borrarCostoServicioTecnico('${c.id}', '${s.id}')">Quitar</button>
+          </div>`).join('') : `<div class="hint-text">Sin costos cargados todavía.</div>`}
+      </div>
+      <div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>
+      <div class="field-row" style="align-items:flex-end;">
+        <div class="field" style="flex:1.4;"><label>Del catálogo</label><select id="costo-catalogo-select"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
+        <div class="field" style="flex:0.7;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
+      </div>
+      <div class="field-row">
+        <div class="field" style="flex:1.6;"><label>Descripción (si es puntual)</label><input type="text" id="costo-descripcion" placeholder="Ej: Mano de obra"></div>
+        <div class="field"><label>Precio unitario</label><input type="number" id="costo-precio" min="0" step="0.01"></div>
+        <div class="field" style="flex:0.6;"><label>Moneda</label><select id="costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
+      </div>
+      <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>
+    </div>
+
+    <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">📎 Presupuesto adjunto</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+        ${adjuntos.length ? adjuntos.map(a => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
+            <a href="/api/servicios-tecnicos/${s.id}/presupuesto/${a.id}/descargar" target="_blank" rel="noopener" style="font-size:13px;">${attachIcon(tipoAdjunto(a.mime || ''))} ${escapeHtml(a.nombre)}</a>
+            <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="borrarPresupuestoAdjunto('${s.id}', '${a.id}')">Quitar</button>
+          </div>`).join('') : `<div class="hint-text">Sin archivos de presupuesto todavía.</div>`}
+      </div>
+      <input type="file" multiple accept="image/*,application/pdf" onchange="addPendingPresupuestos(this)">
+      <div id="pending-presupuestos">${renderPendingPresupuestosChips()}</div>
+      ${(state.pendingPresupuestos || []).length ? `<button type="button" class="btn btn-ghost" style="margin-top:8px;" onclick="subirPresupuestosServicioTecnico('${s.id}')">Subir archivo(s)</button>` : ''}
+      <div style="margin-top:10px;">${estadoPresupuesto}</div>
+    </div>
+
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
+      ${!s.presupuesto_enviado ? `<button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
     </div>
   </div></div>`;
+}
+async function agregarCostoServicioTecnico(servicioId) {
+  const catalogoItemId = document.getElementById('costo-catalogo-select').value || null;
+  const cantidad = document.getElementById('costo-cantidad').value;
+  const descripcion = document.getElementById('costo-descripcion').value;
+  const precioUnitario = document.getElementById('costo-precio').value;
+  const moneda = document.getElementById('costo-moneda').value;
+  if (!catalogoItemId && (!descripcion || !descripcion.trim())) { showToast('Escribí una descripción, o elegí un costo del catálogo.'); return; }
+  if (!catalogoItemId && (precioUnitario === '' || isNaN(Number(precioUnitario)))) { showToast('Escribí un precio.'); return; }
+  try {
+    await api('POST', `/api/servicios-tecnicos/${servicioId}/costos`, { catalogoItemId, descripcion, cantidad, precioUnitario: precioUnitario || null, moneda });
+    await recargarServicioTecnico(servicioId);
+    showToast('Costo agregado.');
+  } catch (e) { showToast(e.message); }
+}
+async function borrarCostoServicioTecnico(costoId, servicioId) {
+  try {
+    await api('DELETE', `/api/costos-servicio/${costoId}`);
+    await recargarServicioTecnico(servicioId);
+  } catch (e) { showToast(e.message); }
+}
+async function recargarServicioTecnico(servicioId) {
+  const filas = await api('GET', '/api/servicios-tecnicos');
+  cache.serviciosTecnicos = filas;
+  render();
+  refrescarVistaServicioTecnico();
+}
+function renderPendingPresupuestosChips() {
+  if (!(state.pendingPresupuestos || []).length) return '';
+  return `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">${state.pendingPresupuestos.map(a => `
+    <span class="tag tag-cat" style="gap:6px;padding:6px 10px;">${attachIcon(a.tipo)} ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span>
+    <button type="button" onclick="removePendingPresupuesto('${a.id}')" style="border:none;background:none;cursor:pointer;color:var(--stamp-red);font-weight:700;padding:0 0 0 4px;">&times;</button></span>`).join('')}</div>`;
+}
+function refreshPendingPresupuestosChips() { const el = document.getElementById('pending-presupuestos'); if (el) el.innerHTML = renderPendingPresupuestosChips(); }
+function addPendingPresupuestos(input) {
+  state.pendingPresupuestos = state.pendingPresupuestos || [];
+  Array.from(input.files || []).forEach(file => {
+    if (file.size > ATTACH_MAX_BYTES) { showToast(`"${file.name}" pesa demasiado (máx. 20 MB).`); return; }
+    const reader = new FileReader();
+    reader.onload = () => { state.pendingPresupuestos.push({ id: uid(), nombre: file.name, tipo: tipoAdjunto(file.type || ''), size: file.size, dataUrl: reader.result }); refreshPendingPresupuestosChips(); };
+    reader.readAsDataURL(file);
+  });
+  input.value = '';
+}
+function removePendingPresupuesto(id) { state.pendingPresupuestos = (state.pendingPresupuestos || []).filter(a => a.id !== id); refreshPendingPresupuestosChips(); }
+async function subirPresupuestosServicioTecnico(servicioId) {
+  try {
+    await api('POST', `/api/servicios-tecnicos/${servicioId}/presupuesto`, { adjuntos: state.pendingPresupuestos });
+    state.pendingPresupuestos = [];
+    await recargarServicioTecnico(servicioId);
+    showToast('Presupuesto adjuntado.');
+  } catch (e) { showToast(e.message); }
+}
+async function borrarPresupuestoAdjunto(servicioId, adjId) {
+  try {
+    await api('DELETE', `/api/servicios-tecnicos/${servicioId}/presupuesto/${adjId}`);
+    await recargarServicioTecnico(servicioId);
+  } catch (e) { showToast(e.message); }
+}
+async function enviarPresupuestoServicioTecnico(servicioId) {
+  try {
+    const ticketActualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/enviar-presupuesto`);
+    const mapeado = mapTicket(ticketActualizado);
+    const idx = cache.tickets.findIndex(x => x.id === mapeado.id);
+    if (idx >= 0) cache.tickets[idx] = mapeado; else cache.tickets.push(mapeado);
+    await recargarServicioTecnico(servicioId);
+    showToast('Presupuesto enviado al cliente.');
+  } catch (e) { showToast(e.message); }
 }
 function renderEditarServicioTecnicoModal(s) {
   const d = new Date(s.fecha_hora);
@@ -1082,6 +1305,9 @@ function renderEditarServicioTecnicoModal(s) {
   const horaDefault = d.toTimeString().slice(0, 5);
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>✏️ Editar servicio técnico</h2>
+    <div class="field"><label>Cliente / edificio</label>
+      <select id="servicio-edit-cliente">${cache.clientes.map(c => `<option value="${c.id}" ${c.id === s.cliente_id ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}</select>
+    </div>
     <div class="field"><label>Título del evento</label><input type="text" id="servicio-edit-titulo" value="${escapeHtml(s.titulo)}"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-edit-ics-todo-el-dia" ${s.todo_el_dia ? 'checked' : ''} onchange="toggleTodoElDiaIcs('servicio-edit')"> Todo el día</label>
     <div class="field-row">
@@ -1096,20 +1322,83 @@ function renderEditarServicioTecnicoModal(s) {
   </div></div>`;
 }
 async function guardarEdicionServicioTecnico(id) {
+  const clienteId = document.getElementById('servicio-edit-cliente').value;
   const titulo = document.getElementById('servicio-edit-titulo').value;
   const fecha = document.getElementById('servicio-edit-fecha').value;
   const hora = document.getElementById('servicio-edit-hora').value;
   const duracion = document.getElementById('servicio-edit-duracion').value;
   const todoElDia = document.getElementById('servicio-edit-ics-todo-el-dia').checked;
+  if (!clienteId) { showToast('Elegí un cliente/edificio.'); return; }
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   try {
-    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { titulo, fecha, hora, duracion, todoElDia });
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { clienteId, titulo, fecha, hora, duracion, todoElDia });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
     state.editandoServicioTecnicoId = null;
     showToast('Servicio técnico actualizado.');
     render();
+  } catch (e) { showToast(e.message); }
+}
+/* ---- Catálogo de costos precargados (mano de obra, viáticos, etc.) ---- */
+function renderCatalogoCostosTab() {
+  const items = cache.catalogoCostos || [];
+  return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${items.length} costo${items.length === 1 ? '' : 's'} en el catálogo</h1><div class="sub">Se usan como atajo al cargar costos en una visita; siempre se puede cargar un costo puntual aparte.</div></div>
+      <button type="button" class="btn btn-ghost" onclick="openCatalogoCostoModal()">+ Nuevo costo</button></div>
+    <div class="user-list">${items.length ? items.map(c => `
+      <div class="user-row" style="border:1px solid var(--line);">
+        <div class="avatar">💲</div>
+        <div style="flex:1;"><div class="u-name">${escapeHtml(c.nombre)} ${!c.activo ? '<span class="tag" style="margin-left:6px;">Inactivo</span>' : ''}</div>
+        <div class="u-sub">${c.moneda} ${Number(c.precio).toFixed(2)}</div></div>
+        <button type="button" class="btn btn-ghost" onclick="openCatalogoCostoModal('${c.id}')">Editar</button>
+        <button type="button" class="btn btn-danger" onclick="borrarCatalogoCosto('${c.id}')">Eliminar</button>
+      </div>`).join('') : `<div class="hint-text">Todavía no cargaste ningún costo al catálogo.</div>`}</div>`;
+}
+function openCatalogoCostoModal(id) {
+  state.modal = 'catalogo-costo';
+  state.catalogoCostoEditId = id || null;
+  render();
+}
+function renderCatalogoCostoModal() {
+  const item = state.catalogoCostoEditId ? (cache.catalogoCostos || []).find(c => String(c.id) === String(state.catalogoCostoEditId)) : null;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>${item ? '✏️ Editar costo' : '+ Nuevo costo del catálogo'}</h2>
+    <div class="field"><label>Nombre</label><input type="text" id="catalogo-costo-nombre" value="${item ? escapeHtml(item.nombre) : ''}" placeholder="Ej: Mano de obra por visita"></div>
+    <div class="field-row">
+      <div class="field"><label>Precio</label><input type="number" id="catalogo-costo-precio" min="0" step="0.01" value="${item ? Number(item.precio) : ''}"></div>
+      <div class="field" style="flex:0.6;"><label>Moneda</label><select id="catalogo-costo-moneda"><option value="UYU" ${!item || item.moneda === 'UYU' ? 'selected' : ''}>$ UYU</option><option value="USD" ${item && item.moneda === 'USD' ? 'selected' : ''}>US$</option></select></div>
+    </div>
+    ${item ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="catalogo-costo-activo" ${item.activo ? 'checked' : ''}> Activo (visible al cargar costos)</label>` : ''}
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarCatalogoCosto()">Guardar</button></div>
+  </div></div>`;
+}
+async function guardarCatalogoCosto() {
+  const nombre = document.getElementById('catalogo-costo-nombre').value;
+  const precio = document.getElementById('catalogo-costo-precio').value;
+  const moneda = document.getElementById('catalogo-costo-moneda').value;
+  const activoEl = document.getElementById('catalogo-costo-activo');
+  if (!nombre || !nombre.trim()) { showToast('Escribí un nombre.'); return; }
+  if (precio === '' || isNaN(Number(precio))) { showToast('Escribí un precio.'); return; }
+  try {
+    if (state.catalogoCostoEditId) {
+      const actualizado = await api('PUT', `/api/catalogo-costos/${state.catalogoCostoEditId}`, { nombre, precio, moneda, activo: activoEl ? activoEl.checked : true });
+      const idx = cache.catalogoCostos.findIndex(c => String(c.id) === String(state.catalogoCostoEditId));
+      if (idx >= 0) cache.catalogoCostos[idx] = actualizado;
+    } else {
+      const nuevo = await api('POST', '/api/catalogo-costos', { nombre, precio, moneda });
+      cache.catalogoCostos = [...(cache.catalogoCostos || []), nuevo];
+    }
+    showToast('Guardado.');
+    closeModal();
+    refrescarVistaServicioTecnico();
+  } catch (e) { showToast(e.message); }
+}
+async function borrarCatalogoCosto(id) {
+  if (!confirm('¿Eliminar este costo del catálogo?')) return;
+  try {
+    await api('DELETE', `/api/catalogo-costos/${id}`);
+    cache.catalogoCostos = cache.catalogoCostos.filter(c => String(c.id) !== String(id));
+    refrescarVistaServicioTecnico();
   } catch (e) { showToast(e.message); }
 }
 // Tarjeta que se ve dentro del ticket con los turnos de Servicio Técnico ya agendados desde acá,
@@ -1126,10 +1415,23 @@ function renderServiciosTecnicosDelTicket(t) {
             <div style="font-weight:600;font-size:13.5px;">${escapeHtml(s.titulo)}</div>
             <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}</div>
           </div>
-          ${s.estado === 'realizado' ? `<span class="tag tag-resuelto">Realizado</span>` : `<button type="button" class="btn btn-ghost" onclick="marcarServicioTecnicoRealizadoDesdeTicket('${s.id}', '${t.id}')">✅ Marcar realizado</button>`}
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" class="btn btn-ghost" onclick="verDetalleServicioTecnicoDesdeTicket('${s.id}')">💲 Costos / presupuesto</button>
+            ${s.estado === 'realizado' ? `<span class="tag tag-resuelto">Realizado</span>` : `<button type="button" class="btn btn-ghost" onclick="marcarServicioTecnicoRealizadoDesdeTicket('${s.id}', '${t.id}')">✅ Marcar realizado</button>`}
+          </div>
         </div>`).join('')}
     </div>
   </div>`;
+}
+async function verDetalleServicioTecnicoDesdeTicket(servicioId) {
+  try {
+    if (!cache.serviciosTecnicos.length || !cache.catalogoCostos) {
+      const [servicios, catalogo] = await Promise.all([api('GET', '/api/servicios-tecnicos'), api('GET', '/api/catalogo-costos')]);
+      cache.serviciosTecnicos = servicios;
+      cache.catalogoCostos = catalogo;
+    }
+    abrirDetalleServicioTecnico(servicioId);
+  } catch (e) { showToast(e.message); }
 }
 async function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
   try {
@@ -1593,7 +1895,8 @@ function navItems(activeView) {
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
-    { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
+    { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'servicio-tecnico', label: 'Servicio Técnico', ico: '&#128295;' },
+    { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
@@ -1943,9 +2246,10 @@ async function guardarServicioTecnico() {
   const todoElDia = document.getElementById('servicio-ics-todo-el-dia').checked;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
-  // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Calendario → Servicio Técnico.
+  if (!t.grupoId) { showToast('Este ticket no está vinculado a ningún cliente/edificio. Asignalo a un cliente antes de agendar el servicio técnico.'); return; }
+  // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Servicio Técnico.
   try {
-    await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, titulo, fecha, hora, duracion, todoElDia });
+    await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia });
     showToast('Servicio técnico agendado.');
     closeModal();
   } catch (e) { showToast(e.message); }
@@ -3376,6 +3680,8 @@ function renderActiveModal() {
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
+  if (state.modal === 'nuevo-servicio-tecnico') return renderNuevoServicioTecnicoModal();
+  if (state.modal === 'catalogo-costo') return renderCatalogoCostoModal();
   if (state.modal === 'nuevo-ticket-cliente') return renderNuevoTicketClienteModal();
   if (state.modal === 'nuevo-documento-edificio') return renderNuevoDocumentoEdificioModal();
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
@@ -3622,12 +3928,45 @@ function renderClienteTicket(id) {
       <div class="ticket-from">${edificio ? `Edificio: <strong>${escapeHtml(edificio.nombre)}</strong> · ` : ''}Categoría: ${escapeHtml(t.categoria)} · Prioridad: ${t.prioridad} · Creado ${fmtDateTime(t.creado)}</div></div>
       <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div></div>
       ${renderEstadoTimelineCliente(t.estado)}</div>
+    ${renderPresupuestosClienteTicket(t)}
     <div class="thread">${thread}</div>
     <div class="reply-box"><form onsubmit="return submitClienteReply(event, '${t.id}')">
       <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="Escribí tu respuesta…" required></textarea></div>
       <div class="field" style="margin-top:12px;"><label>Adjuntar fotos o video (opcional)</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
       <div class="reply-actions"><button type="submit" class="btn btn-primary">Enviar respuesta</button></div>
     </form></div>`;
+}
+// Presupuestos de servicio técnico que el equipo ya envió sobre este ticket: costos, archivos
+// adjuntos, y el botón para dar conformidad (obligatorio antes de que se avance con la tarea).
+function renderPresupuestosClienteTicket(t) {
+  const servicios = (t.serviciosTecnicos || []).filter(s => s.presupuesto_enviado);
+  if (!servicios.length) return '';
+  return servicios.map(s => {
+    const costos = s.costos || [];
+    const adjuntos = s.presupuesto_adjuntos || [];
+    return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
+      ${configSectionHead('📋', `Presupuesto — ${escapeHtml(s.titulo)}`, 'Revisá el detalle y dá tu conformidad para que podamos avanzar con la tarea.')}
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+        ${costos.length ? costos.map(c => `<div style="display:flex;justify-content:space-between;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span>${escapeHtml(c.descripcion)} x${c.cantidad}</span><strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}</strong></div>`).join('') : ''}
+      </div>
+      <div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>
+      ${adjuntos.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">${adjuntos.map(a => `<a href="/api/servicios-tecnicos/${s.id}/presupuesto/${a.id}/descargar" target="_blank" rel="noopener" class="btn btn-ghost" style="width:fit-content;">${attachIcon(tipoAdjunto(a.mime || ''))} ${escapeHtml(a.nombre)}</a>`).join('')}</div>` : ''}
+      ${s.presupuesto_aprobado
+        ? `<div class="tag tag-resuelto">✅ Diste tu conformidad${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</div>`
+        : `<button type="button" class="btn btn-primary" onclick="aprobarPresupuestoCliente('${s.id}')">✅ Dar conformidad con este presupuesto</button>`}
+    </div>`;
+  }).join('');
+}
+async function aprobarPresupuestoCliente(servicioId) {
+  if (!confirm('¿Confirmás que das conformidad con este presupuesto? El equipo va a poder avanzar con la tarea.')) return;
+  try {
+    const t = await api('POST', `/api/portal/servicios/${servicioId}/aprobar`);
+    const idx = cache.tickets.findIndex(x => x.id === t.id);
+    const mapeado = mapTicket(t);
+    if (idx >= 0) cache.tickets[idx] = mapeado; else cache.tickets.push(mapeado);
+    showToast('¡Gracias! Ya avisamos al equipo.');
+    render();
+  } catch (e) { showToast(e.message); }
 }
 
 /* ---------------- Auth screens ---------------- */
@@ -3765,6 +4104,7 @@ function render() {
   else if (state.view === 'documentos-edificio') inner = renderDocumentosEdificio();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
+  else if (state.view === 'servicio-tecnico') { inner = '<div class="empty-state">Cargando…</div>'; renderServicioTecnicoModuloAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'servicio-tecnico') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'estadisticas') inner = renderEstadisticas();
