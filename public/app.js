@@ -683,7 +683,9 @@ function onDocumentoEdificioFileChange(input) {
   reader.readAsDataURL(file);
 }
 function renderNuevoDocumentoEdificioModal() {
-  const clientesOpts = cache.clientes.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+  // Los apartamentos no tienen documentos propios: siempre ven los del Edificio del que dependen.
+  // Por eso no aparecen acá como destino — subir algo "a" un apartamento no tendría efecto.
+  const clientesOpts = cache.clientes.filter(c => c.rolCliente !== 'Apartamento').map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>Subir documento</h2><p class="sub">El cliente lo va a ver en su portal, en la sección Documentos.</p>
     <form id="nuevo-documento-edificio-form" onsubmit="return submitNuevoDocumentoEdificio(event)">
