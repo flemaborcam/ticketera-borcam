@@ -3209,19 +3209,43 @@ function extraerNumeroTicket(asunto) {
   const m = (asunto || '').match(/\[?(T-\d{4}-\d+)\]?/i);
   return m ? m[1].toUpperCase() : null;
 }
+// Una línea "vale como contenido nuevo" si no es una línea citada (">"), ni una línea vacía, ni
+// parte de un encabezado típico de reenvío/respuesta (De:/Enviado el:/Para:/Asunto:, guiones,
+// "Fulano escribió:", etc). Se usa para decidir si, después de un bloque citado, todavía queda
+// algo que el remitente escribió y que no deberíamos perder.
+function esLineaDeContenido(l) {
+  const t = l.trim();
+  if (!t) return false;
+  if (/^>{1,}/.test(t)) return false;
+  if (/^-{3,}\s*(mensaje original|original message)/i.test(t)) return false;
+  if (/^_{5,}$/.test(t)) return false;
+  if (/^[-_]{3,}$/.test(t)) return false;
+  if (/^(el|on)\s.+(escribió|wrote)\s*:?\s*$/i.test(t)) return false;
+  if (/^(de|from|enviado|sent|fecha|date|para|to|cc|asunto|subject):\s*.*/i.test(t)) return false;
+  return true;
+}
 function recortarCitas(texto) {
   const lineas = texto.split('\n');
   let corte = -1;
   for (let i = 0; i < lineas.length; i++) {
     const l = lineas[i].trim();
-    if (/^>{1,}/.test(l)) { corte = i; break; }
-    if (/^-{3,}\s*(mensaje original|original message)/i.test(l)) { corte = i; break; }
-    if (/^_{5,}$/.test(l)) { corte = i; break; }
-    if (/^(el|on)\s.+(escribió|wrote)\s*:?\s*$/i.test(l)) { corte = i; break; }
-    if (/^(de|from):\s*.+/i.test(l)) {
+    let esCorteAqui = false;
+    if (/^>{1,}/.test(l)) esCorteAqui = true;
+    else if (/^-{3,}\s*(mensaje original|original message)/i.test(l)) esCorteAqui = true;
+    else if (/^_{5,}$/.test(l)) esCorteAqui = true;
+    else if (/^(el|on)\s.+(escribió|wrote)\s*:?\s*$/i.test(l)) esCorteAqui = true;
+    else if (/^(de|from):\s*.+/i.test(l)) {
       const siguientes = lineas.slice(i + 1, i + 5).join('\n');
-      if (/^(enviado|sent|fecha|date):/im.test(siguientes) && /^(para|to):/im.test(siguientes)) { corte = i; break; }
+      if (/^(enviado|sent|fecha|date):/im.test(siguientes) && /^(para|to):/im.test(siguientes)) esCorteAqui = true;
     }
+    if (!esCorteAqui) continue;
+    // Antes de cortar acá, nos fijamos si más abajo (después de este bloque citado) todavía hay
+    // contenido real escrito por el remitente. Si lo hay, no cortamos en este punto — seguimos
+    // buscando un punto de corte más adelante, para no perder esa información.
+    const quedaContenidoDespues = lineas.slice(i + 1).some(esLineaDeContenido);
+    if (quedaContenidoDespues) continue;
+    corte = i;
+    break;
   }
   if (corte === -1) return texto;
   let resultado = lineas.slice(0, corte);
