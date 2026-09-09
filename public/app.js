@@ -4183,6 +4183,22 @@ function renderRespuestaModal() {
       <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${editing ? 'Guardar cambios' : 'Crear respuesta'}</button></div>
     </form></div></div>`;
 }
+// Qué puede elegirse como "padre" (Administrado por) depende del Rol elegido: un Apartamento cuelga
+// de un Edificio, y cualquier otro rol (Edificio, etc.) cuelga de una Administración. Se usa tanto
+// para armar el select la primera vez como para recalcularlo cuando cambia el Rol (onchange), así
+// nunca se mezclan edificios y administraciones en la misma lista.
+function opcionesAdministradoPorHtml(rolSeleccionado, excludeId, selectedId) {
+  const rolPadre = rolSeleccionado === 'Apartamento' ? 'Edificio' : 'Administración';
+  const candidatos = cache.clientes.filter(c => c.rolCliente === rolPadre && c.id !== excludeId);
+  const vacio = rolSeleccionado === 'Apartamento' ? 'Ninguno (no depende de un edificio)' : 'Ninguno (cliente independiente)';
+  return `<option value="">${vacio}</option>${candidatos.map(c => `<option value="${c.id}" ${selectedId === c.id ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}`;
+}
+function actualizarAdministradoPorSegunRol() {
+  const rolSelect = document.getElementById('grupo-rol-select');
+  const administradoSelect = document.getElementById('grupo-administrado-por-select');
+  if (!rolSelect || !administradoSelect) return;
+  administradoSelect.innerHTML = opcionesAdministradoPorHtml(rolSelect.value, state.editGrupoId, null);
+}
 function renderGrupoModal() {
   const editing = state.modal === 'editar-grupo';
   const g = editing ? cache.clientes.find(x => x.id === state.editGrupoId) : null;
@@ -4193,10 +4209,10 @@ function renderGrupoModal() {
       <div class="field"><label>Nombre de cliente</label><input name="nombre" value="${g ? escapeHtml(g.nombre) : ''}" required></div>
       <div class="field"><label>Dirección</label><input name="direccion" value="${g ? escapeHtml(g.direccion || '') : ''}"></div>
       <div class="field"><label>Correo electrónico</label><input name="correo" type="email" value="${g ? escapeHtml(g.correo || '') : ''}"></div>
-      <div class="field"><label>Rol</label><select name="rolCliente"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+      <div class="field"><label>Rol</label><select name="rolCliente" id="grupo-rol-select" onchange="actualizarAdministradoPorSegunRol()"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>Administrado por</label>
-        <select name="administradoPorId"><option value="">Ninguno (cliente independiente)</option>${cache.clientes.filter(c => (c.rolCliente === 'Administración' || c.rolCliente === 'Edificio') && (!g || c.id !== g.id)).map(c => `<option value="${c.id}" ${g && g.administradoPorId === c.id ? 'selected' : ''}>${escapeHtml(c.nombre)} (${c.rolCliente})</option>`).join('')}</select>
-        <div class="hint-text">Si este cliente es un edificio que gestiona una administración, o un apartamento dentro de un edificio, elegí acá su "padre": sus tickets se van a ver también en el portal de ese cliente, sin necesidad de crearle un login aparte.</div></div>
+        <select name="administradoPorId" id="grupo-administrado-por-select">${opcionesAdministradoPorHtml(g ? g.rolCliente : '', g ? g.id : null, g ? g.administradoPorId : null)}</select>
+        <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá; si es un apartamento, elegí a qué edificio pertenece. La lista cambia según el Rol de arriba.</div></div>
       <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
