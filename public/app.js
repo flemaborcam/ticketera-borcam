@@ -11,7 +11,7 @@ async function api(method, url, body) {
 }
 
 let session = null;
-let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [] };
+let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [], proveedores: [] };
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
@@ -107,7 +107,10 @@ async function boot() {
       const idDesdeUrl = new URLSearchParams(window.location.search).get('ticket');
       if (idDesdeUrl) { state.view = 'ticket'; state.ticketId = idDesdeUrl; }
     } else if (r.session && r.session.type === 'cliente') {
-      session = r.session; state.view = 'cliente-dashboard'; await loadClienteTickets();
+      session = r.session; state.view = 'cliente-dashboard';
+      // Se trae el perfil ya acá (no solo cuando entra a "Mi perfil") porque el rol del cliente
+      // (Administración, Edificio, Apartamento…) decide qué pestañas del portal se le muestran.
+      await Promise.all([loadClienteTickets(), api('GET', '/api/portal/perfil').then(p => { cache.perfilCliente = p; })]);
     }
   } catch (e) {}
   render();
@@ -2022,6 +2025,66 @@ function goCliente(view) {
     loadClienteDocumentos();
   }
   if (view === 'cliente-perfil' && !cache.perfilCliente) loadClientePerfil();
+  if (view === 'cliente-proveedores') loadClienteProveedores();
+}
+async function loadClienteProveedores() {
+  const [proveedores, edificios] = await Promise.all([
+    api('GET', '/api/portal/proveedores'),
+    cache.edificiosCliente.length ? Promise.resolve(cache.edificiosCliente) : api('GET', '/api/portal/edificios')
+  ]);
+  cache.proveedores = proveedores;
+  cache.edificiosCliente = edificios;
+  render();
+}
+function renderClienteProveedores() {
+  const edificios = (cache.edificiosCliente || []).filter(e => e.rolCliente === 'Edificio');
+  const rows = (cache.proveedores || []).map(p => `
+    <div class="card" style="margin-bottom:12px;"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:200px;"><div style="font-weight:600;font-size:14.5px;">${escapeHtml(p.nombre)}</div>
+        <div style="font-size:12.5px;color:var(--ink-soft);">${escapeHtml(p.edificio_nombre)}${[p.telefono, p.correo].filter(Boolean).length ? ' · ' + [p.telefono, p.correo].filter(Boolean).map(escapeHtml).join(' · ') : ''}</div></div>
+      <button type="button" class="btn btn-danger" onclick="borrarProveedorCliente('${p.id}')">Eliminar</button>
+    </div></div>`).join('');
+  const list = (cache.proveedores || []).length ? rows : `<div class="empty-state"><div class="big">Todavía no cargaste proveedores</div></div>`;
+  return `<div class="page-head"><div><h1>Proveedores y Servicios</h1><div class="sub">Empresas de mantenimiento de los edificios que administrás</div></div>
+      ${edificios.length ? `<button type="button" class="btn btn-primary" onclick="state.modal='nuevo-proveedor-cliente'; render();">+ Nuevo proveedor</button>` : ''}</div>
+    ${!edificios.length ? `<div class="hint-text">Todavía no tenés ningún edificio a cargo.</div>` : list}`;
+}
+function renderNuevoProveedorClienteModal() {
+  const edificios = (cache.edificiosCliente || []).filter(e => e.rolCliente === 'Edificio');
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>+ Nuevo proveedor</h2>
+    <form onsubmit="return submitNuevoProveedorCliente(event)">
+      <div class="field"><label>Nombre de la empresa</label><input name="nombre" placeholder="Ej: Ascensores XYZ" required></div>
+      <div class="field"><label>Edificio</label><select name="edificioClienteId" required><option value="" disabled selected>Elegí el edificio</option>${edificios.map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`).join('')}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Teléfono</label><input name="telefono"></div>
+        <div class="field"><label>Correo</label><input name="correo" type="email"></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Crear proveedor</button></div>
+    </form></div></div>`;
+}
+async function submitNuevoProveedorCliente(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  try {
+    await api('POST', '/api/portal/proveedores', {
+      nombre: fd.get('nombre').trim(), edificioClienteId: fd.get('edificioClienteId'),
+      telefono: fd.get('telefono').trim(), correo: fd.get('correo').trim()
+    });
+    cache.proveedores = await api('GET', '/api/portal/proveedores');
+    closeModal();
+    showToast('Proveedor creado.');
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+async function borrarProveedorCliente(id) {
+  if (!confirm('¿Eliminar este proveedor?')) return;
+  try {
+    await api('DELETE', `/api/portal/proveedores/${id}`);
+    cache.proveedores = (cache.proveedores || []).filter(p => String(p.id) !== String(id));
+    render();
+  } catch (e) { showToast(e.message); }
 }
 async function loadClientePerfil() {
   cache.perfilCliente = await api('GET', '/api/portal/perfil');
@@ -2846,6 +2909,9 @@ async function renderGrupoDetailAsync(id) {
   if (!g) return `<div class="empty-state">Cliente no encontrado.</div>`;
   const tickets = await loadClienteDetalleTickets(id);
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t)).join('')}</div>` : `<div class="empty-state"><div class="big">Este cliente todavía no tiene tickets</div></div>`;
+  // Proveedores y Servicios: por ahora solo lo cargan/ven cuentas Administración, para los edificios
+  // que ellas mismas administran.
+  if (g.rolCliente === 'Administración') { cache.proveedores = await api('GET', '/api/proveedores'); }
   return `${ticketStyleTag()}
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
@@ -2860,6 +2926,7 @@ async function renderGrupoDetailAsync(id) {
         <button class="btn btn-danger" onclick="deleteGrupo('${g.id}')">Eliminar</button></div>
     </div>
     ${renderDependientesGrupo(g)}
+    ${g.rolCliente === 'Administración' ? renderProveedoresGrupo(g) : ''}
     <div class="page-head"><div><h1 style="font-size:18px;">Tickets de este cliente</h1><div class="sub">${tickets.length} en total</div></div></div>
     ${list}`;
 }
@@ -2871,6 +2938,71 @@ function renderDependientesGrupo(g) {
   const titulo = g.rolCliente === 'Administración' ? 'Edificios que administra' : g.rolCliente === 'Edificio' ? 'Apartamentos' : 'Clientes a cargo';
   return `<div class="page-head"><div><h1 style="font-size:18px;">${titulo}</h1><div class="sub">${dependientes.length} en total</div></div></div>
     <div class="stub-list">${dependientes.map(renderGrupoRow).join('')}</div>`;
+}
+// Empresas de mantenimiento cargadas para los edificios que administra esta Administración. Por
+// ahora solo campos mínimos (nombre, edificio, teléfono, correo) — se va a ir ampliando.
+function edificiosDeAdministracion(administracionId) {
+  return cache.clientes.filter(c => c.administradoPorId === administracionId && c.rolCliente === 'Edificio');
+}
+function renderProveedoresGrupo(g) {
+  const edificioIds = edificiosDeAdministracion(g.id).map(e => e.id);
+  const proveedores = (cache.proveedores || []).filter(p => edificioIds.includes(p.edificio_cliente_id));
+  const rows = proveedores.map(p => `
+    <div class="user-row" style="border:1px solid var(--line);">
+      <div class="avatar">🔧</div>
+      <div style="flex:1;"><div class="u-name">${escapeHtml(p.nombre)}</div>
+        <div class="u-sub">${escapeHtml(p.edificio_nombre)}${[p.telefono, p.correo].filter(Boolean).length ? ' · ' + [p.telefono, p.correo].filter(Boolean).map(escapeHtml).join(' · ') : ''}</div></div>
+      <button type="button" class="btn btn-danger" onclick="borrarProveedor('${p.id}', '${g.id}')">Eliminar</button>
+    </div>`).join('');
+  return `<div class="page-head"><div><h1 style="font-size:18px;">🔧 Proveedores y Servicios</h1><div class="sub">Empresas de mantenimiento por edificio</div></div>
+      ${edificioIds.length ? `<button type="button" class="btn btn-ghost" onclick="openNuevoProveedorModal('${g.id}')">+ Nuevo proveedor</button>` : ''}</div>
+    ${!edificioIds.length ? `<div class="hint-text" style="margin-bottom:14px;">Esta administración todavía no tiene edificios a cargo; asignale al menos uno antes de cargar proveedores.</div>` : ''}
+    ${proveedores.length ? rows : (edificioIds.length ? `<div class="hint-text" style="margin-bottom:14px;">Todavía no hay proveedores cargados.</div>` : '')}`;
+}
+function openNuevoProveedorModal(administracionId) {
+  state.modal = 'nuevo-proveedor';
+  state.proveedorAdministracionId = administracionId;
+  render();
+}
+function renderNuevoProveedorModal() {
+  const administracionId = state.proveedorAdministracionId;
+  const edificios = edificiosDeAdministracion(administracionId);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>+ Nuevo proveedor</h2>
+    <form onsubmit="return submitNuevoProveedor(event)">
+      <div class="field"><label>Nombre de la empresa</label><input name="nombre" placeholder="Ej: Ascensores XYZ" required></div>
+      <div class="field"><label>Edificio</label><select name="edificioClienteId" required><option value="" disabled selected>Elegí el edificio</option>${edificios.map(e => `<option value="${e.id}">${escapeHtml(e.nombre)}</option>`).join('')}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Teléfono</label><input name="telefono"></div>
+        <div class="field"><label>Correo</label><input name="correo" type="email"></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Crear proveedor</button></div>
+    </form></div></div>`;
+}
+async function submitNuevoProveedor(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const administracionId = state.proveedorAdministracionId;
+  try {
+    await api('POST', '/api/proveedores', {
+      nombre: fd.get('nombre').trim(), edificioClienteId: fd.get('edificioClienteId'),
+      telefono: fd.get('telefono').trim(), correo: fd.get('correo').trim()
+    });
+    cache.proveedores = await api('GET', '/api/proveedores');
+    closeModal();
+    state.view = 'grupo'; state.grupoId = administracionId;
+    showToast('Proveedor creado.');
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+async function borrarProveedor(id, administracionId) {
+  if (!confirm('¿Eliminar este proveedor?')) return;
+  try {
+    await api('DELETE', `/api/proveedores/${id}`);
+    cache.proveedores = (cache.proveedores || []).filter(p => String(p.id) !== String(id));
+    render();
+  } catch (e) { showToast(e.message); }
 }
 
 /* ---------------- Respuestas / Automatizaciones / Usuarios / Perfil / Config ---------------- */
@@ -3975,6 +4107,8 @@ function renderActiveModal() {
   if (state.modal === 'catalogo-costo') return renderCatalogoCostoModal();
   if (state.modal === 'nuevo-ticket-cliente') return renderNuevoTicketClienteModal();
   if (state.modal === 'nuevo-documento-edificio') return renderNuevoDocumentoEdificioModal();
+  if (state.modal === 'nuevo-proveedor') return renderNuevoProveedorModal();
+  if (state.modal === 'nuevo-proveedor-cliente') return renderNuevoProveedorClienteModal();
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
   return '';
 }
@@ -4097,6 +4231,9 @@ function navItemsCliente(activeView) {
   const items = [
     { v: 'cliente-dashboard', label: 'Mis tickets', ico: '&#9776;' },
     { v: 'cliente-documentos', label: 'Documentos', ico: '&#128193;' },
+    // Por ahora solo lo ve una cuenta con rol "Administración" (puede cargar proveedores para los
+    // edificios que administra).
+    ...(cache.perfilCliente && cache.perfilCliente.rol_cliente === 'Administración' ? [{ v: 'cliente-proveedores', label: 'Proveedores y Servicios', ico: '&#128295;' }] : []),
     { v: 'cliente-perfil', label: 'Mi perfil', ico: '&#9998;' }
   ];
   const activo = (v) => v === activeView || (v === 'cliente-dashboard' && activeView === 'cliente-ticket');
@@ -4379,6 +4516,7 @@ function render() {
     let inner;
     if (state.view === 'cliente-ticket' && state.ticketId) inner = renderClienteTicket(state.ticketId);
     else if (state.view === 'cliente-documentos') inner = renderClienteDocumentos();
+    else if (state.view === 'cliente-proveedores') inner = renderClienteProveedores();
     else if (state.view === 'cliente-perfil') inner = renderClientePerfil();
     else inner = renderClienteDashboard();
     app.innerHTML = renderClientShell(inner);
