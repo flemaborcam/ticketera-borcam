@@ -654,12 +654,10 @@ app.get('/api/auth/me', async (req, res) => {
 /* ---------------- Catálogos ---------------- */
 app.get('/api/catalogos', requireStaff, async (req, res) => {
   const c = await getConfig();
-  // Lista de edificios para autocompletar el campo del ticket: combina los que ya están cargados
-  // en Tags (edificios_tags) con los que ya se usaron en algún ticket, para que la lista se arme
-  // sola con el uso y no dependa de cargarlos primero en otro lado.
-  const edificiosTags = (await pool.query('select edificio from edificios_tags')).rows.map(r => r.edificio);
-  const edificiosTickets = (await pool.query(`select distinct edificio from tickets where edificio is not null and edificio <> ''`)).rows.map(r => r.edificio);
-  const EDIFICIOS = [...new Set([...edificiosTags, ...edificiosTickets])].sort((a, b) => a.localeCompare(b));
+  // Lista de edificios para el stock de Tags. El campo "edificio" del ticket pasó a ser descriptivo
+  // (unidad/apartamento), así que ya no se mezcla acá — el edificio real de un ticket es el Cliente
+  // que se le asigna.
+  const EDIFICIOS = (await pool.query('select edificio from edificios_tags order by edificio')).rows.map(r => r.edificio);
   ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
 });
 app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
@@ -1562,9 +1560,12 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
        from tickets where creado between $1 and $2
        group by 1 order by 2 desc`, [desde, hasta]
     )).rows.map(r => ({ categoria: r.categoria, cantidad: Number(r.cantidad) }));
+    // "Tickets por edificio" ahora se arma a partir del Cliente-Edificio asignado a cada ticket (no
+    // del viejo campo de texto libre, que pasó a ser descriptivo/apartamento).
     const porEdificio = (await pool.query(
-      `select edificio, count(*) as cantidad
-       from tickets where creado between $1 and $2 and edificio is not null and edificio <> ''
+      `select c.nombre as edificio, count(*) as cantidad
+       from tickets t join clientes c on c.id = t.cliente_id and c.rol_cliente = 'Edificio'
+       where t.creado between $1 and $2
        group by 1 order by 2 desc limit 12`, [desde, hasta]
     )).rows.map(r => ({ edificio: r.edificio, cantidad: Number(r.cantidad) }));
 
