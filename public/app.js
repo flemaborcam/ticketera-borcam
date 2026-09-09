@@ -15,7 +15,7 @@ let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatiz
 let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
-  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '', edificio: 'todos' },
+  filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
   filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1,
@@ -380,7 +380,6 @@ function filteredTickets() {
     .filter(t => f.categoria === 'todas' || t.categoria === f.categoria)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => f.grupo === 'todos' || t.grupoId === f.grupo)
-    .filter(t => f.edificio === 'todos' || t.edificio === f.edificio)
     .filter(t => f.agente === 'todos' ? true : (f.agente === 'sin-asignar' ? !t.asignadoA : t.asignadoA === f.agente))
     .filter(t => !f.fecha || fechaLocal(t.creado) === f.fecha)
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s) || (t.edificio || '').toLowerCase().includes(s) || (t.mensajesTexto || '').toLowerCase().includes(s); })
@@ -2521,7 +2520,12 @@ function descargarIcsReserva(id) {
 function irAPedidoDeTagDesdeTicket(ticketId) {
   const t = cache.tickets.find(x => x.id === ticketId);
   if (!t) return;
-  state.tagsPrecarga = { ticket: t.numero, cliente: t.remitenteNombre || '' };
+  // Si el ticket ya tiene asignado un Cliente con rol Edificio, se precarga ese edificio en el
+  // pedido (los residentes casi nunca tienen cuenta de cliente propia: el Cliente del ticket
+  // normalmente ES el edificio).
+  const clienteDelTicket = t.grupoId ? cache.clientes.find(c => c.id === t.grupoId) : null;
+  const edificioPrecarga = clienteDelTicket && clienteDelTicket.rolCliente === 'Edificio' ? clienteDelTicket.nombre : '';
+  state.tagsPrecarga = { ticket: t.numero, cliente: t.remitenteNombre || '', edificio: edificioPrecarga };
   state.tagsTab = 'nuevo';
   state.view = 'tags';
   render();
@@ -2657,7 +2661,6 @@ function renderDashboard() {
   const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filters.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const grupoOptions = `<option value="todos">Todos los clientes</option>` + cache.clientes.map(g => `<option value="${g.id}" ${state.filters.grupo === g.id ? 'selected' : ''}>${escapeHtml(g.nombre)}</option>`).join('');
   const agenteOptions = `<option value="todos">Todo el equipo</option><option value="sin-asignar">Sin asignar</option>` + cache.usuarios.map(u => `<option value="${u.id}" ${state.filters.agente === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
-  const edifOptions = `<option value="todos">Todos los edificios</option>` + (CAT.EDIFICIOS || []).map(e => `<option value="${e}" ${state.filters.edificio === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('');
   const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay tickets que coincidan</div><div>Probá cambiar los filtros o simulá un correo entrante nuevo.</div></div>`;
 
   const paginacion = todos.length > TICKETS_POR_PAGINA ? `
@@ -2688,7 +2691,6 @@ function renderDashboard() {
       <select onchange="setFilter('prioridad', this.value)">${prioOptions}</select>
       <select onchange="setFilter('grupo', this.value)">${grupoOptions}</select>
       <select onchange="setFilter('agente', this.value)">${agenteOptions}</select>
-      <select onchange="setFilter('edificio', this.value)">${edifOptions}</select>
       <input type="search" placeholder="Buscar y presioná Enter…" value="${escapeHtml(state.filters.search)}" onkeydown="if(event.key==='Enter'){ setFilter('search', this.value); }" onsearch="setFilter('search', this.value)">
     </div>
     ${state.selectedTickets.size ? renderBulkActionBar() : ''}
@@ -2834,7 +2836,7 @@ function renderTicket(id) {
         <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
         <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
         <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
-        <div class="field"><label>Edificio</label><input list="edificios-datalist" value="${escapeHtml(t.edificio || '')}" placeholder="Ej: ARIJON" onchange="updateTicketField('${t.id}','edificio', this.value)"><datalist id="edificios-datalist">${(CAT.EDIFICIOS || []).map(e => `<option value="${escapeHtml(e)}">`).join('')}</datalist></div>
+        <div class="field"><label>Apartamento</label><input value="${escapeHtml(t.edificio || '')}" placeholder="Ej: 01 SyNC" onchange="updateTicketField('${t.id}','edificio', this.value)"><div class="hint-text">Dato descriptivo (unidad/apto), no reemplaza al Cliente asignado arriba.</div></div>
       </div>
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
@@ -3488,7 +3490,6 @@ function actualizarCostoTags() {
 }
 function renderTagsNuevo() {
   const edificios = cache.tagsEdificios || [];
-  const opciones = edificios.map(e => `<option value="${escapeHtml(e.edificio)}">${escapeHtml(e.edificio)}</option>`).join('');
   const precarga = state.tagsPrecarga || {};
   return `<div class="card card-narrow" style="max-width:560px;">
     ${configSectionHead('🏷️', 'Ingresar pedido', 'Al guardar se descuenta automáticamente del stock disponible de ese edificio.')}
@@ -3497,8 +3498,9 @@ function renderTagsNuevo() {
     <div class="field"><label>Edificio</label>
       <select id="tags-edificio">
         <option value="">-- Seleccioná un edificio --</option>
-        ${opciones}
+        ${edificios.map(e => `<option value="${escapeHtml(e.edificio)}" ${precarga.edificio === e.edificio ? 'selected' : ''}>${escapeHtml(e.edificio)}</option>`).join('')}
       </select>
+      ${precarga.edificio ? `<div class="hint-text">Precargado del Cliente asignado al ticket; cambialo si no corresponde.</div>` : ''}
     </div>
     <div class="field-row">
       <div class="field"><label>Torre</label><input type="text" id="tags-torre" placeholder="Torre"></div>
