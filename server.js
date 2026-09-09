@@ -255,6 +255,9 @@ pool.query('alter table servicios_tecnicos add column if not exists presupuesto_
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado boolean not null default false').catch(e => console.error('No se pudo migrar presupuesto_aprobado:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_fecha timestamptz').catch(e => console.error('No se pudo migrar presupuesto_aprobado_fecha:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_ip text').catch(e => console.error('No se pudo migrar presupuesto_aprobado_ip:', e.message));
+// Token para que el cliente pueda dar conformidad del presupuesto desde un link directo (mail),
+// sin tener que entrar al portal — hay clientes que nunca llegan a loguearse ahí.
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_token uuid').catch(e => console.error('No se pudo migrar presupuesto_token:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2181,6 +2184,93 @@ app.post('/api/documentos/aceptar/:token', async (req, res) => {
   await pool.query('update tickets set actualizado=now() where id=$1', [a.ticket_id]);
   ok(res, { ok: true });
 });
+// Igual que /aceptar-documento/:token, pero para dar conformidad de un presupuesto de servicio
+// técnico: un link público (mandado por mail) que no requiere loguearse en el portal, porque hay
+// clientes que nunca llegan a entrar ahí y el presupuesto no puede quedar trabado por eso.
+app.get('/aprobar-presupuesto/:token', async (req, res) => {
+  const s = (await pool.query('select * from servicios_tecnicos where presupuesto_token=$1', [req.params.token])).rows[0];
+  if (!s) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Presupuesto no encontrado</h1>');
+  const costos = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [s.id])).rows;
+  const IVA_RATE = 0.22;
+  const subtotales = {};
+  for (const c of costos) subtotales[c.moneda] = (subtotales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
+  const filasCostos = costos.map(c => `<tr><td>${escapeHtmlSrv(c.descripcion)} x${c.cantidad}</td><td style="text-align:right;">${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}</td></tr>`).join('');
+  const filasTotales = Object.entries(subtotales).map(([m, sub]) => {
+    const iva = sub * IVA_RATE;
+    return `<tr><td>Subtotal (${m})</td><td style="text-align:right;">${m} ${sub.toFixed(2)}</td></tr>
+      <tr><td>IVA 22% (${m})</td><td style="text-align:right;">${m} ${iva.toFixed(2)}</td></tr>
+      <tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${(sub + iva).toFixed(2)}</td></tr>`;
+  }).join('');
+  if (s.presupuesto_aprobado) {
+    const fechaFmt = new Date(s.presupuesto_aprobado_fecha).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+    return res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Presupuesto aprobado</title>
+    <style>body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;}
+    .card{background:#fff;border-radius:10px;padding:32px;max-width:460px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
+    h1{font-size:20px;color:#1F8A5F;} p{color:#48607F;line-height:1.5;}</style></head>
+    <body><div class="card"><h1>✅ Este presupuesto ya fue aprobado</h1><p>Quedó registrada tu conformidad el ${fechaFmt}. Ya podemos avanzar con la tarea.</p></div></body></html>`);
+  }
+  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presupuesto: ${escapeHtmlSrv(s.titulo)}</title>
+  <style>
+    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;margin:0;padding:20px;}
+    .wrap{max-width:520px;margin:0 auto;}
+    .card{background:#fff;border-radius:10px;padding:28px;box-shadow:0 2px 10px rgba(15,42,77,.08);margin-bottom:16px;}
+    h1{font-size:20px;color:#0F2A4D;margin:0 0 14px;}
+    table{width:100%;border-collapse:collapse;font-size:14px;color:#20262B;}
+    td{padding:6px 0;border-bottom:1px solid #EEF3FA;}
+    .aviso{font-size:12.5px;color:#8299B8;margin-top:4px;}
+    button{background:#1E56C7;color:#fff;border:none;padding:13px 20px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:8px;}
+    button:disabled{opacity:.5;cursor:default;}
+    #msg{margin-top:14px;font-weight:600;text-align:center;}
+    .ok-box{text-align:center;} .ok-box h2{color:#1F8A5F;font-family:'IBM Plex Sans',sans-serif;}
+  </style></head>
+  <body><div class="wrap">
+    <div class="card">
+      <h1>${escapeHtmlSrv(s.titulo)}</h1>
+      <table>${filasCostos}${filasTotales}</table>
+      <div class="aviso">Precios sin IVA + 22% de IVA (tasa básica en Uruguay).</div>
+    </div>
+    <div class="card" id="form-card">
+      <p style="margin:0 0 8px;color:#20262B;font-size:14px;">Al confirmar, das tu conformidad con este presupuesto y habilitás a Borcam a avanzar con la tarea.</p>
+      <button type="button" id="btn-aprobar" onclick="aprobar()">Dar conformidad</button>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <script>
+    async function aprobar(){
+      const btn = document.getElementById('btn-aprobar');
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      try {
+        const r = await fetch('/api/presupuesto/aprobar/${s.presupuesto_token}', { method:'POST' });
+        const data = await r.json();
+        if(!r.ok) throw new Error(data.error || 'No se pudo registrar la conformidad.');
+        document.getElementById('form-card').innerHTML = '<div class="ok-box"><h2>✅ ¡Listo!</h2><p>Tu conformidad quedó registrada.</p></div>';
+      } catch(e){
+        document.getElementById('msg').innerHTML = '<span style="color:#C43D3D;">'+e.message+'</span>';
+        btn.disabled = false; btn.textContent = 'Dar conformidad';
+      }
+    }
+  </script>
+  </body></html>`);
+});
+app.post('/api/presupuesto/aprobar/:token', async (req, res) => {
+  const s = (await pool.query('select * from servicios_tecnicos where presupuesto_token=$1', [req.params.token])).rows[0];
+  if (!s) return bad(res, 'No encontrado', 404);
+  if (s.presupuesto_aprobado) return ok(res, { ok: true, yaAprobado: true });
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '';
+  await pool.query(
+    `update servicios_tecnicos set presupuesto_aprobado=true, presupuesto_aprobado_fecha=now(), presupuesto_aprobado_ip=$1 where id=$2`,
+    [ip, s.id]
+  );
+  if (s.ticket_id) {
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
+      [s.ticket_id, 'Cliente', `Dio conformidad con el presupuesto de "${s.titulo}" desde el link enviado por correo (IP: ${ip}). Ya se puede avanzar con la tarea.`]
+    );
+    await pool.query('update tickets set necesita_atencion=true, actualizado=now() where id=$1', [s.ticket_id]);
+  }
+  ok(res, { ok: true });
+});
 /* ---------------- Calendario: configuración (staff) ---------------- */
 app.get('/api/calendario-config', requireStaff, async (req, res) => {
   const c = await getConfig();
@@ -2422,7 +2512,16 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   }
   const totalesTexto = Object.entries(subtotales).map(([m, sub]) => `${m} ${sub.toFixed(2)} + IVA (${m} ${(sub * IVA_RATE).toFixed(2)}) = ${m} ${(sub * (1 + IVA_RATE)).toFixed(2)}`).join('\n') || 'sin costos cargados';
   const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)} + IVA`).join('\n');
-  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés revisarlo y dar tu conformidad desde el portal para que podamos avanzar con la tarea.`;
+  // Link directo para dar conformidad SIN tener que entrar al portal: hay clientes que nunca llegan
+  // a loguearse ahí, y no queremos que el presupuesto quede trabado por eso.
+  let token = servicio.presupuesto_token;
+  if (!token) {
+    token = crypto.randomUUID();
+    await pool.query('update servicios_tecnicos set presupuesto_token=$1 where id=$2', [token, servicio.id]);
+  }
+  const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
+  const linkAprobacion = `${baseUrl}/aprobar-presupuesto/${token}`;
+  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés dar tu conformidad entrando acá, sin necesidad de loguearte:\n${linkAprobacion}`;
   await pool.query(
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Presupuesto enviado',$2,true)`,
     [servicio.ticket_id, cuerpo]
