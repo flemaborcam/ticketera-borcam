@@ -328,6 +328,18 @@ async function idsClienteGestionados(clienteId) {
   const r = await pool.query('select id from clientes where id=$1 or administrado_por_id=$1', [clienteId]);
   return r.rows.map(row => row.id);
 }
+// Para Documentos, un Apartamento no debe ver sus propios documentos (aunque se le puedan cargar,
+// para más adelante), sino los que están subidos al Edificio del que depende — al revés de cómo
+// funciona para Tickets, donde el apartamento sí ve únicamente lo suyo. Para cualquier otro rol
+// (Edificio, Administración, cliente sin "administrado por") el comportamiento no cambia: se sigue
+// viendo lo propio más lo que administra.
+async function idsDocumentosPortal(clienteId) {
+  const cliente = (await pool.query('select rol_cliente, administrado_por_id from clientes where id=$1', [clienteId])).rows[0];
+  if (cliente && cliente.rol_cliente === 'Apartamento' && cliente.administrado_por_id) {
+    return [cliente.administrado_por_id];
+  }
+  return idsClienteGestionados(clienteId);
+}
 async function nextTicketNumero() {
   const anio = new Date().getFullYear();
   const client = await pool.connect();
@@ -2879,7 +2891,7 @@ app.post('/api/portal/servicios/:id/aprobar', requireCliente, async (req, res) =
 // Documentos del edificio: el cliente ve los suyos (cliente_id = el suyo) más los generales
 // (cliente_id null, por ejemplo un manual que aplica a todos los edificios).
 app.get('/api/portal/documentos', requireCliente, async (req, res) => {
-  const ids = await idsClienteGestionados(req.session.clienteId);
+  const ids = await idsDocumentosPortal(req.session.clienteId);
   const docs = (await pool.query(
     `select id, nombre, categoria, mime, size, creado from documentos_edificio
      where cliente_id = any($1) or cliente_id is null order by creado desc`,
@@ -2888,7 +2900,7 @@ app.get('/api/portal/documentos', requireCliente, async (req, res) => {
   ok(res, docs);
 });
 app.get('/api/portal/documentos/:id/descargar', requireCliente, async (req, res) => {
-  const ids = await idsClienteGestionados(req.session.clienteId);
+  const ids = await idsDocumentosPortal(req.session.clienteId);
   const doc = (await pool.query('select * from documentos_edificio where id=$1', [req.params.id])).rows[0];
   if (!doc) return bad(res, 'No encontrado', 404);
   if (doc.cliente_id !== null && !ids.includes(doc.cliente_id)) return bad(res, 'No autorizado', 403);
