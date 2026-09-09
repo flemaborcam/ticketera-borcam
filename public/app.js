@@ -1332,7 +1332,7 @@ function renderDetalleServicioTecnicoModal() {
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
       <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
       ${costos.length ? `<button type="button" class="btn btn-ghost" onclick="generarComprobanteServicioTecnico('${s.id}')">🧾 Generar comprobante</button>` : ''}
-      ${!s.presupuesto_enviado ? `<button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
+      ${!s.presupuesto_aprobado ? `<button type="button" class="btn ${s.presupuesto_enviado ? 'btn-ghost' : 'btn-primary'}" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 ${s.presupuesto_enviado ? 'Reenviar presupuesto al cliente' : 'Enviar presupuesto al cliente'}${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
     </div>
   </div></div>`;
