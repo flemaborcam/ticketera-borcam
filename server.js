@@ -222,6 +222,18 @@ pool.query(`create table if not exists documentos_edificio (
 // clientes.id es uuid, y esa discrepancia hacía caer el servidor al hacer el join con clientes.
 pool.query('alter table documentos_edificio alter column cliente_id type uuid using cliente_id::text::uuid')
   .catch(e => console.error('No se pudo corregir el tipo de cliente_id en documentos_edificio:', e.message));
+// Proveedores y Servicios: empresas de mantenimiento que una Administración carga para un Edificio
+// puntual que gestiona. Por ahora solo lo pueden cargar cuentas con rol "Administración" (desde el
+// portal) o el staff (desde el panel); arranca con los campos mínimos, se va a ir ampliando.
+pool.query(`create table if not exists proveedores (
+  id serial primary key,
+  nombre text not null,
+  edificio_cliente_id uuid not null,
+  telefono text,
+  correo text,
+  creado_por_cliente_id uuid,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear proveedores:', e.message));
 pool.query(`create table if not exists servicios_tecnicos (
   id serial primary key,
   ticket_id uuid,
@@ -1241,7 +1253,79 @@ app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   // Si este cliente era una "Administración" que gestionaba otros edificios, esos edificios no se
   // borran: solo quedan sueltos (sin administración a cargo), en vez de arrastrarlos en la eliminación.
   await pool.query('update clientes set administrado_por_id=null where administrado_por_id=$1', [req.params.id]);
+  await pool.query('delete from proveedores where edificio_cliente_id=$1', [req.params.id]);
   await pool.query('delete from clientes where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+/* ---------------- Proveedores y Servicios (por Edificio, cargados por la Administración o por staff) ---------------- */
+app.get('/api/proveedores', requireStaff, async (req, res) => {
+  const filas = (await pool.query(
+    `select p.*, c.nombre as edificio_nombre from proveedores p join clientes c on c.id = p.edificio_cliente_id order by p.creado desc`
+  )).rows;
+  ok(res, filas);
+});
+app.post('/api/proveedores', requireStaff, async (req, res) => {
+  const { nombre, edificioClienteId, telefono, correo } = req.body || {};
+  if (!nombre || !nombre.trim()) return bad(res, 'Falta el nombre del proveedor.');
+  if (!edificioClienteId) return bad(res, 'Falta el edificio.');
+  const r = await pool.query(
+    `insert into proveedores (nombre, edificio_cliente_id, telefono, correo) values ($1,$2,$3,$4) returning *`,
+    [nombre.trim(), edificioClienteId, telefono || null, correo || null]
+  );
+  ok(res, r.rows[0]);
+});
+app.put('/api/proveedores/:id', requireStaff, async (req, res) => {
+  const { nombre, edificioClienteId, telefono, correo } = req.body || {};
+  if (!nombre || !nombre.trim()) return bad(res, 'Falta el nombre del proveedor.');
+  if (!edificioClienteId) return bad(res, 'Falta el edificio.');
+  const r = await pool.query(
+    `update proveedores set nombre=$1, edificio_cliente_id=$2, telefono=$3, correo=$4 where id=$5 returning *`,
+    [nombre.trim(), edificioClienteId, telefono || null, correo || null, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'No encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/proveedores/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from proveedores where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+// Portal: solo cuentas con rol "Administración" pueden cargar/ver proveedores, y únicamente para
+// edificios que ellas mismas administran (no pueden asignarle un proveedor a un edificio ajeno).
+async function requireAdministracionPortal(req, res, next) {
+  if (!req.session || req.session.type !== 'cliente') return res.status(401).json({ error: 'No autenticado' });
+  const cliente = (await pool.query('select rol_cliente from clientes where id=$1', [req.session.clienteId])).rows[0];
+  if (!cliente || cliente.rol_cliente !== 'Administración') return res.status(403).json({ error: 'Esta sección es solo para cuentas de Administración.' });
+  next();
+}
+async function edificiosAdministradosPor(clienteId) {
+  const r = await pool.query(`select id from clientes where administrado_por_id=$1 and rol_cliente='Edificio'`, [clienteId]);
+  return r.rows.map(row => row.id);
+}
+app.get('/api/portal/proveedores', requireAdministracionPortal, async (req, res) => {
+  const edificioIds = await edificiosAdministradosPor(req.session.clienteId);
+  const filas = (await pool.query(
+    `select p.*, c.nombre as edificio_nombre from proveedores p join clientes c on c.id = p.edificio_cliente_id
+     where p.edificio_cliente_id = any($1) order by p.creado desc`,
+    [edificioIds]
+  )).rows;
+  ok(res, filas);
+});
+app.post('/api/portal/proveedores', requireAdministracionPortal, async (req, res) => {
+  const { nombre, edificioClienteId, telefono, correo } = req.body || {};
+  if (!nombre || !nombre.trim()) return bad(res, 'Falta el nombre del proveedor.');
+  const edificioIds = await edificiosAdministradosPor(req.session.clienteId);
+  if (!edificioClienteId || !edificioIds.includes(edificioClienteId)) return bad(res, 'Elegí un edificio que administrés.');
+  const r = await pool.query(
+    `insert into proveedores (nombre, edificio_cliente_id, telefono, correo, creado_por_cliente_id) values ($1,$2,$3,$4,$5) returning *`,
+    [nombre.trim(), edificioClienteId, telefono || null, correo || null, req.session.clienteId]
+  );
+  ok(res, r.rows[0]);
+});
+app.delete('/api/portal/proveedores/:id', requireAdministracionPortal, async (req, res) => {
+  const edificioIds = await edificiosAdministradosPor(req.session.clienteId);
+  const prov = (await pool.query('select * from proveedores where id=$1', [req.params.id])).rows[0];
+  if (!prov || !edificioIds.includes(prov.edificio_cliente_id)) return bad(res, 'No encontrado.', 404);
+  await pool.query('delete from proveedores where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
 /* ---------------- Newsletter ---------------- */
@@ -2761,7 +2845,7 @@ async function procesarAdjuntosBase64(ticketId, adjuntos) {
 }
 app.get('/api/portal/edificios', requireCliente, async (req, res) => {
   const ids = await idsClienteGestionados(req.session.clienteId);
-  const edificios = (await pool.query('select id, nombre from clientes where id = any($1) order by nombre', [ids])).rows;
+  const edificios = (await pool.query('select id, nombre, rol_cliente as "rolCliente" from clientes where id = any($1) order by nombre', [ids])).rows;
   ok(res, edificios);
 });
 app.post('/api/portal/tickets', requireCliente, async (req, res) => {
@@ -2799,7 +2883,7 @@ app.post('/api/portal/tickets', requireCliente, async (req, res) => {
   ok(res, await ticketConMensajes(ticketId));
 });
 app.get('/api/portal/perfil', requireCliente, async (req, res) => {
-  const c = (await pool.query('select id, nombre, direccion, telefono, correo, contacto_nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
+  const c = (await pool.query('select id, nombre, direccion, telefono, correo, contacto_nombre, rol_cliente from clientes where id=$1', [req.session.clienteId])).rows[0];
   if (!c) return bad(res, 'No encontrado', 404);
   ok(res, c);
 });
