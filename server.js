@@ -271,6 +271,20 @@ pool.query('alter table servicios_tecnicos add column if not exists firma_fecha 
 // Algunos clientes no quieren factura oficial y solo piden el comprobante interno, sin discriminar
 // IVA — por eso el IVA se puede activar/desactivar por servicio (por defecto va con IVA, como siempre).
 pool.query('alter table servicios_tecnicos add column if not exists aplica_iva boolean not null default true').catch(e => console.error('No se pudo migrar aplica_iva:', e.message));
+// Recordatorio automático del turno (se manda por Telegram cuando falta poco), estado intermedio
+// "en curso" (además de pendiente/realizado) y registro de reprogramaciones, para no perder el
+// historial cuando se mueve la fecha de un turno.
+pool.query('alter table servicios_tecnicos add column if not exists recordatorio_enviado boolean not null default false').catch(e => console.error('No se pudo migrar recordatorio_enviado:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists iniciado_en timestamptz').catch(e => console.error('No se pudo migrar iniciado_en:', e.message));
+pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
+  id serial primary key,
+  servicio_id integer not null,
+  fecha_hora_anterior timestamptz not null,
+  fecha_hora_nueva timestamptz not null,
+  motivo text,
+  reprogramado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear servicios_tecnicos_reprogramaciones:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2365,7 +2379,7 @@ app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
   ok(res, { ...r.rows[0], costos: [] });
 });
 app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
-  const { clienteId, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  const { clienteId, titulo, fecha, hora, duracion, todoElDia, motivoReprogramacion } = req.body || {};
   if (!clienteId) return bad(res, 'Falta el cliente/edificio.');
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
@@ -2373,12 +2387,64 @@ app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   // Se fija el offset de Uruguay (-03:00) explícitamente: si no, Postgres interpreta la hora que
   // escribió el usuario como si fuera UTC y el turno queda corrido varias horas.
   const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
+  const anterior = (await pool.query('select fecha_hora, estado from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!anterior) return bad(res, 'Turno no encontrado.', 404);
+  // Si la fecha/hora cambió, queda registrado en el historial de reprogramaciones (no se pisa sin
+  // dejar rastro) y se vuelve a avisar por Telegram cuando se acerque la nueva fecha.
+  const cambioFecha = new Date(anterior.fecha_hora).getTime() !== new Date(fechaHora).getTime();
+  if (cambioFecha) {
+    const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+    await pool.query(
+      `insert into servicios_tecnicos_reprogramaciones (servicio_id, fecha_hora_anterior, fecha_hora_nueva, motivo, reprogramado_por) values ($1,$2,$3,$4,$5)`,
+      [req.params.id, anterior.fecha_hora, fechaHora, (motivoReprogramacion || '').trim() || null, staff ? `${staff.nombre} ${staff.apellido}` : null]
+    );
+  }
   const r = await pool.query(
-    `update servicios_tecnicos set cliente_id=$1, titulo=$2, fecha_hora=$3, duracion_minutos=$4, todo_el_dia=$5 where id=$6 returning *`,
+    `update servicios_tecnicos set cliente_id=$1, titulo=$2, fecha_hora=$3, duracion_minutos=$4, todo_el_dia=$5
+      ${cambioFecha ? ', recordatorio_enviado=false, estado=(case when estado=\'realizado\' then estado else \'pendiente\' end)' : ''}
+      where id=$6 returning *`,
     [clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, await servicioTecnicoConCostos(req.params.id));
+});
+app.get('/api/servicios-tecnicos/:id/reprogramaciones', requireStaff, async (req, res) => {
+  const filas = (await pool.query('select * from servicios_tecnicos_reprogramaciones where servicio_id=$1 order by creado asc', [req.params.id])).rows;
+  ok(res, filas);
+});
+// Estado intermedio "en curso": el técnico ya salió o está trabajando en el lugar, todavía no
+// terminó (eso lo marca "Marcar como realizado", con la firma de conformidad).
+app.post('/api/servicios-tecnicos/:id/iniciar', requireStaff, async (req, res) => {
+  const r = await pool.query(`update servicios_tecnicos set estado='en_curso', iniciado_en=now() where id=$1 and estado<>'realizado' returning *`, [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado o ya realizado.', 404);
+  ok(res, r.rows[0]);
+});
+// Historial de servicios técnicos de un cliente/edificio en particular.
+app.get('/api/clientes/:id/servicios-tecnicos', requireStaff, async (req, res) => {
+  const filas = (await pool.query(
+    `select s.*, coalesce((select json_agg(c.* order by c.creado asc) from costos_servicio_tecnico c where c.servicio_id = s.id), '[]'::json) as costos,
+      (select numero from comprobantes_servicio_tecnico cs where cs.servicio_id = s.id order by cs.creado desc limit 1) as comprobante_numero
+     from servicios_tecnicos s where s.cliente_id=$1 order by s.fecha_hora desc`,
+    [req.params.id]
+  )).rows;
+  ok(res, filas);
+});
+// Reporte mensual: todos los servicios realizados en un rango de fechas, agrupados por cliente,
+// para llevar un control interno (aparte de lo que se facture oficial aparte).
+app.get('/api/servicios-tecnicos/reporte', requireStaff, async (req, res) => {
+  const { desde, hasta } = req.query;
+  if (!desde || !hasta) return bad(res, 'Faltan las fechas del rango.');
+  const filas = (await pool.query(
+    `select s.*, c.nombre as cliente_nombre,
+      coalesce((select json_agg(co.* order by co.creado asc) from costos_servicio_tecnico co where co.servicio_id = s.id), '[]'::json) as costos,
+      (select numero from comprobantes_servicio_tecnico cs where cs.servicio_id = s.id order by cs.creado desc limit 1) as comprobante_numero
+     from servicios_tecnicos s
+     left join clientes c on c.id = s.cliente_id
+     where s.estado='realizado' and s.fecha_hora >= $1 and s.fecha_hora < $2
+     order by s.fecha_hora asc`,
+    [desde, hasta]
+  )).rows;
+  ok(res, filas);
 });
 // Borra un servicio técnico cargado por error: sus costos, comprobantes y adjuntos de presupuesto
 // (estos últimos también se borran de Storage). El ticket asociado, si lo hay, NO se toca — solo se
@@ -3518,6 +3584,27 @@ setTimeout(ejecutarRespaldoProgramado, 40000);
 setInterval(ejecutarRespaldoProgramado, 6 * 60 * 60 * 1000);
 setTimeout(revisarRecordatorioDiarioSinAsignar, 25000);
 setInterval(revisarRecordatorioDiarioSinAsignar, 15 * 60 * 1000);
+// Recordatorio automático de servicios técnicos agendados: avisa por Telegram cuando falta poco
+// (dentro de las próximas 24hs) para un turno que todavía no se marcó como realizado, y no lo
+// vuelve a mandar dos veces para el mismo turno (salvo que se reprograme, que resetea el aviso).
+async function revisarRecordatoriosServicioTecnico() {
+  try {
+    const filas = (await pool.query(
+      `select s.*, c.nombre as cliente_nombre from servicios_tecnicos s
+       left join clientes c on c.id = s.cliente_id
+       where s.estado <> 'realizado' and s.recordatorio_enviado = false
+         and s.fecha_hora >= now() and s.fecha_hora <= now() + interval '24 hours'`
+    )).rows;
+    for (const s of filas) {
+      const fechaFmt = new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
+      const texto = `⏰ Recordatorio: servicio técnico "${s.titulo}" — ${s.cliente_nombre || 'sin cliente'} — ${fechaFmt}${s.ticket_numero ? ` (ticket ${s.ticket_numero})` : ''}`;
+      await enviarTelegram(texto);
+      await pool.query('update servicios_tecnicos set recordatorio_enviado=true where id=$1', [s.id]);
+    }
+  } catch (e) { console.error('Error revisando recordatorios de servicio técnico:', e.message); }
+}
+setTimeout(revisarRecordatoriosServicioTecnico, 30000);
+setInterval(revisarRecordatoriosServicioTecnico, 30 * 60 * 1000);
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
   if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
