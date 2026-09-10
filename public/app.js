@@ -1100,13 +1100,13 @@ function autocompletarCostoDesdeCatalogo(prefijo) {
 }
 function renderCostosPendientesEditor() {
   const items = state.pendingCostosServicio || [];
-  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Number(c.precio).toFixed(2)} + IVA)</option>`).join('');
+  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Math.round(Number(c.precio))} + IVA)</option>`).join('');
   return `<div style="border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:14px;">
     <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos (opcional)</div>
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:${items.length ? '10px' : '0'};">
       ${items.map((c, i) => `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
-          <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precioUnitario)).toFixed(2)}</strong> <span style="color:var(--ink-soft);">+ IVA</span></div>
+          <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precioUnitario))}</strong> <span style="color:var(--ink-soft);">+ IVA</span></div>
           <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="quitarCostoPendiente(${i})">Quitar</button>
         </div>`).join('')}
     </div>
@@ -1249,19 +1249,31 @@ function totalesPorMoneda(costos) {
   (costos || []).forEach(c => { t[c.moneda] = (t[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
   return t;
 }
-function renderTotalesPorMoneda(costos) {
+function renderTotalesPorMoneda(costos, aplicaIva = true) {
   const t = totalesPorMoneda(costos);
   const entradas = Object.entries(t);
   if (!entradas.length) return '<div class="hint-text">Todavía no hay costos cargados.</div>';
-  return `<div style="display:flex;flex-direction:column;gap:6px;">${entradas.map(([m, subtotal]) => {
-    const iva = subtotal * IVA_RATE;
+  return `<div style="display:flex;flex-direction:column;gap:6px;">${entradas.map(([m, subtotalRaw]) => {
+    const subtotal = Math.round(subtotalRaw);
+    if (!aplicaIva) return `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;font-size:12.5px;color:var(--ink-soft);">
+      <span class="tag tag-cat" style="font-weight:700;">Total (sin IVA): ${m} ${subtotal}</span>
+    </div>`;
+    const iva = Math.round(subtotal * IVA_RATE);
     const total = subtotal + iva;
     return `<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;font-size:12.5px;color:var(--ink-soft);">
-      <span>Subtotal: <strong style="color:var(--ink);">${m} ${subtotal.toFixed(2)}</strong></span>
-      <span>+ IVA (22%): <strong style="color:var(--ink);">${m} ${iva.toFixed(2)}</strong></span>
-      <span class="tag tag-cat" style="font-weight:700;">Total: ${m} ${total.toFixed(2)}</span>
+      <span>Subtotal: <strong style="color:var(--ink);">${m} ${subtotal}</strong></span>
+      <span>+ IVA (22%): <strong style="color:var(--ink);">${m} ${iva}</strong></span>
+      <span class="tag tag-cat" style="font-weight:700;">Total: ${m} ${total}</span>
     </div>`;
   }).join('')}</div>`;
+}
+async function toggleAplicaIvaServicio(id, aplicaIva) {
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/aplica-iva`, { aplicaIva });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    render();
+  } catch (e) { showToast(e.message); }
 }
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
@@ -1278,7 +1290,7 @@ function renderDetalleServicioTecnicoModal() {
   ];
   const puedeMarcar = s.estado !== 'realizado';
   const costos = s.costos || [];
-  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Number(c.precio).toFixed(2)} + IVA)</option>`).join('');
+  const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Math.round(Number(c.precio))} + IVA)</option>`).join('');
   const adjuntos = s.presupuesto_adjuntos || [];
   const estadoPresupuesto = s.presupuesto_aprobado
     ? `<span class="tag tag-resuelto">✅ Aprobado por el cliente${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</span>`
@@ -1291,14 +1303,17 @@ function renderDetalleServicioTecnicoModal() {
 
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
+        <input type="checkbox" ${s.aplica_iva !== false ? 'checked' : ''} onchange="toggleAplicaIvaServicio('${s.id}', this.checked)"> Aplicar IVA (22%)
+      </label>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
         ${costos.length ? costos.map(c => `
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
-            <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}</strong> <span style="color:var(--ink-soft);">+ IVA</span></div>
+            <div style="font-size:13px;">${escapeHtml(c.descripcion)} x${c.cantidad} — <strong>${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precio_unitario))}</strong>${s.aplica_iva !== false ? ' <span style="color:var(--ink-soft);">+ IVA</span>' : ''}</div>
             <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="borrarCostoServicioTecnico('${c.id}', '${s.id}')">Quitar</button>
           </div>`).join('') : `<div class="hint-text">Sin costos cargados todavía.</div>`}
       </div>
-      ${costos.length ? `<div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>` : ''}
+      ${costos.length ? `<div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos, s.aplica_iva !== false)}</div>` : ''}
       <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
         <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select" onchange="autocompletarCostoDesdeCatalogo('costo')"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
         <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
@@ -1524,13 +1539,14 @@ function construirPdfComprobante(comprobante, servicio, cliente, firmaDataUrl) {
   doc.line(marginX, y, pageWidth - marginX, y);
   y += 5;
   doc.setFont('helvetica', 'normal');
+  const aplicaIva = servicio.aplica_iva !== false;
   (servicio.costos || []).forEach(c => {
-    const importe = Number(c.cantidad) * Number(c.precio_unitario);
+    const importe = Math.round(Number(c.cantidad) * Number(c.precio_unitario));
     const descLineas = doc.splitTextToSize(c.descripcion, colCant - colDesc - 4);
     doc.text(descLineas, colDesc, y);
     doc.text(String(c.cantidad), colCant, y, { align: 'right' });
-    doc.text(`${c.moneda} ${Number(c.precio_unitario).toFixed(2)}`, colPrecio, y, { align: 'right' });
-    doc.text(`${c.moneda} ${importe.toFixed(2)}`, colImporte, y, { align: 'right' });
+    doc.text(`${c.moneda} ${Math.round(Number(c.precio_unitario))}`, colPrecio, y, { align: 'right' });
+    doc.text(`${c.moneda} ${importe}`, colImporte, y, { align: 'right' });
     y += Math.max(descLineas.length, 1) * 5 + 1;
   });
   y += 3;
@@ -1538,22 +1554,31 @@ function construirPdfComprobante(comprobante, servicio, cliente, firmaDataUrl) {
   doc.line(marginX, y, pageWidth - marginX, y);
   y += 8;
 
-  // Totales por moneda, con el IVA (22%) discriminado igual que en el resto del sistema.
+  // Totales por moneda, con el IVA (22%) discriminado — salvo que el service tenga el IVA
+  // desactivado (cliente que solo pide el comprobante interno, sin factura oficial).
   const totales = totalesPorMoneda(servicio.costos || []);
   doc.setFontSize(10);
-  Object.entries(totales).forEach(([moneda, subtotal]) => {
-    const iva = subtotal * IVA_RATE;
-    const total = subtotal + iva;
+  Object.entries(totales).forEach(([moneda, subtotalRaw]) => {
+    const subtotal = Math.round(subtotalRaw);
     doc.setFont('helvetica', 'normal');
+    if (!aplicaIva) {
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Total (${moneda}, sin IVA)`, colPrecio, y, { align: 'right' });
+      doc.text(`${moneda} ${subtotal}`, colImporte, y, { align: 'right' });
+      y += 8;
+      return;
+    }
+    const iva = Math.round(subtotal * IVA_RATE);
+    const total = subtotal + iva;
     doc.text(`Subtotal (${moneda})`, colPrecio, y, { align: 'right' });
-    doc.text(`${moneda} ${subtotal.toFixed(2)}`, colImporte, y, { align: 'right' });
+    doc.text(`${moneda} ${subtotal}`, colImporte, y, { align: 'right' });
     y += 5.5;
     doc.text(`IVA 22% (${moneda})`, colPrecio, y, { align: 'right' });
-    doc.text(`${moneda} ${iva.toFixed(2)}`, colImporte, y, { align: 'right' });
+    doc.text(`${moneda} ${iva}`, colImporte, y, { align: 'right' });
     y += 5.5;
     doc.setFont('helvetica', 'bold');
     doc.text(`Total (${moneda})`, colPrecio, y, { align: 'right' });
-    doc.text(`${moneda} ${total.toFixed(2)}`, colImporte, y, { align: 'right' });
+    doc.text(`${moneda} ${total}`, colImporte, y, { align: 'right' });
     y += 8;
   });
 
@@ -1654,7 +1679,7 @@ function renderCatalogoCostosTab() {
       <div class="user-row" style="border:1px solid var(--line);">
         <div class="avatar">💲</div>
         <div style="flex:1;"><div class="u-name">${escapeHtml(c.nombre)} ${!c.activo ? '<span class="tag" style="margin-left:6px;">Inactivo</span>' : ''}</div>
-        <div class="u-sub">${c.moneda} ${Number(c.precio).toFixed(2)} + IVA</div></div>
+        <div class="u-sub">${c.moneda} ${Math.round(Number(c.precio))} + IVA</div></div>
         <button type="button" class="btn btn-ghost" onclick="openCatalogoCostoModal('${c.id}')">Editar</button>
         <button type="button" class="btn btn-danger" onclick="borrarCatalogoCosto('${c.id}')">Eliminar</button>
       </div>`).join('') : `<div class="hint-text">Todavía no cargaste ningún costo al catálogo.</div>`}</div>`;
@@ -1670,7 +1695,7 @@ function renderCatalogoCostoModal() {
     <h2>${item ? '✏️ Editar costo' : '+ Nuevo costo del catálogo'}</h2>
     <div class="field"><label>Nombre</label><input type="text" id="catalogo-costo-nombre" value="${item ? escapeHtml(item.nombre) : ''}" placeholder="Ej: Mano de obra por visita"></div>
     <div class="field-row">
-      <div class="field"><label>Precio (sin IVA)</label><input type="number" id="catalogo-costo-precio" min="0" step="0.01" value="${item ? Number(item.precio) : ''}"></div>
+      <div class="field"><label>Precio (sin IVA)</label><input type="number" id="catalogo-costo-precio" min="0" step="1" value="${item ? Math.round(Number(item.precio)) : ''}"></div>
       <div class="field" style="flex:0.6;"><label>Moneda</label><select id="catalogo-costo-moneda"><option value="UYU" ${!item || item.moneda === 'UYU' ? 'selected' : ''}>$ UYU</option><option value="USD" ${item && item.moneda === 'USD' ? 'selected' : ''}>US$</option></select></div>
     </div>
     ${item ? `<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="catalogo-costo-activo" ${item.activo ? 'checked' : ''}> Activo (visible al cargar costos)</label>` : ''}
@@ -1679,11 +1704,11 @@ function renderCatalogoCostoModal() {
 }
 async function guardarCatalogoCosto() {
   const nombre = document.getElementById('catalogo-costo-nombre').value;
-  const precio = document.getElementById('catalogo-costo-precio').value;
+  const precio = Math.round(Number(document.getElementById('catalogo-costo-precio').value));
   const moneda = document.getElementById('catalogo-costo-moneda').value;
   const activoEl = document.getElementById('catalogo-costo-activo');
   if (!nombre || !nombre.trim()) { showToast('Escribí un nombre.'); return; }
-  if (precio === '' || isNaN(Number(precio))) { showToast('Escribí un precio.'); return; }
+  if (isNaN(precio)) { showToast('Escribí un precio.'); return; }
   try {
     if (state.catalogoCostoEditId) {
       const actualizado = await api('PUT', `/api/catalogo-costos/${state.catalogoCostoEditId}`, { nombre, precio, moneda, activo: activoEl ? activoEl.checked : true });
@@ -4554,9 +4579,9 @@ function renderPresupuestosClienteTicket(t) {
     return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
       ${configSectionHead('📋', `Presupuesto — ${escapeHtml(s.titulo)}`, 'Revisá el detalle y dá tu conformidad para que podamos avanzar con la tarea.')}
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
-        ${costos.length ? costos.map(c => `<div style="display:flex;justify-content:space-between;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span>${escapeHtml(c.descripcion)} x${c.cantidad}</span><strong>${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)} <span style="font-weight:400;color:var(--ink-soft);">+ IVA</span></strong></div>`).join('') : ''}
+        ${costos.length ? costos.map(c => `<div style="display:flex;justify-content:space-between;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span>${escapeHtml(c.descripcion)} x${c.cantidad}</span><strong>${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precio_unitario))}${s.aplica_iva !== false ? ' <span style="font-weight:400;color:var(--ink-soft);">+ IVA</span>' : ''}</strong></div>`).join('') : ''}
       </div>
-      <div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos)}</div>
+      <div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos, s.aplica_iva !== false)}</div>
       ${adjuntos.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">${adjuntos.map(a => `<a href="/api/servicios-tecnicos/${s.id}/presupuesto/${a.id}/descargar" target="_blank" rel="noopener" class="btn btn-ghost" style="width:fit-content;">${attachIcon(tipoAdjunto(a.mime || ''))} ${escapeHtml(a.nombre)}</a>`).join('')}</div>` : ''}
       ${s.presupuesto_aprobado
         ? `<div class="tag tag-resuelto">✅ Diste tu conformidad${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</div>`
