@@ -1052,19 +1052,139 @@ function renderServicioTecnicoTab() {
   }
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
-      ${tab !== 'catalogo' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+      <div style="display:flex;gap:8px;">
+        ${tab !== 'catalogo' ? `<button type="button" class="btn btn-ghost" onclick="abrirReporteMensualServicios()">📊 Reporte mensual</button>` : ''}
+        ${tab !== 'catalogo' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+      </div>
     </div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
     ${contenido}`;
 }
 function cambiarServicioTecnicoTab(t) { state.servicioTecnicoTab = t; render(); }
+// --- Reporte mensual de servicios técnicos realizados (control interno, no es factura DGI) ---
+function abrirReporteMensualServicios() {
+  state.modal = 'reporte-mensual-servicios';
+  render();
+}
+function renderReporteMensualServiciosModal() {
+  const hoy = new Date();
+  const mesDefault = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📊 Reporte mensual de servicios técnicos</h2>
+    <div class="field"><label>Mes</label><input type="month" id="reporte-servicios-mes" value="${mesDefault}"></div>
+    <div class="hint-text">Incluye los servicios marcados como realizados en ese mes, agrupados por cliente/edificio.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="generarReporteMensualServicios()">📄 Generar PDF</button>
+    </div>
+  </div></div>`;
+}
+async function generarReporteMensualServicios() {
+  const mes = document.getElementById('reporte-servicios-mes').value;
+  if (!mes) { showToast('Elegí un mes.'); return; }
+  const [anio, mesNum] = mes.split('-').map(Number);
+  const desde = `${mes}-01T00:00:00-03:00`;
+  const siguiente = mesNum === 12 ? `${anio + 1}-01` : `${anio}-${String(mesNum + 1).padStart(2, '0')}`;
+  const hasta = `${siguiente}-01T00:00:00-03:00`;
+  try {
+    const filas = await api('GET', `/api/servicios-tecnicos/reporte?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`);
+    await cargarJsPdf();
+    construirPdfReporteMensualServicios(filas, mes);
+    closeModal();
+  } catch (e) { showToast(e.message); }
+}
+function construirPdfReporteMensualServicios(filas, mes) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 15;
+  let y = 20;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text(`Reporte mensual de Servicio Técnico — ${mes}`, marginX, y);
+  y += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(140);
+  doc.text('Control interno de Borcam — no reemplaza la facturación oficial ante DGI.', marginX, y);
+  doc.setTextColor(0);
+  y += 10;
+
+  if (!filas.length) {
+    doc.setFontSize(11);
+    doc.text('No hubo servicios técnicos marcados como realizados en este mes.', marginX, y);
+    doc.save(`Reporte servicio tecnico ${mes}.pdf`);
+    return;
+  }
+
+  // Agrupa por cliente y suma los totales (con o sin IVA según lo que tenía tildado cada servicio).
+  const porCliente = {};
+  const totalGeneral = {};
+  filas.forEach(s => {
+    const nombre = s.cliente_nombre || 'Sin cliente';
+    if (!porCliente[nombre]) porCliente[nombre] = { servicios: [], totales: {} };
+    const subtotalesServicio = {};
+    (s.costos || []).forEach(c => { subtotalesServicio[c.moneda] = (subtotalesServicio[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
+    Object.entries(subtotalesServicio).forEach(([m, sub]) => {
+      const total = Math.round(s.aplica_iva !== false ? sub * (1 + IVA_RATE) : sub);
+      porCliente[nombre].totales[m] = (porCliente[nombre].totales[m] || 0) + total;
+      totalGeneral[m] = (totalGeneral[m] || 0) + total;
+    });
+    porCliente[nombre].servicios.push(s);
+  });
+
+  doc.setFontSize(10);
+  Object.entries(porCliente).forEach(([nombre, datos]) => {
+    if (y > pageHeight - 40) { doc.addPage(); y = 20; }
+    doc.setFont('helvetica', 'bold');
+    doc.text(nombre, marginX, y);
+    y += 5.5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    datos.servicios.forEach(s => {
+      if (y > pageHeight - 25) { doc.addPage(); y = 20; }
+      const fecha = new Date(s.fecha_hora).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' });
+      doc.text(`${fecha} — ${s.titulo}${s.comprobante_numero ? ' (' + s.comprobante_numero + ')' : ''}${s.aplica_iva === false ? ' [sin IVA]' : ''}`, marginX + 4, y);
+      y += 5;
+    });
+    doc.setFont('helvetica', 'bold');
+    Object.entries(datos.totales).forEach(([m, total]) => {
+      doc.text(`Subtotal ${nombre}: ${m} ${total}`, marginX + 4, y);
+      y += 5.5;
+    });
+    doc.setFontSize(10);
+    y += 3;
+  });
+
+  if (y > pageHeight - 30) { doc.addPage(); y = 20; }
+  doc.setDrawColor(180);
+  doc.line(marginX, y, pageWidth - marginX, y);
+  y += 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('Total del mes', marginX, y);
+  y += 6;
+  doc.setFontSize(10);
+  Object.entries(totalGeneral).forEach(([m, total]) => {
+    doc.text(`${m} ${total}`, marginX, y);
+    y += 6;
+  });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(140);
+  doc.text('BORCAM EQUIPAMIENTOS S.R.L — Av 8 de Octubre 2956, Montevideo — Tel.: 598+ 24878281 — administracion@borcam.com.uy', pageWidth / 2, pageHeight - 12, { align: 'center' });
+
+  doc.save(`Reporte servicio tecnico ${mes}.pdf`);
+}
 function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
 function renderServicioTecnicoLista(filtro, mensajeVacio) {
   const turnos = (cache.serviciosTecnicos || []).filter(filtro);
   const html = turnos.length ? turnos.map(s => `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
       <div class="avatar">🛠️</div>
-      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
+      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
       <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
     </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
@@ -1239,6 +1359,7 @@ function abrirDetalleServicioTecnico(id) {
   state.modal = 'detalle-servicio-tecnico';
   state.servicioTecnicoDetalleId = id;
   state.pendingPresupuestos = [];
+  state.servicioReprogramaciones = null;
   render();
 }
 // Logo + datos de contacto de Borcam (para el encabezado del comprobante de servicio técnico en PDF).
@@ -1288,9 +1409,11 @@ function renderDetalleServicioTecnicoModal() {
     ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
     ['Duración', s.todo_el_dia ? '—' : `${s.duracion_minutos || 60} min`],
     ['Cargado por', s.creado_por ? escapeHtml(s.creado_por) : '—'],
-    ['Estado', s.estado === 'realizado' ? 'Realizado' : 'Pendiente']
+    ['Estado', s.estado === 'realizado' ? 'Realizado' : s.estado === 'en_curso' ? '🚗 En curso' : 'Pendiente']
   ];
   const puedeMarcar = s.estado !== 'realizado';
+  const puedeIniciar = s.estado === 'pendiente';
+  const reprogramaciones = state.servicioReprogramaciones && String(state.servicioReprogramacionesId) === String(s.id) ? state.servicioReprogramaciones : null;
   const costos = s.costos || [];
   const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Math.round(Number(c.precio))} + IVA)</option>`).join('');
   const adjuntos = s.presupuesto_adjuntos || [];
@@ -1348,16 +1471,87 @@ function renderDetalleServicioTecnicoModal() {
       : s.firma_path
         ? `✍️ Firmado por ${escapeHtml(`${s.firma_nombre || ''} ${s.firma_apellido || ''}`.trim())} (C.I. ${escapeHtml(s.firma_cedula || '—')})${s.firma_fecha ? ' · ' + fmtDateTime(s.firma_fecha) : ''}`
         : ''}</div>` : ''}
+    <div style="border-top:1px solid var(--line);padding-top:10px;margin-bottom:10px;">
+      ${reprogramaciones === null
+        ? `<button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="verReprogramacionesServicio('${s.id}')">🔁 Ver historial de reprogramaciones</button>`
+        : reprogramaciones.length
+          ? `<div style="font-size:12.5px;color:var(--ink-soft);"><div style="font-weight:600;margin-bottom:4px;">🔁 Reprogramado ${reprogramaciones.length} vez${reprogramaciones.length === 1 ? '' : 'es'}:</div>
+              ${reprogramaciones.map(r => `<div style="margin-bottom:2px;">${fmtDateTime(r.fecha_hora_anterior)} → ${fmtDateTime(r.fecha_hora_nueva)}${r.motivo ? ' — ' + escapeHtml(r.motivo) : ''}${r.reprogramado_por ? ' (' + escapeHtml(r.reprogramado_por) + ')' : ''}</div>`).join('')}</div>`
+          : `<div class="hint-text">Este turno nunca se reprogramó.</div>`}
+    </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
+      ${puedeMarcar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarServicio('${s.id}')">🔁 Reprogramar</button>` : ''}
       <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
       ${costos.length ? `<button type="button" class="btn btn-ghost" onclick="generarComprobanteServicioTecnico('${s.id}')">🧾 Generar comprobante</button>` : ''}
       ${!s.presupuesto_aprobado ? `<button type="button" class="btn ${s.presupuesto_enviado ? 'btn-ghost' : 'btn-primary'}" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 ${s.presupuesto_enviado ? 'Reenviar presupuesto al cliente' : 'Enviar presupuesto al cliente'}${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
+      ${puedeIniciar ? `<button type="button" class="btn btn-ghost" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>` : ''}
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
     </div>
   </div></div>`;
+}
+async function iniciarServicioTecnico(id) {
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/iniciar`);
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = { ...cache.serviciosTecnicos[idx], ...actualizado };
+    showToast('Servicio marcado como en curso.');
+    render();
+  } catch (e) { showToast(e.message); }
+}
+async function verReprogramacionesServicio(id) {
+  try {
+    const filas = await api('GET', `/api/servicios-tecnicos/${id}/reprogramaciones`);
+    state.servicioReprogramaciones = filas;
+    state.servicioReprogramacionesId = id;
+    render();
+  } catch (e) { showToast(e.message); }
+}
+function abrirReprogramarServicio(id) {
+  state.modal = 'reprogramar-servicio';
+  state.reprogramarServicioId = id;
+  render();
+}
+function renderReprogramarServicioModal() {
+  const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.reprogramarServicioId));
+  if (!s) return '';
+  const d = new Date(new Date(s.fecha_hora).getTime() + 24 * 60 * 60000);
+  const fechaDefault = d.toISOString().slice(0, 10);
+  const horaDefault = d.toTimeString().slice(0, 5);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🔁 Reprogramar servicio técnico</h2>
+    <p class="sub">${escapeHtml(s.titulo)} — fecha actual: ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' }) : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}</p>
+    <div class="field-row">
+      <div class="field"><label>Nueva fecha</label><input type="date" id="reprogramar-fecha" value="${fechaDefault}"></div>
+      <div class="field"><label>Nueva hora</label><input type="time" id="reprogramar-hora" value="${s.todo_el_dia ? '00:00' : horaDefault}"></div>
+    </div>
+    <div class="field"><label>Motivo (opcional)</label><input type="text" id="reprogramar-motivo" placeholder="Ej: el cliente pidió moverlo"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarReprogramarServicio()">Reprogramar</button>
+    </div>
+  </div></div>`;
+}
+async function confirmarReprogramarServicio() {
+  const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.reprogramarServicioId));
+  if (!s) return;
+  const fecha = document.getElementById('reprogramar-fecha').value;
+  const hora = document.getElementById('reprogramar-hora').value;
+  const motivo = document.getElementById('reprogramar-motivo').value;
+  if (!fecha || !hora) { showToast('Elegí la nueva fecha y hora.'); return; }
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${s.id}`, {
+      clienteId: s.cliente_id, titulo: s.titulo, fecha, hora, duracion: s.duracion_minutos, todoElDia: s.todo_el_dia, motivoReprogramacion: motivo
+    });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(s.id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    state.servicioReprogramaciones = null;
+    showToast('Servicio técnico reprogramado.');
+    state.modal = 'detalle-servicio-tecnico';
+    render();
+  } catch (e) { showToast(e.message); }
 }
 async function agregarCostoServicioTecnico(servicioId) {
   const catalogoItemId = document.getElementById('costo-catalogo-select').value || null;
@@ -3103,6 +3297,7 @@ async function renderGrupoDetailAsync(id) {
   // Proveedores y Servicios: por ahora solo lo cargan/ven cuentas Administración, para los edificios
   // que ellas mismas administran.
   if (g.rolCliente === 'Administración') { cache.proveedores = await api('GET', '/api/proveedores'); }
+  const serviciosTecnicosCliente = await api('GET', `/api/clientes/${id}/servicios-tecnicos`).catch(() => []);
   return `${ticketStyleTag()}
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
@@ -3118,8 +3313,22 @@ async function renderGrupoDetailAsync(id) {
     </div>
     ${renderDependientesGrupo(g)}
     ${g.rolCliente === 'Administración' ? renderProveedoresGrupo(g) : ''}
+    ${renderHistorialServiciosTecnicosCliente(serviciosTecnicosCliente)}
     <div class="page-head"><div><h1 style="font-size:18px;">Tickets de este cliente</h1><div class="sub">${tickets.length} en total</div></div></div>
     ${list}`;
+}
+// Historial de servicios técnicos hechos a este cliente/edificio a lo largo del tiempo, con su
+// comprobante si ya se generó uno — para responder rápido "¿cuántas veces vinieron?".
+function renderHistorialServiciosTecnicosCliente(servicios) {
+  if (!servicios || !servicios.length) return '';
+  return `<div class="page-head"><div><h1 style="font-size:18px;">🛠️ Servicios técnicos</h1><div class="sub">${servicios.length} en total</div></div></div>
+    <div class="stub-list" style="margin-bottom:18px;">${servicios.map(s => `
+      <div class="user-row" style="border:1px solid var(--line);cursor:pointer;" onclick="verDetalleServicioTecnicoDesdeTicket('${s.id}')">
+        <div class="avatar">${s.estado === 'realizado' ? '✅' : s.estado === 'en_curso' ? '🚗' : '🕒'}</div>
+        <div style="flex:1;"><div class="u-name">${escapeHtml(s.titulo)}</div>
+          <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' }) : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.comprobante_numero ? ' · Comprobante ' + escapeHtml(s.comprobante_numero) : ''}</div></div>
+        <span class="stamp stamp-${s.estado === 'realizado' ? 'resuelto' : s.estado === 'en_curso' ? 'en-progreso' : 'abierto'}">${s.estado === 'realizado' ? 'Realizado' : s.estado === 'en_curso' ? 'En curso' : 'Pendiente'}</span>
+      </div>`).join('')}</div>`;
 }
 // Si este cliente es un "padre" (Administración o Edificio), lista a los clientes que tiene a cargo
 // (edificios o apartamentos, según el caso) para poder entrar a cada uno con un clic.
@@ -4302,6 +4511,8 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-proveedor-cliente') return renderNuevoProveedorClienteModal();
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
   if (state.modal === 'firma-servicio') return renderModalFirmaServicio();
+  if (state.modal === 'reprogramar-servicio') return renderReprogramarServicioModal();
+  if (state.modal === 'reporte-mensual-servicios') return renderReporteMensualServiciosModal();
   return '';
 }
 function renderDocumentoModal() {
