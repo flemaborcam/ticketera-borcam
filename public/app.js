@@ -2912,17 +2912,14 @@ function esTicketDeReserva(t) {
    guarda la reserva en la tabla reservas_calendario (igual que "Agendar servicio técnico" hace con
    servicios_tecnicos) y queda visible/gestionable en Reservas → Calendario de reservas. */
 function renderReservaCalendario(t) {
-  const ahora = new Date(Date.now() + 60 * 60000); // por defecto, dentro de una hora
+  const ahora = new Date();
   const fechaDefault = ahora.toISOString().slice(0, 10);
-  const horaDefault = ahora.toTimeString().slice(0, 5);
   return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
     ${configSectionHead('📅', 'Agendar esta reserva', 'Queda guardada en el calendario de reservas del sistema (sección Reservas → Calendario de reservas).')}
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="reserva-ics-todo-el-dia" onchange="toggleTodoElDiaIcs('reserva')"> Todo el día</label>
-    <div class="field-row">
-      <div class="field"><label>Fecha</label><input type="date" id="reserva-ics-fecha" value="${fechaDefault}"></div>
-      <div class="field" id="reserva-ics-hora-wrap"><label>Hora</label><input type="time" id="reserva-ics-hora" value="${horaDefault}"></div>
-    </div>
-    <div class="field" id="reserva-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="reserva-ics-duracion" min="15" step="15" value="60"></div>
+    <div class="field"><label>Fecha</label><input type="date" id="reserva-fecha" value="${fechaDefault}"></div>
+    <div class="field"><label>Horario</label><input type="text" id="reserva-horario" placeholder="Ej: Turno nocturno"></div>
+    <div class="field"><label>Servicio</label><input type="text" id="reserva-servicio" placeholder="Ej: Barbacoas, Barbacoa 02"></div>
+    <div class="field"><label>Realizada por</label><input type="text" id="reserva-realizado-por" placeholder="Nombre de quien hace la reserva"></div>
     <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="guardarReservaCalendario('${t.id}')">📅 Agendar reserva</button></div>
   </div>`;
 }
@@ -2938,14 +2935,13 @@ function toggleTodoElDiaIcs(prefijo) {
 async function guardarReservaCalendario(ticketId) {
   const t = cache.tickets.find(x => x.id === ticketId);
   if (!t) return;
-  const fecha = document.getElementById('reserva-ics-fecha').value;
-  const hora = document.getElementById('reserva-ics-hora').value;
-  const duracion = document.getElementById('reserva-ics-duracion').value;
-  const todoElDia = document.getElementById('reserva-ics-todo-el-dia').checked;
+  const fecha = document.getElementById('reserva-fecha').value;
+  const horario = document.getElementById('reserva-horario').value;
+  const servicio = document.getElementById('reserva-servicio').value;
+  const realizadoPor = document.getElementById('reserva-realizado-por').value;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
-  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   try {
-    await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, hora, duracion, todoElDia });
+    await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, horario, servicio, realizadoPor });
     showToast('Reserva agendada. Ya la podés ver en Reservas → Calendario de reservas.');
   } catch (e) { showToast(e.message); }
 }
@@ -2971,8 +2967,8 @@ function renderCalendarioReservasTab() {
   const fila = r => `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleReservaCalendario(${r.id})">
       <div class="avatar">📅</div>
-      <div><div class="u-name">${escapeHtml(r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
-      <div class="u-sub">${r.cliente_id ? escapeHtml(nombreClientePorId(r.cliente_id)) + ' · ' : ''}${r.todo_el_dia ? new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(r.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
+      <div><div class="u-name">${escapeHtml(r.servicio || r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
+      <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.cliente_id ? ' · ' + escapeHtml(nombreClientePorId(r.cliente_id)) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
     </button>`;
   const listaPendientes = pendientes.length ? pendientes.map(fila).join('') : `<div class="hint-text">No hay reservas agendadas.</div>`;
   return `
@@ -2989,10 +2985,22 @@ function renderDetalleReservaCalendarioModal() {
   const r = (cache.reservasCalendario || []).find(x => x.id === state.detalleReservaId);
   if (!r) return '';
   const puedeGestionar = r.estado === 'pendiente';
+  const filaDato = (label, valor) => valor ? `
+    <div style="display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);">
+      <span style="color:var(--ink-soft);">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(valor)}</strong>
+    </div>` : '';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>📅 ${escapeHtml(r.titulo)}</h2>
-    <p class="sub">${r.cliente_id ? escapeHtml(nombreClientePorId(r.cliente_id)) + ' · ' : ''}${r.todo_el_dia ? new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(r.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</p>
-    <p class="sub">Estado: ${r.estado === 'realizada' ? 'Realizada' : r.estado === 'cancelada' ? 'Cancelada' : 'Pendiente'}</p>
+    ${r.ticket_numero ? `<p class="sub">Ticket ${escapeHtml(r.ticket_numero)}</p>` : ''}
+    <div style="margin:8px 0 4px;">
+      ${filaDato('Fecha', new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }))}
+      ${filaDato('Horario', r.horario)}
+      ${filaDato('Servicio', r.servicio)}
+      ${filaDato('Realizada por', r.realizado_por)}
+      ${r.cliente_id ? filaDato('Cliente/edificio', nombreClientePorId(r.cliente_id)) : ''}
+      ${filaDato('Estado', r.estado === 'realizada' ? 'Realizada' : r.estado === 'cancelada' ? 'Cancelada' : 'Pendiente')}
+    </div>
     <div class="modal-actions" style="flex-wrap:wrap;">
       ${r.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${r.ticket_id}')">Ver ticket</button>` : ''}
       ${puedeGestionar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarReserva(${r.id})">🔁 Reprogramar</button>` : ''}
@@ -3027,18 +3035,14 @@ function abrirReprogramarReserva(id) {
 function renderReprogramarReservaModal() {
   const r = (cache.reservasCalendario || []).find(x => x.id === state.reprogramarReservaId);
   if (!r) return '';
-  const actual = new Date(r.fecha_hora);
-  const fechaDefault = actual.toISOString().slice(0, 10);
-  const horaDefault = actual.toTimeString().slice(0, 5);
+  const fechaDefault = new Date(r.fecha_hora).toISOString().slice(0, 10);
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>🔁 Reprogramar reserva</h2>
     <p class="sub">${escapeHtml(r.titulo)}</p>
-    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="reprog-reserva-ics-todo-el-dia" ${r.todo_el_dia ? 'checked' : ''} onchange="toggleTodoElDiaIcs('reprog-reserva')"> Todo el día</label>
-    <div class="field-row">
-      <div class="field"><label>Fecha</label><input type="date" id="reprog-reserva-ics-fecha" value="${fechaDefault}"></div>
-      <div class="field" id="reprog-reserva-ics-hora-wrap" style="${r.todo_el_dia ? 'display:none;' : ''}"><label>Hora</label><input type="time" id="reprog-reserva-ics-hora" value="${horaDefault}"></div>
-    </div>
-    <div class="field" id="reprog-reserva-ics-duracion-wrap" style="${r.todo_el_dia ? 'display:none;' : ''}"><label>Duración (minutos)</label><input type="number" id="reprog-reserva-ics-duracion" min="15" step="15" value="${r.duracion_minutos || 60}"></div>
+    <div class="field"><label>Fecha</label><input type="date" id="reprog-reserva-fecha" value="${fechaDefault}"></div>
+    <div class="field"><label>Horario</label><input type="text" id="reprog-reserva-horario" value="${escapeHtml(r.horario || '')}" placeholder="Ej: Turno nocturno"></div>
+    <div class="field"><label>Servicio</label><input type="text" id="reprog-reserva-servicio" value="${escapeHtml(r.servicio || '')}" placeholder="Ej: Barbacoas, Barbacoa 02"></div>
+    <div class="field"><label>Realizada por</label><input type="text" id="reprog-reserva-realizado-por" value="${escapeHtml(r.realizado_por || '')}"></div>
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="confirmarReprogramarReserva()">Guardar</button></div>
   </div></div>`;
 }
@@ -3046,14 +3050,13 @@ async function confirmarReprogramarReserva() {
   const id = state.reprogramarReservaId;
   const r = (cache.reservasCalendario || []).find(x => x.id === id);
   if (!r) return;
-  const fecha = document.getElementById('reprog-reserva-ics-fecha').value;
-  const hora = document.getElementById('reprog-reserva-ics-hora').value;
-  const duracion = document.getElementById('reprog-reserva-ics-duracion').value;
-  const todoElDia = document.getElementById('reprog-reserva-ics-todo-el-dia').checked;
+  const fecha = document.getElementById('reprog-reserva-fecha').value;
+  const horario = document.getElementById('reprog-reserva-horario').value;
+  const servicio = document.getElementById('reprog-reserva-servicio').value;
+  const realizadoPor = document.getElementById('reprog-reserva-realizado-por').value;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
-  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   try {
-    await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, hora, duracion, todoElDia });
+    await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, horario, servicio, realizadoPor });
     await cargarReservasCalendario();
     showToast('Reserva reprogramada.');
     state.modal = 'detalle-reserva-calendario';
