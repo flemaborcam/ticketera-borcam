@@ -1040,11 +1040,14 @@ function renderServicioTecnicoTab() {
   const tabsHtml = [
     { v: 'turnos', label: 'Próximos turnos' },
     { v: 'realizados', label: 'Servicios Realizados' },
+    { v: 'reporte', label: '📊 Reporte mensual' },
     { v: 'catalogo', label: '💲 Costos precargados' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
   let contenido;
   if (tab === 'catalogo') {
     contenido = renderCatalogoCostosTab();
+  } else if (tab === 'reporte') {
+    contenido = renderReporteMensualDashboardTab();
   } else {
     const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
@@ -1053,15 +1056,134 @@ function renderServicioTecnicoTab() {
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div style="display:flex;gap:8px;">
-        ${tab !== 'catalogo' ? `<button type="button" class="btn btn-ghost" onclick="abrirReporteMensualServicios()">📊 Reporte mensual</button>` : ''}
-        ${tab !== 'catalogo' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+        ${tab !== 'catalogo' && tab !== 'reporte' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
     </div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
     ${contenido}`;
 }
-function cambiarServicioTecnicoTab(t) { state.servicioTecnicoTab = t; render(); }
+function cambiarServicioTecnicoTab(t) {
+  state.servicioTecnicoTab = t;
+  render();
+  if (t === 'reporte') cargarReporteMensualDashboard();
+}
 // --- Reporte mensual de servicios técnicos realizados (control interno, no es factura DGI) ---
+// Se puede ver como dashboard acá en la sección (tab "Reporte mensual") o bajar en PDF desde ese
+// mismo dashboard, o desde el modal rápido que se abre con abrirReporteMensualServicios().
+function mesActualDefault() {
+  const hoy = new Date();
+  return `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+}
+function rangoDelMes(mes) {
+  const [anio, mesNum] = mes.split('-').map(Number);
+  const desde = `${mes}-01T00:00:00-03:00`;
+  const siguiente = mesNum === 12 ? `${anio + 1}-01` : `${anio}-${String(mesNum + 1).padStart(2, '0')}`;
+  const hasta = `${siguiente}-01T00:00:00-03:00`;
+  return { desde, hasta };
+}
+// Agrupa las filas del reporte por cliente/edificio y calcula subtotales y total general por
+// moneda, respetando si cada servicio tenía tildado o no el IVA. La usan tanto el dashboard en
+// pantalla como el PDF, para no duplicar la lógica.
+function agruparServiciosParaReporte(filas) {
+  const porCliente = {};
+  const totalGeneral = {};
+  filas.forEach(s => {
+    const nombre = s.cliente_nombre || 'Sin cliente';
+    if (!porCliente[nombre]) porCliente[nombre] = { servicios: [], totales: {} };
+    const subtotalesServicio = {};
+    (s.costos || []).forEach(c => { subtotalesServicio[c.moneda] = (subtotalesServicio[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
+    Object.entries(subtotalesServicio).forEach(([m, sub]) => {
+      const total = Math.round(s.aplica_iva !== false ? sub * (1 + IVA_RATE) : sub);
+      porCliente[nombre].totales[m] = (porCliente[nombre].totales[m] || 0) + total;
+      totalGeneral[m] = (totalGeneral[m] || 0) + total;
+    });
+    porCliente[nombre].servicios.push(s);
+  });
+  return { porCliente, totalGeneral };
+}
+async function cargarReporteMensualDashboard(mesNuevo) {
+  const mes = mesNuevo || state.reporteMensualMes || mesActualDefault();
+  state.reporteMensualMes = mes;
+  cache.reporteMensualDatos = null;
+  refrescarVistaServicioTecnico();
+  try {
+    const { desde, hasta } = rangoDelMes(mes);
+    const filas = await api('GET', `/api/servicios-tecnicos/reporte?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`);
+    cache.reporteMensualDatos = { mes, filas };
+  } catch (e) {
+    cache.reporteMensualDatos = { mes, filas: [], error: e.message };
+  }
+  refrescarVistaServicioTecnico();
+}
+function cambiarMesReporteMensualDashboard(mes) {
+  if (!mes) return;
+  cargarReporteMensualDashboard(mes);
+}
+async function descargarPdfReporteMensualDashboard() {
+  const mes = state.reporteMensualMes || mesActualDefault();
+  try {
+    let filas;
+    if (cache.reporteMensualDatos && cache.reporteMensualDatos.mes === mes && !cache.reporteMensualDatos.error) {
+      filas = cache.reporteMensualDatos.filas;
+    } else {
+      const { desde, hasta } = rangoDelMes(mes);
+      filas = await api('GET', `/api/servicios-tecnicos/reporte?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`);
+    }
+    await cargarJsPdf();
+    construirPdfReporteMensualServicios(filas, mes);
+  } catch (e) { showToast(e.message); }
+}
+function renderReporteMensualDashboardTab() {
+  const mes = state.reporteMensualMes || mesActualDefault();
+  const datos = cache.reporteMensualDatos;
+  const cabecera = `
+    <div class="page-head" style="margin-top:6px;align-items:center;">
+      <div>
+        <h1 style="font-size:18px;">Reporte mensual</h1>
+        <div class="sub">Servicios marcados como realizados en el mes elegido, agrupados por cliente/edificio.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="month" value="${mes}" onchange="cambiarMesReporteMensualDashboard(this.value)">
+        <button type="button" class="btn btn-ghost" onclick="descargarPdfReporteMensualDashboard()">📄 Bajar PDF</button>
+      </div>
+    </div>`;
+
+  if (!datos || datos.mes !== mes) {
+    return `${cabecera}<div class="hint-text">Cargando reporte…</div>`;
+  }
+  if (datos.error) {
+    return `${cabecera}<div class="hint-text">No se pudo cargar el reporte: ${escapeHtml(datos.error)}</div>`;
+  }
+  const filas = datos.filas || [];
+  if (!filas.length) {
+    return `${cabecera}<div class="hint-text">No hubo servicios técnicos marcados como realizados en este mes.</div>`;
+  }
+  const { porCliente, totalGeneral } = agruparServiciosParaReporte(filas);
+  const clientesOrdenados = Object.entries(porCliente).sort((a, b) => b[1].servicios.length - a[1].servicios.length);
+
+  const tarjetasTotales = Object.entries(totalGeneral).map(([m, total]) => `
+    <div class="stat-card">
+      <div class="stat-card-label">Total del mes (${escapeHtml(m)})</div>
+      <div class="stat-card-value">${escapeHtml(m)} ${total}</div>
+    </div>`).join('');
+
+  const filasClientes = clientesOrdenados.map(([nombre, d]) => `
+    <div class="user-row" style="border:1px solid var(--line);align-items:flex-start;">
+      <div class="avatar">🏢</div>
+      <div style="flex:1;">
+        <div class="u-name">${escapeHtml(nombre)}</div>
+        <div class="u-sub">${d.servicios.length} servicio${d.servicios.length === 1 ? '' : 's'} realizado${d.servicios.length === 1 ? '' : 's'}</div>
+      </div>
+      <div style="text-align:right;font-weight:600;">
+        ${Object.entries(d.totales).map(([m, total]) => `<div>${escapeHtml(m)} ${total}</div>`).join('')}
+      </div>
+    </div>`).join('');
+
+  return `${cabecera}
+    <div class="stat-cards" style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 18px;">${tarjetasTotales}</div>
+    <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:15px;">${filas.length} servicio${filas.length === 1 ? '' : 's'} realizado${filas.length === 1 ? '' : 's'} en ${clientesOrdenados.length} cliente${clientesOrdenados.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="user-list" style="display:flex;flex-direction:column;gap:8px;">${filasClientes}</div>`;
+}
 function abrirReporteMensualServicios() {
   state.modal = 'reporte-mensual-servicios';
   render();
@@ -1119,20 +1241,7 @@ function construirPdfReporteMensualServicios(filas, mes) {
   }
 
   // Agrupa por cliente y suma los totales (con o sin IVA según lo que tenía tildado cada servicio).
-  const porCliente = {};
-  const totalGeneral = {};
-  filas.forEach(s => {
-    const nombre = s.cliente_nombre || 'Sin cliente';
-    if (!porCliente[nombre]) porCliente[nombre] = { servicios: [], totales: {} };
-    const subtotalesServicio = {};
-    (s.costos || []).forEach(c => { subtotalesServicio[c.moneda] = (subtotalesServicio[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
-    Object.entries(subtotalesServicio).forEach(([m, sub]) => {
-      const total = Math.round(s.aplica_iva !== false ? sub * (1 + IVA_RATE) : sub);
-      porCliente[nombre].totales[m] = (porCliente[nombre].totales[m] || 0) + total;
-      totalGeneral[m] = (totalGeneral[m] || 0) + total;
-    });
-    porCliente[nombre].servicios.push(s);
-  });
+  const { porCliente, totalGeneral } = agruparServiciosParaReporte(filas);
 
   doc.setFontSize(10);
   Object.entries(porCliente).forEach(([nombre, datos]) => {
@@ -2588,6 +2697,10 @@ function renderShell(inner) {
   const u = currentUser();
   return `
   <style>
+    /* Tarjetas de totales del dashboard de Reporte mensual (Servicio Técnico). */
+    .stat-card{background:var(--card,#fff);border:1px solid var(--line);border-radius:10px;padding:14px 18px;min-width:180px;flex:1;}
+    .stat-card-label{font-size:12px;color:var(--muted,#6b7280);margin-bottom:6px;}
+    .stat-card-value{font-size:22px;font-weight:700;}
     /* Arreglo: el menú lateral usaba "position: sticky", que se "despega" de su lugar cerca del
        final de una página muy larga (como la bandeja de Tickets, con hasta 20 tickets por página).
        Con "fixed" queda anclado a la pantalla siempre, sin importar cuánto scroll tenga el contenido. */
