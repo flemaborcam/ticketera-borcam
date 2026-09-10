@@ -258,6 +258,16 @@ pool.query('alter table servicios_tecnicos add column if not exists presupuesto_
 // Token para que el cliente pueda dar conformidad del presupuesto desde un link directo (mail),
 // sin tener que entrar al portal — hay clientes que nunca llegan a loguearse ahí.
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_token uuid').catch(e => console.error('No se pudo migrar presupuesto_token:', e.message));
+// Firma de conformidad al marcar el service como realizado: aclaración (nombre/apellido/cédula) +
+// la firma dibujada en el celular del técnico, guardada como imagen. Si no había nadie en el momento
+// de cerrar el service, queda la constancia igual (firma_sin_firma) con el motivo, en vez de firma.
+pool.query('alter table servicios_tecnicos add column if not exists firma_nombre text').catch(e => console.error('No se pudo migrar firma_nombre:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_apellido text').catch(e => console.error('No se pudo migrar firma_apellido:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_cedula text').catch(e => console.error('No se pudo migrar firma_cedula:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_path text').catch(e => console.error('No se pudo migrar firma_path:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_sin_firma boolean not null default false').catch(e => console.error('No se pudo migrar firma_sin_firma:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_motivo_sin_firma text').catch(e => console.error('No se pudo migrar firma_motivo_sin_firma:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists firma_fecha timestamptz').catch(e => console.error('No se pudo migrar firma_fecha:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2380,9 +2390,44 @@ app.delete('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   ok(res, { ok: true });
 });
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
-  const r = await pool.query(`update servicios_tecnicos set estado='realizado' where id=$1 returning *`, [req.params.id]);
-  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
+  const { conFirma, nombre, apellido, cedula, firmaDataUrl, motivoSinFirma } = req.body || {};
+  const id = req.params.id;
+  const existente = (await pool.query('select id from servicios_tecnicos where id=$1', [id])).rows[0];
+  if (!existente) return bad(res, 'Turno no encontrado.', 404);
+  if (conFirma) {
+    if (!nombre || !apellido || !cedula || !firmaDataUrl) return bad(res, 'Faltan datos de la firma (nombre, apellido, cédula o el dibujo de la firma).');
+    const base64 = (firmaDataUrl || '').split(',')[1] || '';
+    const path = `firmas/${id}-${crypto.randomUUID()}.png`;
+    try {
+      await subirArchivoStorage(path, Buffer.from(base64, 'base64'), 'image/png');
+    } catch (e) { return bad(res, 'No se pudo guardar la firma: ' + e.message); }
+    await pool.query(
+      `update servicios_tecnicos set estado='realizado', firma_nombre=$1, firma_apellido=$2, firma_cedula=$3,
+        firma_path=$4, firma_sin_firma=false, firma_motivo_sin_firma=null, firma_fecha=now() where id=$5`,
+      [nombre.trim(), apellido.trim(), cedula.trim(), path, id]
+    );
+  } else {
+    await pool.query(
+      `update servicios_tecnicos set estado='realizado', firma_nombre=null, firma_apellido=null, firma_cedula=null,
+        firma_path=null, firma_sin_firma=true, firma_motivo_sin_firma=$1, firma_fecha=now() where id=$2`,
+      [(motivoSinFirma || '').trim() || 'No había nadie presente para firmar.', id]
+    );
+  }
+  const r = await pool.query('select * from servicios_tecnicos where id=$1', [id]);
   ok(res, r.rows[0]);
+});
+app.get('/api/servicios-tecnicos/:id/firma', requireStaff, async (req, res) => {
+  const s = (await pool.query('select firma_path from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!s || !s.firma_path) return bad(res, 'No encontrado', 404);
+  try {
+    const upstream = await descargarArchivoStorage(s.firma_path);
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 /* ---- Costos por visita: catálogo precargado + ítems puntuales cargados en cada servicio ---- */
 app.get('/api/catalogo-costos', requireStaff, async (req, res) => {
