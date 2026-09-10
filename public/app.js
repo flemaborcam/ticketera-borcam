@@ -2907,22 +2907,23 @@ function renderBulkActionBar() {
 function esTicketDeReserva(t) {
   return t.asunto.toLowerCase().includes('reserva');
 }
-/* ---------------- Agendar reserva (.ics) ----------------
-   Bloque autocontenido: no toca ninguna otra parte del sistema ni crea tablas nuevas.
-   Se puede sacar en cualquier momento borrando este bloque y su llamada en renderTicket(). */
+/* ---------------- Agendar reserva (calendario propio) ----------------
+   Antes este bloque generaba un .ics para descargar y el sistema no se enteraba de nada. Ahora
+   guarda la reserva en la tabla reservas_calendario (igual que "Agendar servicio técnico" hace con
+   servicios_tecnicos) y queda visible/gestionable en Reservas → Calendario de reservas. */
 function renderReservaCalendario(t) {
   const ahora = new Date(Date.now() + 60 * 60000); // por defecto, dentro de una hora
   const fechaDefault = ahora.toISOString().slice(0, 10);
   const horaDefault = ahora.toTimeString().slice(0, 5);
   return `<div class="card card-narrow" style="max-width:560px;margin:14px 0;">
-    ${configSectionHead('📅', 'Agendar esta reserva', 'Generá un archivo .ics con la fecha y hora que seleccionás, para abrirlo con tu app de calendario (One Calendar, Outlook, Google Calendar, etc.).')}
+    ${configSectionHead('📅', 'Agendar esta reserva', 'Queda guardada en el calendario de reservas del sistema (sección Reservas → Calendario de reservas).')}
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="reserva-ics-todo-el-dia" onchange="toggleTodoElDiaIcs('reserva')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="reserva-ics-fecha" value="${fechaDefault}"></div>
       <div class="field" id="reserva-ics-hora-wrap"><label>Hora</label><input type="time" id="reserva-ics-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="reserva-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="reserva-ics-duracion" min="15" step="15" value="60"></div>
-    <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="descargarIcsReserva('${t.id}')">📅 Descargar evento (.ics)</button></div>
+    <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="guardarReservaCalendario('${t.id}')">📅 Agendar reserva</button></div>
   </div>`;
 }
 // Al tildar "Todo el día" se ocultan hora/duración, ya que no aplican a un evento de día completo
@@ -2934,60 +2935,130 @@ function toggleTodoElDiaIcs(prefijo) {
   if (horaWrap) horaWrap.style.display = marcado ? 'none' : '';
   if (duracionWrap) duracionWrap.style.display = marcado ? 'none' : '';
 }
-// Función compartida: arma y descarga el .ics. La usan tanto el bloque de Reservas como el
-// modal de "Agendar servicio técnico" (mismo formato, dos entradas distintas).
-function generarYDescargarIcs(t, { fecha, hora, duracion, titulo, prefijoArchivo, todoElDia }) {
-  if (!fecha) { showToast('Elegí una fecha.'); return false; }
-  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return false; }
-  const toIcsUtc = d => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-  const escapeIcs = s => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
-  const descripcion = `Ticket ${t.numero}\\nCliente: ${t.remitenteNombre} (${t.remitenteEmail})`;
-  let lineasFecha;
-  if (todoElDia) {
-    // Evento de día completo: DTSTART/DTEND van solo con fecha (VALUE=DATE), y el DTEND es el día
-    // siguiente porque en formato .ics el final de un evento de todo el día es "exclusivo" (así lo
-    // interpretan One Calendar, Outlook y Google Calendar para mostrar un solo día marcado).
-    const inicioDate = new Date(`${fecha}T00:00:00`);
-    if (isNaN(inicioDate.getTime())) { showToast('Fecha inválida.'); return false; }
-    const finDate = new Date(inicioDate.getTime() + 24 * 60 * 60000);
-    const toIcsDate = d => d.toISOString().slice(0, 10).replace(/-/g, '');
-    lineasFecha = [`DTSTART;VALUE=DATE:${toIcsDate(inicioDate)}`, `DTEND;VALUE=DATE:${toIcsDate(finDate)}`];
-  } else {
-    const inicio = new Date(`${fecha}T${hora}:00`);
-    if (isNaN(inicio.getTime())) { showToast('Fecha u hora inválida.'); return false; }
-    const dur = Number(duracion) || 60;
-    const fin = new Date(inicio.getTime() + dur * 60000);
-    lineasFecha = [`DTSTART:${toIcsUtc(inicio)}`, `DTEND:${toIcsUtc(fin)}`];
-  }
-  const ics = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ticketera Borcam//Agenda//ES', 'CALSCALE:GREGORIAN',
-    'BEGIN:VEVENT',
-    `UID:${prefijoArchivo}-${t.id}-${Date.now()}@ticketera-borcam`,
-    `DTSTAMP:${toIcsUtc(new Date())}`,
-    ...lineasFecha,
-    `SUMMARY:${escapeIcs(titulo || t.asunto)}`,
-    `DESCRIPTION:${escapeIcs(descripcion)}`,
-    'END:VEVENT', 'END:VCALENDAR'
-  ].join('\r\n');
-  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `${prefijoArchivo}-${t.numero}.ics`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  return true;
-}
-function descargarIcsReserva(id) {
-  const t = cache.tickets.find(x => x.id === id);
+async function guardarReservaCalendario(ticketId) {
+  const t = cache.tickets.find(x => x.id === ticketId);
   if (!t) return;
-  generarYDescargarIcs(t, {
-    fecha: document.getElementById('reserva-ics-fecha').value,
-    hora: document.getElementById('reserva-ics-hora').value,
-    duracion: document.getElementById('reserva-ics-duracion').value,
-    titulo: t.asunto,
-    prefijoArchivo: 'reserva',
-    todoElDia: document.getElementById('reserva-ics-todo-el-dia').checked
-  });
+  const fecha = document.getElementById('reserva-ics-fecha').value;
+  const hora = document.getElementById('reserva-ics-hora').value;
+  const duracion = document.getElementById('reserva-ics-duracion').value;
+  const todoElDia = document.getElementById('reserva-ics-todo-el-dia').checked;
+  if (!fecha) { showToast('Elegí una fecha.'); return; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
+  try {
+    await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, hora, duracion, todoElDia });
+    showToast('Reserva agendada. Ya la podés ver en Reservas → Calendario de reservas.');
+  } catch (e) { showToast(e.message); }
+}
+/* ---------------- Calendario de reservas (vista propia dentro de "Reservas") ----------------
+   Convive con la lista de tickets con "reserva" en el asunto (pestañas separadas), pero es
+   independiente: acá viven las reservas ya agendadas, con su propio estado y gestión. */
+async function cargarReservasCalendario() {
+  cache.reservasCalendario = await api('GET', '/api/reservas-calendario');
+}
+async function recargarReservasCalendario() {
+  await cargarReservasCalendario();
+  refrescarVistaReservas();
+}
+function refrescarVistaReservas() {
+  const el = document.querySelector('.content');
+  if (el && state.view === 'reservas') el.innerHTML = renderReservas();
+}
+function cambiarReservasTab(t) { state.reservasTab = t; render(); }
+function renderCalendarioReservasTab() {
+  const reservas = (cache.reservasCalendario || []).slice().sort((a, b) => new Date(a.fecha_hora) - new Date(b.fecha_hora));
+  const pendientes = reservas.filter(r => r.estado === 'pendiente');
+  const otras = reservas.filter(r => r.estado !== 'pendiente').sort((a, b) => new Date(b.fecha_hora) - new Date(a.fecha_hora));
+  const fila = r => `
+    <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleReservaCalendario(${r.id})">
+      <div class="avatar">📅</div>
+      <div><div class="u-name">${escapeHtml(r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
+      <div class="u-sub">${r.cliente_id ? escapeHtml(nombreClientePorId(r.cliente_id)) + ' · ' : ''}${r.todo_el_dia ? new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(r.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
+    </button>`;
+  const listaPendientes = pendientes.length ? pendientes.map(fila).join('') : `<div class="hint-text">No hay reservas agendadas.</div>`;
+  return `
+    <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${pendientes.length} reserva${pendientes.length === 1 ? '' : 's'} agendada${pendientes.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="user-list">${listaPendientes}</div>
+    ${otras.length ? `<div class="page-head" style="margin-top:20px;"><div><h1 style="font-size:15px;">Realizadas / canceladas</h1></div></div><div class="user-list">${otras.map(fila).join('')}</div>` : ''}`;
+}
+function abrirDetalleReservaCalendario(id) {
+  state.modal = 'detalle-reserva-calendario';
+  state.detalleReservaId = id;
+  render();
+}
+function renderDetalleReservaCalendarioModal() {
+  const r = (cache.reservasCalendario || []).find(x => x.id === state.detalleReservaId);
+  if (!r) return '';
+  const puedeGestionar = r.estado === 'pendiente';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📅 ${escapeHtml(r.titulo)}</h2>
+    <p class="sub">${r.cliente_id ? escapeHtml(nombreClientePorId(r.cliente_id)) + ' · ' : ''}${r.todo_el_dia ? new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(r.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</p>
+    <p class="sub">Estado: ${r.estado === 'realizada' ? 'Realizada' : r.estado === 'cancelada' ? 'Cancelada' : 'Pendiente'}</p>
+    <div class="modal-actions" style="flex-wrap:wrap;">
+      ${r.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${r.ticket_id}')">Ver ticket</button>` : ''}
+      ${puedeGestionar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarReserva(${r.id})">🔁 Reprogramar</button>` : ''}
+      ${puedeGestionar ? `<button type="button" class="btn btn-primary" onclick="marcarReservaRealizada(${r.id})">✅ Marcar realizada</button>` : ''}
+      ${puedeGestionar ? `<button type="button" class="btn btn-danger" onclick="cancelarReserva(${r.id})">Cancelar reserva</button>` : ''}
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+    </div>
+  </div></div>`;
+}
+async function marcarReservaRealizada(id) {
+  try {
+    await api('POST', `/api/reservas-calendario/${id}/marcar-realizada`);
+    await recargarReservasCalendario();
+    showToast('Reserva marcada como realizada.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
+}
+async function cancelarReserva(id) {
+  if (!confirm('¿Cancelar esta reserva?')) return;
+  try {
+    await api('POST', `/api/reservas-calendario/${id}/cancelar`);
+    await recargarReservasCalendario();
+    showToast('Reserva cancelada.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
+}
+function abrirReprogramarReserva(id) {
+  state.modal = 'reprogramar-reserva';
+  state.reprogramarReservaId = id;
+  render();
+}
+function renderReprogramarReservaModal() {
+  const r = (cache.reservasCalendario || []).find(x => x.id === state.reprogramarReservaId);
+  if (!r) return '';
+  const actual = new Date(r.fecha_hora);
+  const fechaDefault = actual.toISOString().slice(0, 10);
+  const horaDefault = actual.toTimeString().slice(0, 5);
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🔁 Reprogramar reserva</h2>
+    <p class="sub">${escapeHtml(r.titulo)}</p>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="reprog-reserva-ics-todo-el-dia" ${r.todo_el_dia ? 'checked' : ''} onchange="toggleTodoElDiaIcs('reprog-reserva')"> Todo el día</label>
+    <div class="field-row">
+      <div class="field"><label>Fecha</label><input type="date" id="reprog-reserva-ics-fecha" value="${fechaDefault}"></div>
+      <div class="field" id="reprog-reserva-ics-hora-wrap" style="${r.todo_el_dia ? 'display:none;' : ''}"><label>Hora</label><input type="time" id="reprog-reserva-ics-hora" value="${horaDefault}"></div>
+    </div>
+    <div class="field" id="reprog-reserva-ics-duracion-wrap" style="${r.todo_el_dia ? 'display:none;' : ''}"><label>Duración (minutos)</label><input type="number" id="reprog-reserva-ics-duracion" min="15" step="15" value="${r.duracion_minutos || 60}"></div>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="confirmarReprogramarReserva()">Guardar</button></div>
+  </div></div>`;
+}
+async function confirmarReprogramarReserva() {
+  const id = state.reprogramarReservaId;
+  const r = (cache.reservasCalendario || []).find(x => x.id === id);
+  if (!r) return;
+  const fecha = document.getElementById('reprog-reserva-ics-fecha').value;
+  const hora = document.getElementById('reprog-reserva-ics-hora').value;
+  const duracion = document.getElementById('reprog-reserva-ics-duracion').value;
+  const todoElDia = document.getElementById('reprog-reserva-ics-todo-el-dia').checked;
+  if (!fecha) { showToast('Elegí una fecha.'); return; }
+  if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
+  try {
+    await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, hora, duracion, todoElDia });
+    await cargarReservasCalendario();
+    showToast('Reserva reprogramada.');
+    state.modal = 'detalle-reserva-calendario';
+    render();
+  } catch (e) { showToast(e.message); }
 }
 // Atajo "🏷️ Pedido de Tag" desde la ficha del ticket: te lleva directo a Tags → Nuevo pedido
 // con el número de ticket (y el nombre del solicitante) ya cargados.
@@ -3069,7 +3140,7 @@ function filteredReservas() {
 function setFilterReservas(k, v) { state.filtersReservas[k] = v; state.paginaReservas = 1; render(); }
 function irAPaginaReservas(n) { state.paginaReservas = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
-function renderReservas() {
+function renderTicketsReservaTab() {
   const todos = filteredReservas();
   const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
   if (state.paginaReservas > totalPaginas) state.paginaReservas = totalPaginas;
@@ -3089,7 +3160,7 @@ function renderReservas() {
     </div>` : '';
 
   return `
-    <div class="page-head"><div><h1>Reservas</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} con "reserva" en el asunto</div></div></div>
+    <div class="sub" style="margin-bottom:10px;">${todos.length} ticket${todos.length === 1 ? '' : 's'} con "reserva" en el asunto</div>
     <div class="filters">
       <select onchange="setFilterReservas('estado', this.value)">${estOptions}</select>
       <select onchange="setFilterReservas('prioridad', this.value)">${prioOptions}</select>
@@ -3098,6 +3169,18 @@ function renderReservas() {
     ${state.selectedTickets.size ? renderBulkActionBar() : ''}
     ${list}
     ${paginacion}`;
+}
+function renderReservas() {
+  const tab = state.reservasTab || 'calendario';
+  const tabsHtml = [
+    { v: 'calendario', label: '📅 Calendario de reservas' },
+    { v: 'tickets', label: 'Tickets de reserva' }
+  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarReservasTab('${t.v}')">${t.label}</button>`).join('');
+  const contenido = tab === 'tickets' ? renderTicketsReservaTab() : renderCalendarioReservasTab();
+  return `
+    <div class="page-head"><div><h1>Reservas</h1><div class="sub">Reservas agendadas desde tickets, y los tickets de reserva que las originan.</div></div></div>
+    <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
+    ${contenido}`;
 }
 
 // Carga de trabajo actual: cuenta, por cada agente, cuántos tickets tiene abiertos ahora mismo
@@ -4626,6 +4709,8 @@ function renderActiveModal() {
   if (state.modal === 'firma-servicio') return renderModalFirmaServicio();
   if (state.modal === 'reprogramar-servicio') return renderReprogramarServicioModal();
   if (state.modal === 'reporte-mensual-servicios') return renderReporteMensualServiciosModal();
+  if (state.modal === 'detalle-reserva-calendario') return renderDetalleReservaCalendarioModal();
+  if (state.modal === 'reprogramar-reserva') return renderReprogramarReservaModal();
   return '';
 }
 function renderDocumentoModal() {
@@ -5060,7 +5145,7 @@ function render() {
   else if (state.view === 'usuarios') inner = renderUsuarios();
   else if (state.view === 'respuestas') inner = renderRespuestas();
   else if (state.view === 'grupos') inner = renderGrupos();
-  else if (state.view === 'reservas') inner = renderReservas();
+  else if (state.view === 'reservas') { inner = renderReservas(); cargarReservasCalendario().then(() => { if (state.view === 'reservas') refrescarVistaReservas(); }); }
   else if (state.view === 'documentos') inner = renderDocumentos();
   else if (state.view === 'documentos-edificio') inner = renderDocumentosEdificio();
   else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
