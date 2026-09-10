@@ -1326,6 +1326,11 @@ function renderDetalleServicioTecnicoModal() {
       <div style="margin-top:10px;">${estadoPresupuesto}</div>
     </div>
 
+    ${!puedeMarcar ? `<div class="hint-text" style="margin-bottom:10px;">${s.firma_sin_firma
+      ? `✍️ Sin firma del cliente — ${escapeHtml(s.firma_motivo_sin_firma || 'no había nadie presente.')}`
+      : s.firma_path
+        ? `✍️ Firmado por ${escapeHtml(`${s.firma_nombre || ''} ${s.firma_apellido || ''}`.trim())} (C.I. ${escapeHtml(s.firma_cedula || '—')})${s.firma_fecha ? ' · ' + fmtDateTime(s.firma_fecha) : ''}`
+        : ''}</div>` : ''}
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
@@ -1427,11 +1432,26 @@ async function generarComprobanteServicioTecnico(servicioId) {
   try {
     const { comprobante, servicio, cliente } = await api('POST', `/api/servicios-tecnicos/${servicioId}/comprobante`);
     await cargarJsPdf();
-    construirPdfComprobante(comprobante, servicio, cliente);
+    let firmaDataUrl = null;
+    if (servicio.firma_path) {
+      try {
+        const resp = await fetch(`/api/servicios-tecnicos/${servicioId}/firma`, { credentials: 'include' });
+        if (resp.ok) firmaDataUrl = await blobToDataUrl(await resp.blob());
+      } catch (e) { console.error('No se pudo cargar la firma para el comprobante:', e.message); }
+    }
+    construirPdfComprobante(comprobante, servicio, cliente, firmaDataUrl);
     await recargarServicioTecnico(servicioId);
   } catch (e) { showToast(e.message); }
 }
-function construirPdfComprobante(comprobante, servicio, cliente) {
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+function construirPdfComprobante(comprobante, servicio, cliente, firmaDataUrl) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -1536,6 +1556,34 @@ function construirPdfComprobante(comprobante, servicio, cliente) {
     doc.text(`${moneda} ${total.toFixed(2)}`, colImporte, y, { align: 'right' });
     y += 8;
   });
+
+  // Conformidad del cliente: firma dibujada + aclaración, o la constancia del motivo si no había
+  // nadie presente para firmar al cerrar el service.
+  y += 6;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(0);
+  doc.text('Conformidad del cliente', marginX, y);
+  y += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  if (firmaDataUrl) {
+    doc.addImage(firmaDataUrl, 'PNG', marginX, y, 65, 26);
+    doc.setDrawColor(180);
+    doc.line(marginX, y + 28, marginX + 65, y + 28);
+    doc.setFontSize(8);
+    const nombreCompleto = `${servicio.firma_nombre || ''} ${servicio.firma_apellido || ''}`.trim();
+    doc.text(`Aclaración: ${nombreCompleto || '—'}`, marginX, y + 33);
+    doc.text(`C.I.: ${servicio.firma_cedula || '—'}`, marginX, y + 38);
+    if (servicio.firma_fecha) doc.text(`Fecha: ${new Date(servicio.firma_fecha).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}`, marginX, y + 43);
+    y += 48;
+  } else if (servicio.firma_sin_firma) {
+    doc.setTextColor(120);
+    const motivoLineas = doc.splitTextToSize(`Sin firma del cliente — ${servicio.firma_motivo_sin_firma || 'no había nadie presente al finalizar el service.'}`, pageWidth - marginX * 2);
+    doc.text(motivoLineas, marginX, y);
+    doc.setTextColor(0);
+    y += motivoLineas.length * 5 + 4;
+  }
 
   const pageHeight = doc.internal.pageSize.getHeight();
   doc.setFont('helvetica', 'normal');
@@ -1690,13 +1738,8 @@ async function verDetalleServicioTecnicoDesdeTicket(servicioId) {
     abrirDetalleServicioTecnico(servicioId);
   } catch (e) { showToast(e.message); }
 }
-async function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
-  try {
-    await api('POST', `/api/servicios-tecnicos/${servicioId}/marcar-realizado`);
-    showToast('Servicio técnico marcado como realizado.');
-    await refreshTicket(ticketId);
-    render();
-  } catch (e) { showToast(e.message); }
+function marcarServicioTecnicoRealizadoDesdeTicket(servicioId, ticketId) {
+  abrirModalFirmaServicio(servicioId, ticketId);
 }
 // Checklist de pasos según la categoría del ticket (plantillas configurables en Configuración → Checklists).
 function renderChecklistTicket(t) {
@@ -1740,13 +1783,110 @@ function renderHistorialClienteTicket(t) {
     </div>
   </div>`;
 }
-async function marcarServicioTecnicoRealizado(id) {
+function marcarServicioTecnicoRealizado(id) {
+  abrirModalFirmaServicio(id, null);
+}
+// --- Firma de conformidad al cerrar un service ---
+// Cuadro que se abre al marcar un service como realizado: aclaración (nombre/apellido/cédula) y un
+// recuadro para dibujar la firma con el dedo (celular) o el mouse (compu), usando Pointer Events para
+// que funcione igual en ambos casos. Si no hay nadie presente para firmar, se puede igual cerrar el
+// service dejando la constancia del motivo, sin firma.
+let firmaCanvasCtx = null, firmaDibujando = false, firmaTieneTrazo = false;
+function abrirModalFirmaServicio(servicioId, ticketId) {
+  state.modal = 'firma-servicio';
+  state.firmaServicioId = servicioId;
+  state.firmaServicioTicketId = ticketId || null;
+  state.firmaSinFirma = false;
+  render();
+  setTimeout(inicializarCanvasFirma, 0);
+}
+function renderModalFirmaServicio() {
+  const sinFirma = state.firmaSinFirma;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>✍️ Conformidad del cliente</h2>
+    <div class="hint-text" style="margin-bottom:10px;">Se le pide al cliente que firme para dejar constancia de que el service se realizó.</div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;color:var(--ink-soft);">
+      <input type="checkbox" id="firma-sin-firma-check" ${sinFirma ? 'checked' : ''} onchange="toggleFirmaSinFirma(this.checked)"> No hay nadie presente para firmar
+    </label>
+    <div id="firma-con-datos" style="${sinFirma ? 'display:none;' : ''}">
+      <div class="field-row">
+        <div class="field"><label>Nombre</label><input type="text" id="firma-nombre"></div>
+        <div class="field"><label>Apellido</label><input type="text" id="firma-apellido"></div>
+      </div>
+      <div class="field"><label>Cédula</label><input type="text" id="firma-cedula" placeholder="Ej: 4.123.456-7"></div>
+      <div class="field"><label>Firma</label>
+        <canvas id="firma-canvas" style="width:100%;height:160px;border:1px solid var(--line);border-radius:8px;background:#fff;touch-action:none;cursor:crosshair;display:block;"></canvas>
+        <button type="button" class="btn btn-ghost" style="margin-top:6px;" onclick="limpiarFirmaCanvas()">Limpiar firma</button>
+      </div>
+    </div>
+    <div id="firma-sin-datos" style="${sinFirma ? '' : 'display:none;'}">
+      <div class="field"><label>Motivo (opcional)</label><textarea id="firma-motivo" rows="3" placeholder="Ej: no había nadie en el edificio al finalizar el service."></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarMarcarServicioRealizado()">✅ Marcar como realizado</button>
+    </div>
+  </div></div>`;
+}
+function toggleFirmaSinFirma(checked) {
+  state.firmaSinFirma = checked;
+  render();
+  if (!checked) setTimeout(inicializarCanvasFirma, 0);
+}
+function inicializarCanvasFirma() {
+  const canvas = document.getElementById('firma-canvas');
+  if (!canvas) return;
+  // Ajusta la resolución interna del canvas al tamaño real en pantalla (x2, para que no se vea
+  // pixelada la firma en celulares con pantalla de alta densidad).
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(rect.width, 200) * 2;
+  canvas.height = Math.max(rect.height, 100) * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(2, 2);
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#0F2A4D';
+  firmaCanvasCtx = ctx; firmaTieneTrazo = false;
+  let last = null;
+  const posDesde = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  canvas.onpointerdown = (e) => { firmaDibujando = true; last = posDesde(e); try { canvas.setPointerCapture(e.pointerId); } catch (err) {} };
+  canvas.onpointermove = (e) => {
+    if (!firmaDibujando || !last) return;
+    const p = posDesde(e);
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last = p; firmaTieneTrazo = true;
+  };
+  const parar = () => { firmaDibujando = false; last = null; };
+  canvas.onpointerup = parar; canvas.onpointerleave = parar; canvas.onpointercancel = parar;
+}
+function limpiarFirmaCanvas() {
+  const canvas = document.getElementById('firma-canvas');
+  if (!canvas || !firmaCanvasCtx) return;
+  firmaCanvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+  firmaTieneTrazo = false;
+}
+async function confirmarMarcarServicioRealizado() {
+  const servicioId = state.firmaServicioId;
+  const ticketId = state.firmaServicioTicketId;
   try {
-    await api('POST', `/api/servicios-tecnicos/${id}/marcar-realizado`);
-    const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(id));
-    if (s) s.estado = 'realizado';
+    let payload;
+    if (state.firmaSinFirma) {
+      const motivo = document.getElementById('firma-motivo').value;
+      payload = { conFirma: false, motivoSinFirma: motivo };
+    } else {
+      const nombre = document.getElementById('firma-nombre').value.trim();
+      const apellido = document.getElementById('firma-apellido').value.trim();
+      const cedula = document.getElementById('firma-cedula').value.trim();
+      if (!nombre || !apellido || !cedula) { showToast('Completá nombre, apellido y cédula.'); return; }
+      if (!firmaTieneTrazo) { showToast('Falta la firma — dibujala en el recuadro.'); return; }
+      const canvas = document.getElementById('firma-canvas');
+      payload = { conFirma: true, nombre, apellido, cedula, firmaDataUrl: canvas.toDataURL('image/png') };
+    }
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/marcar-realizado`, payload);
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(servicioId));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
     showToast('Servicio técnico marcado como realizado.');
     closeModal();
+    if (ticketId) await refreshTicket(ticketId);
+    render();
   } catch (e) { showToast(e.message); }
 }
 function renderCalendarioConfigTab(c, filasDias) {
@@ -4132,6 +4272,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-proveedor') return renderNuevoProveedorModal();
   if (state.modal === 'nuevo-proveedor-cliente') return renderNuevoProveedorClienteModal();
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
+  if (state.modal === 'firma-servicio') return renderModalFirmaServicio();
   return '';
 }
 function renderDocumentoModal() {
