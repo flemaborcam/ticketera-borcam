@@ -2472,6 +2472,7 @@ app.get('/api/servicios-tecnicos/:id/presupuesto/:adjId/descargar', requireStaff
     const upstream = await descargarArchivoStorage(adj.path);
     res.setHeader('Content-Type', adj.mime || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${adj.nombre}"`);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
     upstream.pipe(res);
   } catch (e) { bad(res, 'No se pudo descargar el archivo.', 500); }
 });
@@ -3093,6 +3094,7 @@ app.get('/api/portal/documentos/:id/descargar', requireCliente, async (req, res)
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.set('Content-Type', doc.mime || 'application/octet-stream');
     res.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.nombre)}"`);
+    res.set('Cache-Control', 'private, max-age=86400');
     res.send(buf);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3136,6 +3138,7 @@ app.get('/api/documentos/:id/descargar', requireStaff, async (req, res) => {
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.set('Content-Type', doc.mime || 'application/octet-stream');
     res.set('Content-Disposition', `inline; filename="${encodeURIComponent(doc.nombre)}"`);
+    res.set('Cache-Control', 'private, max-age=86400');
     res.send(buf);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3439,6 +3442,7 @@ app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.set('Content-Type', adj.mime || 'application/octet-stream');
     res.set('Content-Disposition', `inline; filename="${encodeURIComponent(adj.nombre)}"`);
+    res.set('Cache-Control', 'private, max-age=86400');
     res.send(buf);
   } catch (e) {
     res.status(500).json({ error: e.message });
