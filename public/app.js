@@ -1189,6 +1189,7 @@ function renderNuevoServicioTecnicoModal() {
       <div class="field" id="nuevo-servicio-hora-wrap"><label>Hora</label><input type="time" id="nuevo-servicio-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="nuevo-servicio-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="nuevo-servicio-duracion" min="15" step="15" value="60"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="nuevo-servicio-aplica-iva" checked> Aplicar IVA (22%)</label>
     ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarNuevoServicioTecnico()">📅 Agendar</button></div>
   </div></div>`;
@@ -1215,6 +1216,7 @@ async function guardarNuevoServicioTecnico() {
   const hora = document.getElementById('nuevo-servicio-hora').value;
   const duracion = document.getElementById('nuevo-servicio-duracion').value;
   const todoElDia = document.getElementById('nuevo-servicio-todo-el-dia').checked;
+  const aplicaIva = document.getElementById('nuevo-servicio-aplica-iva').checked;
   if (!clienteId) { showToast('Elegí un cliente/edificio.'); return; }
   if (!titulo || !titulo.trim()) { showToast('Escribí un título para el evento.'); return; }
   if (!fecha) { showToast('Elegí una fecha.'); return; }
@@ -1223,7 +1225,7 @@ async function guardarNuevoServicioTecnico() {
   try {
     const nuevo = await api('POST', '/api/servicios-tecnicos', {
       clienteId, ticketId: ticketElegido ? ticketElegido.id : null, ticketNumero: ticketElegido ? ticketElegido.numero : null,
-      titulo, fecha, hora, duracion, todoElDia
+      titulo, fecha, hora, duracion, todoElDia, aplicaIva
     });
     await aplicarCostosPendientes(nuevo.id);
     const filas = await api('GET', '/api/servicios-tecnicos');
@@ -2722,6 +2724,7 @@ function renderAgendarServicioModal() {
       <div class="field" id="servicio-ics-hora-wrap"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="servicio-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-ics-aplica-iva" checked> Aplicar IVA (22%)</label>
     ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarServicioTecnico()">📅 Agendar</button></div>
   </div></div>`;
@@ -2734,12 +2737,13 @@ async function guardarServicioTecnico() {
   const duracion = document.getElementById('servicio-ics-duracion').value;
   const titulo = document.getElementById('servicio-ics-titulo').value;
   const todoElDia = document.getElementById('servicio-ics-todo-el-dia').checked;
+  const aplicaIva = document.getElementById('servicio-ics-aplica-iva').checked;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   if (!t.grupoId) { showToast('Este ticket no está vinculado a ningún cliente/edificio. Asignalo a un cliente antes de agendar el servicio técnico.'); return; }
   // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Servicio Técnico.
   try {
-    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia });
+    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia, aplicaIva });
     await aplicarCostosPendientes(nuevo.id);
     await refreshTicket(t.id);
     showToast('Servicio técnico agendado.');
