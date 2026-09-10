@@ -268,6 +268,9 @@ pool.query('alter table servicios_tecnicos add column if not exists firma_path t
 pool.query('alter table servicios_tecnicos add column if not exists firma_sin_firma boolean not null default false').catch(e => console.error('No se pudo migrar firma_sin_firma:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists firma_motivo_sin_firma text').catch(e => console.error('No se pudo migrar firma_motivo_sin_firma:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists firma_fecha timestamptz').catch(e => console.error('No se pudo migrar firma_fecha:', e.message));
+// Algunos clientes no quieren factura oficial y solo piden el comprobante interno, sin discriminar
+// IVA — por eso el IVA se puede activar/desactivar por servicio (por defecto va con IVA, como siempre).
+pool.query('alter table servicios_tecnicos add column if not exists aplica_iva boolean not null default true').catch(e => console.error('No se pudo migrar aplica_iva:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2212,14 +2215,17 @@ app.get('/aprobar-presupuesto/:token', async (req, res) => {
   if (!s) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Presupuesto no encontrado</h1>');
   const costos = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [s.id])).rows;
   const IVA_RATE = 0.22;
+  const aplicaIva = s.aplica_iva !== false;
   const subtotales = {};
   for (const c of costos) subtotales[c.moneda] = (subtotales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
-  const filasCostos = costos.map(c => `<tr><td>${escapeHtmlSrv(c.descripcion)} x${c.cantidad}</td><td style="text-align:right;">${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)}</td></tr>`).join('');
-  const filasTotales = Object.entries(subtotales).map(([m, sub]) => {
-    const iva = sub * IVA_RATE;
-    return `<tr><td>Subtotal (${m})</td><td style="text-align:right;">${m} ${sub.toFixed(2)}</td></tr>
-      <tr><td>IVA 22% (${m})</td><td style="text-align:right;">${m} ${iva.toFixed(2)}</td></tr>
-      <tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${(sub + iva).toFixed(2)}</td></tr>`;
+  const filasCostos = costos.map(c => `<tr><td>${escapeHtmlSrv(c.descripcion)} x${c.cantidad}</td><td style="text-align:right;">${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precio_unitario))}</td></tr>`).join('');
+  const filasTotales = Object.entries(subtotales).map(([m, subRaw]) => {
+    const sub = Math.round(subRaw);
+    if (!aplicaIva) return `<tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${sub}</td></tr>`;
+    const iva = Math.round(sub * IVA_RATE);
+    return `<tr><td>Subtotal (${m})</td><td style="text-align:right;">${m} ${sub}</td></tr>
+      <tr><td>IVA 22% (${m})</td><td style="text-align:right;">${m} ${iva}</td></tr>
+      <tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${sub + iva}</td></tr>`;
   }).join('');
   if (s.presupuesto_aprobado) {
     const fechaFmt = new Date(s.presupuesto_aprobado_fecha).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
@@ -2429,6 +2435,12 @@ app.get('/api/servicios-tecnicos/:id/firma', requireStaff, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+app.post('/api/servicios-tecnicos/:id/aplica-iva', requireStaff, async (req, res) => {
+  const { aplicaIva } = req.body || {};
+  const r = await pool.query('update servicios_tecnicos set aplica_iva=$1 where id=$2 returning *', [aplicaIva !== false, req.params.id]);
+  if (!r.rows[0]) return bad(res, 'No encontrado.', 404);
+  ok(res, r.rows[0]);
+});
 /* ---- Costos por visita: catálogo precargado + ítems puntuales cargados en cada servicio ---- */
 app.get('/api/catalogo-costos', requireStaff, async (req, res) => {
   const filas = (await pool.query('select * from catalogo_costos_servicio order by nombre asc')).rows;
@@ -2440,7 +2452,7 @@ app.post('/api/catalogo-costos', requireStaff, async (req, res) => {
   if (precio === undefined || precio === null || isNaN(Number(precio))) return bad(res, 'Falta el precio.');
   const r = await pool.query(
     `insert into catalogo_costos_servicio (nombre, precio, moneda) values ($1,$2,$3) returning *`,
-    [nombre.trim(), Number(precio), (moneda === 'USD') ? 'USD' : 'UYU']
+    [nombre.trim(), Math.round(Number(precio)), (moneda === 'USD') ? 'USD' : 'UYU']
   );
   ok(res, r.rows[0]);
 });
@@ -2450,7 +2462,7 @@ app.put('/api/catalogo-costos/:id', requireStaff, async (req, res) => {
   if (precio === undefined || precio === null || isNaN(Number(precio))) return bad(res, 'Falta el precio.');
   const r = await pool.query(
     `update catalogo_costos_servicio set nombre=$1, precio=$2, moneda=$3, activo=$4 where id=$5 returning *`,
-    [nombre.trim(), Number(precio), (moneda === 'USD') ? 'USD' : 'UYU', activo !== false, req.params.id]
+    [nombre.trim(), Math.round(Number(precio)), (moneda === 'USD') ? 'USD' : 'UYU', activo !== false, req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'No encontrado.', 404);
   ok(res, r.rows[0]);
@@ -2560,14 +2572,22 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   }
   const t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
   if (!t) return bad(res, 'El ticket asociado ya no existe.');
-  // Los precios cargados son sin IVA; acá se suma el 22% (tasa básica en Uruguay) para el total final.
+  // Los precios cargados son sin IVA; acá se suma el 22% (tasa básica en Uruguay) para el total
+  // final, salvo que el service tenga el IVA desactivado (cliente que solo pide el comprobante
+  // interno, sin factura oficial) — en ese caso el total es directamente el subtotal.
   const IVA_RATE = 0.22;
+  const aplicaIva = servicio.aplica_iva !== false;
   const subtotales = {};
   for (const c of servicio.costos) {
     subtotales[c.moneda] = (subtotales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
   }
-  const totalesTexto = Object.entries(subtotales).map(([m, sub]) => `${m} ${sub.toFixed(2)} + IVA (${m} ${(sub * IVA_RATE).toFixed(2)}) = ${m} ${(sub * (1 + IVA_RATE)).toFixed(2)}`).join('\n') || 'sin costos cargados';
-  const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${(Number(c.cantidad) * Number(c.precio_unitario)).toFixed(2)} + IVA`).join('\n');
+  const totalesTexto = Object.entries(subtotales).map(([m, sub]) => {
+    sub = Math.round(sub);
+    if (!aplicaIva) return `${m} ${sub} (sin IVA)`;
+    const iva = Math.round(sub * IVA_RATE);
+    return `${m} ${sub} + IVA (${m} ${iva}) = ${m} ${sub + iva}`;
+  }).join('\n') || 'sin costos cargados';
+  const detalleCostos = servicio.costos.map(c => `- ${c.descripcion} x${c.cantidad}: ${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precio_unitario))}${aplicaIva ? ' + IVA' : ''}`).join('\n');
   // Link directo para dar conformidad SIN tener que entrar al portal: hay clientes que nunca llegan
   // a loguearse ahí, y no queremos que el presupuesto quede trabado por eso.
   let token = servicio.presupuesto_token;
