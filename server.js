@@ -285,6 +285,23 @@ pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   reprogramado_por text,
   creado timestamptz not null default now()
 )`).catch(e => console.error('No se pudo crear servicios_tecnicos_reprogramaciones:', e.message));
+// Calendario de reservas: se agenda desde un ticket de la sección "Reservas" (botón "Agendar esta
+// reserva"), igual que un servicio técnico, pero sin costos ni presupuestos — solo fecha/hora y
+// estado. Antes esto se resolvía descargando un .ics suelto que el sistema no volvía a ver; ahora
+// queda guardado y se puede reprogramar, marcar como realizada o cancelar desde su propio calendario.
+pool.query(`create table if not exists reservas_calendario (
+  id serial primary key,
+  ticket_id uuid,
+  ticket_numero text,
+  cliente_id uuid,
+  titulo text not null,
+  fecha_hora timestamptz not null,
+  duracion_minutos integer,
+  todo_el_dia boolean not null default false,
+  estado text not null default 'pendiente',
+  creado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear reservas_calendario:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2693,6 +2710,55 @@ app.post('/api/servicios-tecnicos/:id/comprobante', requireStaff, async (req, re
     )).rows[0];
   }
   ok(res, { comprobante, servicio, cliente: cliente || null });
+});
+/* ---------------- Calendario de reservas (agendado desde un ticket de "Reservas") ---------------- */
+app.get('/api/reservas-calendario', requireStaff, async (req, res) => {
+  const filas = (await pool.query('select * from reservas_calendario order by fecha_hora desc')).rows;
+  ok(res, filas);
+});
+app.post('/api/reservas-calendario', requireStaff, async (req, res) => {
+  const { ticketId, ticketNumero, clienteId, titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
+  if (!fecha) return bad(res, 'Falta la fecha.');
+  if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
+  const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const r = await pool.query(
+    `insert into reservas_calendario (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por)
+     values ($1,$2,$3,$4,$5,$6,$7,$8) returning *`,
+    [ticketId || null, ticketNumero || null, clienteId || null, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null]
+  );
+  ok(res, r.rows[0]);
+});
+app.put('/api/reservas-calendario/:id', requireStaff, async (req, res) => {
+  const { titulo, fecha, hora, duracion, todoElDia } = req.body || {};
+  if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
+  if (!fecha) return bad(res, 'Falta la fecha.');
+  if (!todoElDia && !hora) return bad(res, 'Falta la hora, o marcá "Todo el día".');
+  const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
+  const r = await pool.query(
+    `update reservas_calendario set titulo=$1, fecha_hora=$2, duracion_minutos=$3, todo_el_dia=$4,
+      estado=(case when estado='realizada' or estado='cancelada' then estado else 'pendiente' end)
+      where id=$5 returning *`,
+    [titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
+  ok(res, r.rows[0]);
+});
+app.post('/api/reservas-calendario/:id/marcar-realizada', requireStaff, async (req, res) => {
+  const r = await pool.query(`update reservas_calendario set estado='realizada' where id=$1 returning *`, [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
+  ok(res, r.rows[0]);
+});
+app.post('/api/reservas-calendario/:id/cancelar', requireStaff, async (req, res) => {
+  const r = await pool.query(`update reservas_calendario set estado='cancelada' where id=$1 returning *`, [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/reservas-calendario/:id', requireStaff, async (req, res) => {
+  const r = await pool.query('delete from reservas_calendario where id=$1 returning id', [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
+  ok(res, { ok: true });
 });
 /* ---------------- Notificaciones a Telegram ---------------- */
 async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
