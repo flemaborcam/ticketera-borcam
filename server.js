@@ -420,7 +420,16 @@ async function demasiadosEnviosAutomaticosRecientes() {
   const r = await pool.query(`select count(*) from mensajes where automatico=true and fecha > now() - interval '1 hour'`);
   return Number(r.rows[0].count) >= 200; // margen de seguridad por debajo del límite típico de proveedores (500/hora)
 }
-async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAutomatico }) {
+// Genera un Message-ID propio que lleva el id del ticket incrustado (ej: <tk-<uuid-del-ticket>-xxxx@dominio>).
+// Sirve para reconocer la respuesta del cliente cuando vuelva, sin depender de que el asunto se
+// conserve intacto: los encabezados técnicos de threading (In-Reply-To / References) casi nunca se
+// pierden, aunque el sistema de correo del cliente reescriba el asunto (como pasa con algunas
+// administraciones que tienen su propio numerador y pisan el asunto al responder).
+function generarMessageIdTicket(ticketId, cfg) {
+  const dominio = ((cfg && (cfg.smtp_usuario || cfg.casilla_email)) || 'ticketera.borcam.com.uy').split('@').pop();
+  return `<tk-${ticketId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}@${dominio}>`;
+}
+async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAutomatico, ticketId }) {
   try {
     const cfg = await getConfig();
     const transport = await getSmtpTransport(cfg);
@@ -439,7 +448,8 @@ async function enviarEmailReal({ to, cc, subject, text, html, attachments, esAut
       from: `"${cfg.casilla_nombre || 'Soporte'}" <${cfg.smtp_usuario}>`,
       to, cc: ccFiltrado.length ? ccFiltrado.join(',') : undefined,
       subject, text, html: html || undefined,
-      attachments: attachments && attachments.length ? attachments : undefined
+      attachments: attachments && attachments.length ? attachments : undefined,
+      messageId: ticketId ? generarMessageIdTicket(ticketId, cfg) : undefined
     });
     return true;
   } catch (e) {
@@ -462,7 +472,7 @@ async function notificarReaperturaTicket(ticketId) {
     [ticketId, mensaje]
   );
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true, ticketId });
 }
 // Aplica un cambio de estado y, si corresponde, dispara el correo automático de "Esperando al Cliente"
 async function aplicarCambioEstado(ticketId, nuevoEstado) {
@@ -479,7 +489,7 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
       [ticketId, cuerpo, destinatarios]
     );
     const ctx = await contextoTicket(ticketId);
-    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true, ticketId });
   }
   if (nuevoEstado === 'Resuelto' && t.estado !== 'Resuelto') {
     await enviarEncuestaSatisfaccion(ticketId).catch(e => console.error('Error enviando encuesta de satisfacción:', e.message));
@@ -495,7 +505,7 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
       [ticketId, cuerpo, [t.remitente_email, ...ccs]]
     );
     const ctx = await contextoTicket(ticketId);
-    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true });
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: cuerpo, esAutomatico: true, ticketId });
   }
 }
 // Al resolver un ticket, se manda un correo aparte con dos enlaces (Sí / No) para que el cliente
@@ -517,7 +527,7 @@ async function enviarEncuestaSatisfaccion(ticketId) {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Encuesta de satisfacción',$2,true)`,
     [ticketId, texto]
   );
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: texto, html, esAutomatico: true });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: texto, html, esAutomatico: true, ticketId });
 }
 function pasoCoincide(paso, texto) {
   if (paso.match_any) return true;
@@ -533,7 +543,7 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
     [ticketId, `Automatización · ${automatizacion.nombre} (paso ${index + 1}/${totalPasos})`, resp.cuerpo]
   );
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: resp.cuerpo, esAutomatico: true });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: resp.cuerpo, esAutomatico: true, ticketId });
   if (paso.accion_estado && paso.accion_estado !== 'Sin cambio') {
     await aplicarCambioEstado(ticketId, paso.accion_estado);
   } else {
@@ -1198,7 +1208,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpoATextoConBotones(cuerpo)}</div>${linkHtml}${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
     await enviarEmailReal({
       to: t.remitente_email, cc: cc || [], subject: `[${t.numero}] ${t.asunto}`,
-      text: cuerpoFinal, html: htmlBody, attachments: attachmentsForMail
+      text: cuerpoFinal, html: htmlBody, attachments: attachmentsForMail, ticketId: id
     });
   }
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
@@ -1473,7 +1483,7 @@ app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
         );
         await enviarEmailReal({
           to: t.remitente_email, cc, subject: `[${t.numero}] ${t.asunto}`,
-          text: cuerpo, html: `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo}</div>`
+          text: cuerpo, html: `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpo}</div>`, ticketId: t.id
         });
         await aplicarCambioEstado(t.id, 'Resuelto');
         await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [t.id]);
@@ -2530,7 +2540,7 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   await pool.query('update servicios_tecnicos set presupuesto_enviado=true where id=$1', [servicio.id]);
   await pool.query('update tickets set actualizado=now() where id=$1', [servicio.ticket_id]);
   const ccs = await collectTicketCCs(servicio.ticket_id);
-  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true });
+  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true, ticketId: servicio.ticket_id });
   ok(res, await ticketConMensajes(servicio.ticket_id));
 });
 // Genera (o, si ya existía, devuelve) el comprobante no fiscal de un servicio técnico: número
@@ -2693,7 +2703,7 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
     const ccsAsig = await collectTicketCCs(ticketId);
     const msgAsig = `Su ticket fue asignado a ${staff.nombre} ${staff.apellido}.`;
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`, [ticketId, 'Notificación automática', msgAsig]);
-    await enviarEmailReal({ to: t.remitente_email, cc: ccsAsig, subject: `[${t.numero}] ${t.asunto}`, text: msgAsig, esAutomatico: true });
+    await enviarEmailReal({ to: t.remitente_email, cc: ccsAsig, subject: `[${t.numero}] ${t.asunto}`, text: msgAsig, esAutomatico: true, ticketId });
   }
   const firmaHtml = staff.firma_html || '';
   await pool.query(
@@ -2704,7 +2714,7 @@ async function responderTicketViaTelegram(ticketId, staffId, cuerpo) {
   await pool.query('update tickets set necesita_atencion=false, actualizado=now() where id=$1', [ticketId]);
   const ccs = await collectTicketCCs(ticketId);
   const htmlBody = `<div style="white-space:pre-wrap;font-family:sans-serif;">${cuerpoATextoConBotones(cuerpo)}</div>${firmaHtml ? `<div style="margin-top:16px;">${firmaHtml}</div>` : ''}`;
-  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, html: htmlBody });
+  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, html: htmlBody, ticketId });
   return { ok: true, numero: t.numero };
 }
 // NOTA (fix bucle Telegram, 25/08/2026): agregamos un candado (telegramPollingEnCurso), igual al que
@@ -3175,7 +3185,7 @@ async function aplicarAvisoFinDeSemana(ticketId) {
   // siempre como "Respondió el cliente" aunque el sistema ya le haya avisado.
   await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true, ticketId });
 }
 // Lunes a viernes, fuera del horario laboral configurado (ej: antes de las 09:00 o desde las 18:00)
 function esFueraDeHorarioLaboral(cfg) {
@@ -3206,11 +3216,24 @@ async function aplicarAvisoFueraHorario(ticketId) {
   // sacamos la marca de "Respondió el cliente" para que no quede pegada para siempre.
   await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
   const ctx = await contextoTicket(ticketId);
-  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true });
+  await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true, ticketId });
 }
 function extraerNumeroTicket(asunto) {
   const m = (asunto || '').match(/\[?(T-\d{4}-\d+)\]?/i);
   return m ? m[1].toUpperCase() : null;
+}
+// Busca el id de ticket incrustado en los encabezados técnicos de threading del correo (In-Reply-To /
+// References), que es donde queda guardado el Message-ID que nosotros generamos al mandar el correo
+// (ver generarMessageIdTicket). A diferencia del asunto, estos encabezados casi nunca se pierden ni se
+// reescriben, aunque el sistema de correo del que responde le cambie el asunto por completo (por
+// ejemplo, administraciones que tienen su propio numerador y pisan el "Re:" con el suyo).
+function extraerTicketIdDeEncabezados(parsed) {
+  const candidatos = []
+    .concat(parsed.inReplyTo || [])
+    .concat(parsed.references || []);
+  const texto = candidatos.join(' ');
+  const m = texto.match(/tk-([0-9a-f-]{36})-/i);
+  return m ? m[1] : null;
 }
 // Una línea "vale como contenido nuevo" si no es una línea citada (">"), ni una línea vacía, ni
 // parte de un encabezado típico de reenvío/respuesta (De:/Enviado el:/Para:/Asunto:, guiones,
@@ -3304,6 +3327,7 @@ async function procesarCorreoEntrante(parsed) {
     cuerpo = '(Este correo llegó con formato HTML — ver el contenido completo abajo)';
   }
   const numeroDetectado = extraerNumeroTicket(asunto);
+  const ticketIdDeEncabezados = extraerTicketIdDeEncabezados(parsed);
   const adjuntosCrudos = [];
   for (const a of (parsed.attachments || [])) {
     if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
@@ -3335,7 +3359,10 @@ async function procesarCorreoEntrante(parsed) {
     if (cambio) await pool.query('update mensajes set cuerpo_html=$1 where id=$2', [htmlCorregido, mensajeId]);
   }
   let ticket = null;
-  if (numeroDetectado) {
+  if (ticketIdDeEncabezados) {
+    ticket = (await pool.query('select * from tickets where id=$1', [ticketIdDeEncabezados])).rows[0];
+  }
+  if (!ticket && numeroDetectado) {
     ticket = (await pool.query('select * from tickets where numero=$1', [numeroDetectado])).rows[0];
   }
   if (ticket) {
