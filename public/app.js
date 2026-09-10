@@ -2743,10 +2743,29 @@ function renderThreadHtml(t) {
       ${m.firmaHtml ? `<div class="msg-firma">${m.firmaHtml}</div>` : ''}</div>`;
   }).join('');
 }
+// Abre una foto de un mensaje (mail o portal) en grande, tapando la pantalla, en vez de descargarla
+// directo — la mayoría de las veces solo hace falta mirarla. Si igual se necesita el archivo, abajo
+// queda un botón de descarga aparte. Reutiliza la misma imagen que ya está cargada (mismo <img> src),
+// así que no genera ningún pedido nuevo al servidor.
+function ampliarImagenAdjunto(url, nombre) {
+  const existente = document.getElementById('lightbox-imagen-adjunto');
+  if (existente) existente.remove();
+  const div = document.createElement('div');
+  div.id = 'lightbox-imagen-adjunto';
+  div.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(10,15,25,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;cursor:zoom-out;padding:24px;box-sizing:border-box;';
+  div.innerHTML = `
+    <img src="${url}" alt="${escapeHtml(nombre)}" style="max-width:100%;max-height:82vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);cursor:default;">
+    <div style="display:flex;gap:10px;cursor:default;">
+      <a href="${url}" download="${escapeHtml(nombre)}" class="btn btn-ghost" style="background:#fff;" onclick="event.stopPropagation();">⬇ Descargar</a>
+      <button type="button" class="btn btn-ghost" style="background:#fff;" onclick="document.getElementById('lightbox-imagen-adjunto').remove();">✕ Cerrar</button>
+    </div>`;
+  div.onclick = () => div.remove();
+  document.body.appendChild(div);
+}
 function renderAdjuntos(ticketId, mensajeId, adjuntos) {
   return `<div class="msg-attachments">${adjuntos.map(a => {
     const url = `/api/adjuntos/${ticketId}/${mensajeId}/${a.id}`;
-    if (a.tipo === 'imagen') return `<a href="${url}" download="${escapeHtml(a.nombre)}"><img src="${url}" alt="${escapeHtml(a.nombre)}"></a>`;
+    if (a.tipo === 'imagen') return `<img src="${url}" alt="${escapeHtml(a.nombre)}" class="adjunto-imagen-click" onclick="ampliarImagenAdjunto('${url}','${escapeHtml(a.nombre).replace(/'/g, "\\'")}')">`;
     if (a.tipo === 'video') return `<div class="attach-video-wrap">
         <video controls src="${url}" class="attach-video"></video>
         <a class="attach-file" href="${url}" download="${escapeHtml(a.nombre)}">⬇ Descargar ${escapeHtml(a.nombre)} <span style="opacity:.7;">(${fmtSize(a.size)})</span></a>
@@ -2759,6 +2778,7 @@ function renderAdjuntos(ticketId, mensajeId, adjuntos) {
 // caja de respuesta con look más moderno (pestañas subrayadas, tipo Outlook nuevo).
 function ticketStyleTag() {
   return `<style id="ticket-style-v2">
+    .adjunto-imagen-click{cursor:zoom-in;}
     .thread{gap:10px !important;}
     .msg{border-radius:16px !important;box-shadow:0 1px 2px rgba(15,42,77,.06),0 4px 10px -6px rgba(15,42,77,.12) !important;position:relative;max-width:100%;}
     /* Evita que una URL larga sin espacios (frecuente en correos con imágenes embebidas) empuje
