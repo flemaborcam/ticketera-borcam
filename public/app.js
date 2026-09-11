@@ -2948,7 +2948,11 @@ async function guardarReservaCalendario(ticketId) {
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   try {
     await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, horario, servicio, edificio, realizadoPor });
-    showToast('Reserva agendada. Ya la podés ver en Reservas → Calendario de reservas.');
+    showToast('Reserva agendada.');
+    // Después de agendar, vuelve directo a Reservas → Tickets de reserva, en vez de dejarte en el ticket.
+    state.view = 'reservas';
+    state.reservasTab = 'tickets';
+    render();
   } catch (e) { showToast(e.message); }
 }
 /* ---------------- Calendario de reservas (vista propia dentro de "Reservas") ----------------
