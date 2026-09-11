@@ -435,13 +435,14 @@ async function ticketConMensajes(ticketId) {
     `select s.*, coalesce((select json_agg(c.* order by c.creado asc) from costos_servicio_tecnico c where c.servicio_id = s.id), '[]'::json) as costos
      from servicios_tecnicos s where s.ticket_id=$1 order by s.fecha_hora asc`, [ticketId]
   )).rows;
+  const reservasCalendario = (await pool.query('select * from reservas_calendario where ticket_id=$1 order by fecha_hora asc', [ticketId])).rows;
   const historialCliente = t.remitente_email
     ? (await pool.query(
         `select id, numero, asunto, estado, creado from tickets where remitente_email=$1 and id != $2 order by creado desc limit 15`,
         [t.remitente_email, ticketId]
       )).rows
     : [];
-  return { ...t, mensajes, serviciosTecnicos, historialCliente };
+  return { ...t, mensajes, serviciosTecnicos, reservasCalendario, historialCliente };
 }
 async function collectTicketCCs(ticketId) {
   const r = await pool.query(
@@ -736,7 +737,9 @@ app.get('/api/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query(
     `select t.*, (select string_agg(m.cuerpo, ' ') from mensajes m where m.ticket_id = t.id) as mensajes_texto,
      (select m2.tipo from mensajes m2 where m2.ticket_id = t.id and m2.tipo <> 'nota' order by m2.fecha desc limit 1) as ultimo_msg_tipo,
-     (select m2.fecha from mensajes m2 where m2.ticket_id = t.id and m2.tipo <> 'nota' order by m2.fecha desc limit 1) as ultimo_msg_fecha
+     (select m2.fecha from mensajes m2 where m2.ticket_id = t.id and m2.tipo <> 'nota' order by m2.fecha desc limit 1) as ultimo_msg_fecha,
+     (select count(*) filter (where r.estado = 'pendiente') from reservas_calendario r where r.ticket_id = t.id) as reservas_pendientes,
+     (select count(*) from reservas_calendario r where r.ticket_id = t.id) as reservas_total
      from tickets t order by t.actualizado desc`
   )).rows;
   ok(res, tickets);
@@ -3680,6 +3683,28 @@ async function revisarRecordatoriosServicioTecnico() {
 }
 setTimeout(revisarRecordatoriosServicioTecnico, 30000);
 setInterval(revisarRecordatoriosServicioTecnico, 30 * 60 * 1000);
+// Cierre automático de reservas vencidas: una vez que ya pasó por completo el día de una reserva
+// que seguía "pendiente" (no se marcó a mano como realizada ni se canceló), se marca sola como
+// "realizada" y se cierra el ticket que la originó — no se borra nada, queda todo guardado y
+// visible en la pestaña "Reservas cerradas" para borrarlo a mano si hace falta.
+async function revisarReservasVencidas() {
+  try {
+    const vencidas = (await pool.query(
+      `select * from reservas_calendario
+       where estado='pendiente'
+         and (fecha_hora at time zone 'America/Montevideo')::date < (now() at time zone 'America/Montevideo')::date`
+    )).rows;
+    for (const r of vencidas) {
+      await pool.query(`update reservas_calendario set estado='realizada' where id=$1`, [r.id]);
+      if (r.ticket_id) {
+        await aplicarCambioEstado(r.ticket_id, 'Cerrado').catch(e => console.error('No se pudo cerrar el ticket de una reserva vencida:', e.message));
+      }
+    }
+    if (vencidas.length) console.log(`Reservas vencidas cerradas automáticamente: ${vencidas.length}`);
+  } catch (e) { console.error('Error revisando reservas vencidas:', e.message); }
+}
+setTimeout(revisarReservasVencidas, 35000);
+setInterval(revisarReservasVencidas, 30 * 60 * 1000);
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
   if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
