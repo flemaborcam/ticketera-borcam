@@ -87,6 +87,9 @@ function mapTicket(row) {
     ultimoMensajeTipo: row.ultimo_msg_tipo || null,
     ultimoMensajeFecha: row.ultimo_msg_fecha || null,
     serviciosTecnicos: row.serviciosTecnicos || [],
+    reservasCalendario: row.reservasCalendario || [],
+    reservasPendientes: row.reservas_pendientes !== undefined ? Number(row.reservas_pendientes) || 0 : (row.reservasCalendario || []).filter(r => r.estado === 'pendiente').length,
+    reservasTotal: row.reservas_total !== undefined ? Number(row.reservas_total) || 0 : (row.reservasCalendario || []).length,
     satisfaccion: row.satisfaccion || null,
     historialCliente: row.historialCliente || [],
     checklistEstado: row.checklist_estado || {}
@@ -2873,6 +2876,7 @@ function renderStub(t, clientMode, selectable) {
       <div class="stub-meta">
         ${!clientMode && t.necesitaAtencion ? `<span class="badge-atencion">🔔 Respondió el cliente</span>` : ''}
         ${!clientMode && ticketVencido(t) ? `<span class="badge-vencido">⏰ Vencido</span>` : ''}
+        ${!clientMode && t.reservasPendientes > 0 ? `<span class="tag tag-resuelto">📅 ${t.reservasPendientes > 1 ? t.reservasPendientes + ' reservas agendadas' : 'Reserva agendada'}</span>` : ''}
         <span class="tag tag-${slug(t.estado)}">${t.estado}</span><span class="tag tag-${slug(t.prioridad)}">${t.prioridad}</span><span class="tag tag-cat">${escapeHtml(t.categoria)}</span>
         ${!clientMode && grupo ? `<span class="tag tag-cliente">${escapeHtml(grupo.nombre)}</span>` : ''}
         ${clientMode && cache.edificiosCliente.length > 1 && t.edificioNombre ? `<span class="tag tag-cliente">${escapeHtml(t.edificioNombre)}</span>` : ''}
@@ -2962,21 +2966,29 @@ function refrescarVistaReservas() {
   if (el && state.view === 'reservas') el.innerHTML = renderReservas();
 }
 function cambiarReservasTab(t) { state.reservasTab = t; render(); }
-function renderCalendarioReservasTab() {
-  const reservas = (cache.reservasCalendario || []).slice().sort((a, b) => new Date(a.fecha_hora) - new Date(b.fecha_hora));
-  const pendientes = reservas.filter(r => r.estado === 'pendiente');
-  const otras = reservas.filter(r => r.estado !== 'pendiente').sort((a, b) => new Date(b.fecha_hora) - new Date(a.fecha_hora));
-  const fila = r => `
+function filaReservaCalendario(r) {
+  return `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleReservaCalendario(${r.id})">
       <div class="avatar">📅</div>
       <div><div class="u-name">${escapeHtml(r.servicio || r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
       <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.edificio ? ' · ' + escapeHtml(r.edificio) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
     </button>`;
-  const listaPendientes = pendientes.length ? pendientes.map(fila).join('') : `<div class="hint-text">No hay reservas agendadas.</div>`;
+}
+function renderCalendarioReservasTab() {
+  const pendientes = (cache.reservasCalendario || []).filter(r => r.estado === 'pendiente').sort((a, b) => new Date(a.fecha_hora) - new Date(b.fecha_hora));
+  const listaPendientes = pendientes.length ? pendientes.map(filaReservaCalendario).join('') : `<div class="hint-text">No hay reservas agendadas.</div>`;
   return `
     <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${pendientes.length} reserva${pendientes.length === 1 ? '' : 's'} agendada${pendientes.length === 1 ? '' : 's'}</h1></div></div>
-    <div class="user-list">${listaPendientes}</div>
-    ${otras.length ? `<div class="page-head" style="margin-top:20px;"><div><h1 style="font-size:15px;">Realizadas / canceladas</h1></div></div><div class="user-list">${otras.map(fila).join('')}</div>` : ''}`;
+    <div class="hint-text" style="margin-bottom:10px;">Cuando pasa la fecha de una reserva pendiente, el sistema la marca sola como realizada y cierra su ticket — la vas a encontrar en "Reservas cerradas".</div>
+    <div class="user-list">${listaPendientes}</div>`;
+}
+function renderReservasCerradasTab() {
+  const cerradas = (cache.reservasCalendario || []).filter(r => r.estado !== 'pendiente').sort((a, b) => new Date(b.fecha_hora) - new Date(a.fecha_hora));
+  const lista = cerradas.length ? cerradas.map(filaReservaCalendario).join('') : `<div class="hint-text">Todavía no hay reservas realizadas ni canceladas.</div>`;
+  return `
+    <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${cerradas.length} reserva${cerradas.length === 1 ? '' : 's'} cerrada${cerradas.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="hint-text" style="margin-bottom:10px;">Realizadas y canceladas. Entrá a una para borrarla definitivamente si hace falta.</div>
+    <div class="user-list">${lista}</div>`;
 }
 function abrirDetalleReservaCalendario(id) {
   state.modal = 'detalle-reserva-calendario';
@@ -3191,9 +3203,10 @@ function renderReservas() {
   const tab = state.reservasTab || 'calendario';
   const tabsHtml = [
     { v: 'calendario', label: '📅 Calendario de reservas' },
+    { v: 'cerradas', label: 'Reservas cerradas' },
     { v: 'tickets', label: 'Tickets de reserva' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarReservasTab('${t.v}')">${t.label}</button>`).join('');
-  const contenido = tab === 'tickets' ? renderTicketsReservaTab() : renderCalendarioReservasTab();
+  const contenido = tab === 'tickets' ? renderTicketsReservaTab() : tab === 'cerradas' ? renderReservasCerradasTab() : renderCalendarioReservasTab();
   return `
     <div class="page-head"><div><h1>Reservas</h1><div class="sub">Reservas agendadas desde tickets, y los tickets de reserva que las originan.</div></div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
@@ -3416,6 +3429,7 @@ function renderTicket(id) {
           ${t.necesitaAtencion ? `<div class="stamp stamp-atencion">🔔 Respondió el cliente</div>` : ''}
           ${t.satisfaccion === 'si' ? `<div class="stamp stamp-resuelto">😊 Cliente conforme</div>` : ''}
           ${t.satisfaccion === 'no' ? `<div class="stamp stamp-atencion">😕 Cliente no conforme</div>` : ''}
+          ${t.reservasPendientes > 0 ? `<div class="stamp stamp-resuelto">📅 ${t.reservasPendientes > 1 ? t.reservasPendientes + ' reservas agendadas' : 'Reserva agendada'}</div>` : ''}
           <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
         </div>
       </div>
