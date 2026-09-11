@@ -3003,12 +3003,22 @@ function renderDetalleReservaCalendarioModal() {
     </div>
     <div class="modal-actions" style="flex-wrap:wrap;">
       ${r.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${r.ticket_id}')">Ver ticket</button>` : ''}
-      ${puedeGestionar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarReserva(${r.id})">🔁 Reprogramar</button>` : ''}
+      <button type="button" class="btn btn-ghost" onclick="abrirReprogramarReserva(${r.id})">✏️ Editar</button>
       ${puedeGestionar ? `<button type="button" class="btn btn-primary" onclick="marcarReservaRealizada(${r.id})">✅ Marcar realizada</button>` : ''}
       ${puedeGestionar ? `<button type="button" class="btn btn-danger" onclick="cancelarReserva(${r.id})">Cancelar reserva</button>` : ''}
+      <button type="button" class="btn btn-danger" onclick="eliminarReservaCalendario(${r.id})">🗑️ Eliminar</button>
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
     </div>
   </div></div>`;
+}
+async function eliminarReservaCalendario(id) {
+  if (!confirm('¿Eliminar esta reserva? Esta acción no se puede deshacer.')) return;
+  try {
+    await api('DELETE', `/api/reservas-calendario/${id}`);
+    await recargarReservasCalendario();
+    showToast('Reserva eliminada.');
+    closeModal();
+  } catch (e) { showToast(e.message); }
 }
 async function marcarReservaRealizada(id) {
   try {
@@ -3037,7 +3047,7 @@ function renderReprogramarReservaModal() {
   if (!r) return '';
   const fechaDefault = new Date(r.fecha_hora).toISOString().slice(0, 10);
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
-    <h2>🔁 Reprogramar reserva</h2>
+    <h2>✏️ Editar reserva</h2>
     <p class="sub">${escapeHtml(r.titulo)}</p>
     <div class="field"><label>Fecha</label><input type="date" id="reprog-reserva-fecha" value="${fechaDefault}"></div>
     <div class="field"><label>Horario</label><input type="text" id="reprog-reserva-horario" value="${escapeHtml(r.horario || '')}" placeholder="Ej: Turno nocturno"></div>
@@ -3058,7 +3068,7 @@ async function confirmarReprogramarReserva() {
   try {
     await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, horario, servicio, realizadoPor });
     await cargarReservasCalendario();
-    showToast('Reserva reprogramada.');
+    showToast('Reserva actualizada.');
     state.modal = 'detalle-reserva-calendario';
     render();
   } catch (e) { showToast(e.message); }
