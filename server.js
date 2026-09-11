@@ -310,6 +310,7 @@ pool.query(`create table if not exists reservas_calendario (
 pool.query('alter table reservas_calendario add column if not exists horario text').catch(e => console.error('No se pudo migrar horario en reservas_calendario:', e.message));
 pool.query('alter table reservas_calendario add column if not exists servicio text').catch(e => console.error('No se pudo migrar servicio en reservas_calendario:', e.message));
 pool.query('alter table reservas_calendario add column if not exists realizado_por text').catch(e => console.error('No se pudo migrar realizado_por en reservas_calendario:', e.message));
+pool.query('alter table reservas_calendario add column if not exists edificio text').catch(e => console.error('No se pudo migrar edificio en reservas_calendario:', e.message));
 // Catálogo de costos recurrentes (mano de obra, viáticos, un modelo de cerradura, etc.) para no
 // tener que tipear el precio cada vez; igual siempre se puede cargar un costo puntual libre.
 pool.query(`create table if not exists catalogo_costos_servicio (
@@ -2725,7 +2726,7 @@ app.get('/api/reservas-calendario', requireStaff, async (req, res) => {
   ok(res, filas);
 });
 app.post('/api/reservas-calendario', requireStaff, async (req, res) => {
-  const { ticketId, ticketNumero, clienteId, titulo, fecha, horario, servicio, realizadoPor } = req.body || {};
+  const { ticketId, ticketNumero, clienteId, titulo, fecha, horario, servicio, edificio, realizadoPor } = req.body || {};
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   // El horario ahora es una franja de texto libre (ej. "Turno nocturno"), no una hora exacta —
@@ -2733,22 +2734,22 @@ app.post('/api/reservas-calendario', requireStaff, async (req, res) => {
   const fechaHora = `${fecha}T00:00:00-03:00`;
   const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
   const r = await pool.query(
-    `insert into reservas_calendario (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, horario, servicio, realizado_por, creado_por)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-    [ticketId || null, ticketNumero || null, clienteId || null, titulo.trim(), fechaHora, (horario || '').trim() || null, (servicio || '').trim() || null, (realizadoPor || '').trim() || null, staff ? `${staff.nombre} ${staff.apellido}` : null]
+    `insert into reservas_calendario (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, horario, servicio, edificio, realizado_por, creado_por)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+    [ticketId || null, ticketNumero || null, clienteId || null, titulo.trim(), fechaHora, (horario || '').trim() || null, (servicio || '').trim() || null, (edificio || '').trim() || null, (realizadoPor || '').trim() || null, staff ? `${staff.nombre} ${staff.apellido}` : null]
   );
   ok(res, r.rows[0]);
 });
 app.put('/api/reservas-calendario/:id', requireStaff, async (req, res) => {
-  const { titulo, fecha, horario, servicio, realizadoPor } = req.body || {};
+  const { titulo, fecha, horario, servicio, edificio, realizadoPor } = req.body || {};
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
   const fechaHora = `${fecha}T00:00:00-03:00`;
   const r = await pool.query(
-    `update reservas_calendario set titulo=$1, fecha_hora=$2, horario=$3, servicio=$4, realizado_por=$5,
+    `update reservas_calendario set titulo=$1, fecha_hora=$2, horario=$3, servicio=$4, edificio=$5, realizado_por=$6,
       estado=(case when estado='realizada' or estado='cancelada' then estado else 'pendiente' end)
-      where id=$6 returning *`,
-    [titulo.trim(), fechaHora, (horario || '').trim() || null, (servicio || '').trim() || null, (realizadoPor || '').trim() || null, req.params.id]
+      where id=$7 returning *`,
+    [titulo.trim(), fechaHora, (horario || '').trim() || null, (servicio || '').trim() || null, (edificio || '').trim() || null, (realizadoPor || '').trim() || null, req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
   ok(res, r.rows[0]);
