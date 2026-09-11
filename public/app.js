@@ -3157,35 +3157,43 @@ async function guardarServicioTecnico() {
     closeModal();
   } catch (e) { showToast(e.message); }
 }
-function filteredReservas() {
+// soloAgendados=true -> tickets de reserva que ya tienen una reserva pendiente agendada (pestaña
+// "Reserva Agendada"). soloAgendados=false -> el resto, los que todavía no se agendaron (pestaña
+// "Tickets de reserva"). Así se separan sin duplicar tickets entre las dos pestañas.
+function filteredReservas(soloAgendados) {
   const f = state.filtersReservas;
   return cache.tickets
     .filter(esTicketDeReserva)
+    .filter(t => soloAgendados ? t.reservasPendientes > 0 : !(t.reservasPendientes > 0))
     .filter(t => f.estado === 'todos' ? (t.estado !== 'Cerrado' && t.estado !== 'Resuelto') : t.estado === f.estado)
     .filter(t => f.prioridad === 'todas' || t.prioridad === f.prioridad)
     .filter(t => { if (!f.search) return true; const s = f.search.toLowerCase(); return t.asunto.toLowerCase().includes(s) || t.numero.toLowerCase().includes(s) || t.remitenteNombre.toLowerCase().includes(s) || t.remitenteEmail.toLowerCase().includes(s); })
     .sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
 }
-function setFilterReservas(k, v) { state.filtersReservas[k] = v; state.paginaReservas = 1; render(); }
+function setFilterReservas(k, v) { state.filtersReservas[k] = v; state.paginaReservas = 1; state.paginaReservasAgendadas = 1; render(); }
 function irAPaginaReservas(n) { state.paginaReservas = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+function irAPaginaReservasAgendadas(n) { state.paginaReservasAgendadas = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
-function renderTicketsReservaTab() {
-  const todos = filteredReservas();
+function renderTicketsReservaTab(soloAgendados) {
+  const todos = filteredReservas(soloAgendados);
+  const paginaKey = soloAgendados ? 'paginaReservasAgendadas' : 'paginaReservas';
+  const irAPagina = soloAgendados ? 'irAPaginaReservasAgendadas' : 'irAPaginaReservas';
   const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
-  if (state.paginaReservas > totalPaginas) state.paginaReservas = totalPaginas;
-  if (state.paginaReservas < 1) state.paginaReservas = 1;
-  const desde = (state.paginaReservas - 1) * TICKETS_POR_PAGINA;
+  if (state[paginaKey] > totalPaginas) state[paginaKey] = totalPaginas;
+  if (state[paginaKey] < 1) state[paginaKey] = 1;
+  const desde = (state[paginaKey] - 1) * TICKETS_POR_PAGINA;
   const tickets = todos.slice(desde, desde + TICKETS_POR_PAGINA);
 
   const estOptions = ['todos', ...CAT.ESTADOS].map(e => `<option value="${e}" ${state.filtersReservas.estado === e ? 'selected' : ''}>${e === 'todos' ? 'Todo estado (sin cerrados ni resueltos)' : e}</option>`).join('');
   const prioOptions = ['todas', ...CAT.PRIORIDADES].map(p => `<option value="${p}" ${state.filtersReservas.prioridad === p ? 'selected' : ''}>${p === 'todas' ? 'Toda prioridad' : p}</option>`).join('');
-  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva".</div></div>`;
+  const mensajeVacio = soloAgendados ? 'Acá aparecen los tickets de reserva que ya tienen una reserva pendiente agendada.' : 'Acá aparecen automáticamente los tickets cuyo asunto contiene la palabra "reserva" y todavía no tienen una reserva agendada.';
+  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, false, true)).join('')}</div>` : `<div class="empty-state"><div class="big">No hay reservas que coincidan</div><div>${mensajeVacio}</div></div>`;
 
   const paginacion = todos.length > TICKETS_POR_PAGINA ? `
     <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px;">
-      <button class="btn btn-ghost" ${state.paginaReservas <= 1 ? 'disabled' : ''} onclick="irAPaginaReservas(${state.paginaReservas - 1})">&larr; Anterior</button>
-      <span style="font-size:13.5px;color:var(--ink-soft);">Página ${state.paginaReservas} de ${totalPaginas}</span>
-      <button class="btn btn-ghost" ${state.paginaReservas >= totalPaginas ? 'disabled' : ''} onclick="irAPaginaReservas(${state.paginaReservas + 1})">Siguiente &rarr;</button>
+      <button class="btn btn-ghost" ${state[paginaKey] <= 1 ? 'disabled' : ''} onclick="${irAPagina}(${state[paginaKey] - 1})">&larr; Anterior</button>
+      <span style="font-size:13.5px;color:var(--ink-soft);">Página ${state[paginaKey]} de ${totalPaginas}</span>
+      <button class="btn btn-ghost" ${state[paginaKey] >= totalPaginas ? 'disabled' : ''} onclick="${irAPagina}(${state[paginaKey] + 1})">Siguiente &rarr;</button>
     </div>` : '';
 
   return `
@@ -3204,9 +3212,10 @@ function renderReservas() {
   const tabsHtml = [
     { v: 'calendario', label: '📅 Calendario de reservas' },
     { v: 'cerradas', label: 'Reservas cerradas' },
+    { v: 'agendados', label: '📅 Reserva Agendada' },
     { v: 'tickets', label: 'Tickets de reserva' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarReservasTab('${t.v}')">${t.label}</button>`).join('');
-  const contenido = tab === 'tickets' ? renderTicketsReservaTab() : tab === 'cerradas' ? renderReservasCerradasTab() : renderCalendarioReservasTab();
+  const contenido = tab === 'tickets' ? renderTicketsReservaTab(false) : tab === 'agendados' ? renderTicketsReservaTab(true) : tab === 'cerradas' ? renderReservasCerradasTab() : renderCalendarioReservasTab();
   return `
     <div class="page-head"><div><h1>Reservas</h1><div class="sub">Reservas agendadas desde tickets, y los tickets de reserva que las originan.</div></div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
