@@ -2971,7 +2971,7 @@ function filaReservaCalendario(r) {
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleReservaCalendario(${r.id})">
       <div class="avatar">📅</div>
       <div><div class="u-name">${escapeHtml(r.servicio || r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
-      <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.edificio ? ' · ' + escapeHtml(r.edificio) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
+      <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.edificio ? ' · ' + escapeHtml(r.edificio) : ''}${r.realizado_por ? ' · ' + escapeHtml(r.realizado_por) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
     </button>`;
 }
 function renderCalendarioReservasTab() {
@@ -3210,10 +3210,10 @@ function renderTicketsReservaTab(soloAgendados) {
 function renderReservas() {
   const tab = state.reservasTab || 'calendario';
   const tabsHtml = [
+    { v: 'tickets', label: 'Tickets de reserva' },
     { v: 'calendario', label: '📅 Calendario de reservas' },
     { v: 'cerradas', label: 'Reservas cerradas' },
-    { v: 'agendados', label: '📅 Reserva Agendada' },
-    { v: 'tickets', label: 'Tickets de reserva' }
+    { v: 'agendados', label: '📅 Reserva Agendada' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarReservasTab('${t.v}')">${t.label}</button>`).join('');
   const contenido = tab === 'tickets' ? renderTicketsReservaTab(false) : tab === 'agendados' ? renderTicketsReservaTab(true) : tab === 'cerradas' ? renderReservasCerradasTab() : renderCalendarioReservasTab();
   return `
