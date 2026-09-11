@@ -18,7 +18,7 @@ let state = {
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
-  filtersReservas: { estado: 'todos', prioridad: 'todas', search: '' }, paginaReservas: 1,
+  filtersReservas: { estado: 'Abierto', prioridad: 'todas', search: '' }, paginaReservas: 1,
   newsletterDestinatarios: [], newsletterAdjuntos: [],
   reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
   reportesDesde: '', reportesHasta: ''
