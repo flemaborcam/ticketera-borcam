@@ -2919,6 +2919,7 @@ function renderReservaCalendario(t) {
     <div class="field"><label>Fecha</label><input type="date" id="reserva-fecha" value="${fechaDefault}"></div>
     <div class="field"><label>Horario</label><input type="text" id="reserva-horario" placeholder="Ej: Turno nocturno"></div>
     <div class="field"><label>Servicio</label><input type="text" id="reserva-servicio" placeholder="Ej: Barbacoas, Barbacoa 02"></div>
+    <div class="field"><label>Edificio</label><input type="text" id="reserva-edificio" placeholder="Ej: Edificio Estrellas de Malvín"></div>
     <div class="field"><label>Realizada por</label><input type="text" id="reserva-realizado-por" placeholder="Nombre de quien hace la reserva"></div>
     <div style="margin-top:10px;"><button type="button" class="btn btn-primary" onclick="guardarReservaCalendario('${t.id}')">📅 Agendar reserva</button></div>
   </div>`;
@@ -2938,10 +2939,11 @@ async function guardarReservaCalendario(ticketId) {
   const fecha = document.getElementById('reserva-fecha').value;
   const horario = document.getElementById('reserva-horario').value;
   const servicio = document.getElementById('reserva-servicio').value;
+  const edificio = document.getElementById('reserva-edificio').value;
   const realizadoPor = document.getElementById('reserva-realizado-por').value;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   try {
-    await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, horario, servicio, realizadoPor });
+    await api('POST', '/api/reservas-calendario', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId || null, titulo: t.asunto, fecha, horario, servicio, edificio, realizadoPor });
     showToast('Reserva agendada. Ya la podés ver en Reservas → Calendario de reservas.');
   } catch (e) { showToast(e.message); }
 }
@@ -2968,7 +2970,7 @@ function renderCalendarioReservasTab() {
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleReservaCalendario(${r.id})">
       <div class="avatar">📅</div>
       <div><div class="u-name">${escapeHtml(r.servicio || r.titulo)}${r.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : r.estado === 'cancelada' ? ' <span class="tag" style="margin-left:6px;background:var(--stamp-red-bg,#fde8e8);color:var(--stamp-red,#b42318);">Cancelada</span>' : ''}</div>
-      <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.cliente_id ? ' · ' + escapeHtml(nombreClientePorId(r.cliente_id)) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
+      <div class="u-sub">${new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${r.horario ? ' · ' + escapeHtml(r.horario) : ''}${r.edificio ? ' · ' + escapeHtml(r.edificio) : ''}${r.ticket_numero ? ` · Ticket ${escapeHtml(r.ticket_numero)}` : ''}</div></div>
     </button>`;
   const listaPendientes = pendientes.length ? pendientes.map(fila).join('') : `<div class="hint-text">No hay reservas agendadas.</div>`;
   return `
@@ -2997,8 +2999,8 @@ function renderDetalleReservaCalendarioModal() {
       ${filaDato('Fecha', new Date(r.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }))}
       ${filaDato('Horario', r.horario)}
       ${filaDato('Servicio', r.servicio)}
+      ${filaDato('Edificio', r.edificio)}
       ${filaDato('Realizada por', r.realizado_por)}
-      ${r.cliente_id ? filaDato('Cliente/edificio', nombreClientePorId(r.cliente_id)) : ''}
       ${filaDato('Estado', r.estado === 'realizada' ? 'Realizada' : r.estado === 'cancelada' ? 'Cancelada' : 'Pendiente')}
     </div>
     <div class="modal-actions" style="flex-wrap:wrap;">
@@ -3052,6 +3054,7 @@ function renderReprogramarReservaModal() {
     <div class="field"><label>Fecha</label><input type="date" id="reprog-reserva-fecha" value="${fechaDefault}"></div>
     <div class="field"><label>Horario</label><input type="text" id="reprog-reserva-horario" value="${escapeHtml(r.horario || '')}" placeholder="Ej: Turno nocturno"></div>
     <div class="field"><label>Servicio</label><input type="text" id="reprog-reserva-servicio" value="${escapeHtml(r.servicio || '')}" placeholder="Ej: Barbacoas, Barbacoa 02"></div>
+    <div class="field"><label>Edificio</label><input type="text" id="reprog-reserva-edificio" value="${escapeHtml(r.edificio || '')}" placeholder="Ej: Edificio Estrellas de Malvín"></div>
     <div class="field"><label>Realizada por</label><input type="text" id="reprog-reserva-realizado-por" value="${escapeHtml(r.realizado_por || '')}"></div>
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="confirmarReprogramarReserva()">Guardar</button></div>
   </div></div>`;
@@ -3063,10 +3066,11 @@ async function confirmarReprogramarReserva() {
   const fecha = document.getElementById('reprog-reserva-fecha').value;
   const horario = document.getElementById('reprog-reserva-horario').value;
   const servicio = document.getElementById('reprog-reserva-servicio').value;
+  const edificio = document.getElementById('reprog-reserva-edificio').value;
   const realizadoPor = document.getElementById('reprog-reserva-realizado-por').value;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   try {
-    await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, horario, servicio, realizadoPor });
+    await api('PUT', `/api/reservas-calendario/${id}`, { titulo: r.titulo, fecha, horario, servicio, edificio, realizadoPor });
     await cargarReservasCalendario();
     showToast('Reserva actualizada.');
     state.modal = 'detalle-reserva-calendario';
