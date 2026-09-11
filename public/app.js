@@ -18,7 +18,7 @@ let state = {
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
   replyTab: 'saliente', authError: '', regError: '', modal: null, toast: null,
   pendingAttachments: [], editandoPasos: [], editAutomatizacionId: null, editGrupoId: null, selectedTickets: new Set(), paginaTickets: 1,
-  filtersReservas: { estado: 'Abierto', prioridad: 'todas', search: '' }, paginaReservas: 1,
+  filtersReservas: { estado: 'Abierto', prioridad: 'todas', search: '' }, paginaReservas: 1, paginaReservasAgendadas: 1,
   newsletterDestinatarios: [], newsletterAdjuntos: [],
   reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
   reportesDesde: '', reportesHasta: ''
@@ -3183,6 +3183,7 @@ function renderTicketsReservaTab(soloAgendados) {
   const paginaKey = soloAgendados ? 'paginaReservasAgendadas' : 'paginaReservas';
   const irAPagina = soloAgendados ? 'irAPaginaReservasAgendadas' : 'irAPaginaReservas';
   const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
+  if (!state[paginaKey]) state[paginaKey] = 1; // por si la clave no estaba inicializada en state
   if (state[paginaKey] > totalPaginas) state[paginaKey] = totalPaginas;
   if (state[paginaKey] < 1) state[paginaKey] = 1;
   const desde = (state[paginaKey] - 1) * TICKETS_POR_PAGINA;
