@@ -3989,7 +3989,11 @@ function renderGrupos() {
   const list = grupo.length ? `<div class="stub-list">${grupo.map(renderGrupoRow).join('')}</div>` : `<div class="empty-state"><div class="big">${mensajeVacio}</div></div>`;
   const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
-  return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div><button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button></div>
+  return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" onclick="openImportarClientesModal()">📥 Importar desde Excel</button>
+        <button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button>
+      </div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
     ${avisoApartamentosSueltos}${list}`;
 }
@@ -5303,6 +5307,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-correo') return renderNuevoCorreoModal();
   if (state.modal === 'nueva-respuesta' || state.modal === 'editar-respuesta') return renderRespuestaModal();
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
+  if (state.modal === 'importar-clientes') return renderImportarClientesModal();
   if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
   if (state.modal === 'plantilla-mantenimiento') return renderPlantillaMantenimientoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
@@ -5412,6 +5417,69 @@ function actualizarAdministradoPorSegunRol() {
   const administradoSelect = document.getElementById('grupo-administrado-por-select');
   if (!rolSelect || !administradoSelect) return;
   administradoSelect.innerHTML = opcionesAdministradoPorHtml(rolSelect.value, state.editGrupoId, null);
+}
+// Carga por lote de clientes desde la planilla Excel: se lee el archivo en el navegador (a base64,
+// igual que las otras subidas de archivos del sistema) y el servidor hace el parseo e inserta uno
+// por uno, en el orden de las filas — así un edificio puede quedar "Administrado por" una
+// administración que esté en una fila anterior de la misma planilla.
+function openImportarClientesModal() {
+  state.modal = 'importar-clientes';
+  state.importarClientesResultado = null;
+  state.importarClientesCargando = false;
+  render();
+}
+function onImportarClientesArchivoChange(input) {
+  state.importarClientesArchivoNombre = input.files && input.files[0] ? input.files[0].name : '';
+}
+async function submitImportarClientes(ev) {
+  ev.preventDefault();
+  const input = document.getElementById('importar-clientes-archivo');
+  const file = input && input.files && input.files[0];
+  if (!file) { showToast('Elegí un archivo primero.'); return false; }
+  state.importarClientesCargando = true;
+  render();
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const resultado = await api('POST', '/api/clientes/importar', { archivo: dataUrl });
+    state.importarClientesResultado = resultado;
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+  } catch (e) { showToast(e.message); }
+  state.importarClientesCargando = false;
+  render();
+  return false;
+}
+function renderImportarClientesModal() {
+  const r = state.importarClientesResultado;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📥 Importar clientes desde Excel</h2>
+    <p class="sub">Subí la planilla ya completa (misma que la plantilla que se les da). Un cliente con el mismo nombre que uno ya cargado se omite, no se duplica.</p>
+    ${!r ? `
+    <form onsubmit="return submitImportarClientes(event)">
+      <div class="field"><label>Archivo (.xlsx)</label>
+        <input type="file" id="importar-clientes-archivo" accept=".xlsx" onchange="onImportarClientesArchivoChange(this)" required></div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+        <button type="submit" class="btn btn-primary" ${state.importarClientesCargando ? 'disabled' : ''}>${state.importarClientesCargando ? 'Importando…' : 'Importar'}</button></div>
+    </form>` : `
+    <div style="margin-bottom:14px;">
+      <div style="font-weight:600;color:var(--stamp-green);margin-bottom:6px;">✅ ${r.creados.length} cliente${r.creados.length === 1 ? '' : 's'} creado${r.creados.length === 1 ? '' : 's'}</div>
+      ${r.creados.length ? `<div class="hint-text">${r.creados.map(escapeHtml).join(', ')}</div>` : ''}
+    </div>
+    ${r.omitidos.length ? `<div style="margin-bottom:14px;">
+      <div style="font-weight:600;margin-bottom:6px;">⏭️ ${r.omitidos.length} omitido${r.omitidos.length === 1 ? '' : 's'}</div>
+      <div class="hint-text">${r.omitidos.map(o => `${escapeHtml(o.nombre)} — ${escapeHtml(o.motivo)}`).join('<br>')}</div>
+    </div>` : ''}
+    ${r.administradorNoEncontrado.length ? `<div style="margin-bottom:14px;">
+      <div style="font-weight:600;color:#b8860b;margin-bottom:6px;">⚠️ ${r.administradorNoEncontrado.length} sin poder vincular "Administrado por"</div>
+      <div class="hint-text">${r.administradorNoEncontrado.map(a => `${escapeHtml(a.nombre)}: no se encontró "${escapeHtml(a.buscado)}" — se creó sin ese vínculo, se puede asignar a mano editando el cliente.`).join('<br>')}</div>
+    </div>` : ''}
+    <div class="modal-actions"><button type="button" class="btn btn-primary" onclick="closeModal(); render();">Listo</button></div>
+    `}
+  </div></div>`;
 }
 function renderGrupoModal() {
   const editing = state.modal === 'editar-grupo';
