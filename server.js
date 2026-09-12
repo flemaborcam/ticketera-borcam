@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const PDFDocument = require('pdfkit');
+const XLSX = require('xlsx');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const ENC_KEY = crypto.createHash('sha256').update(process.env.COOKIE_SECRET || 'cambia-este-secreto').digest();
@@ -1619,6 +1620,74 @@ app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   await pool.query('delete from contratos_mantenimiento where cliente_id=$1', [req.params.id]);
   await pool.query('delete from clientes where id=$1', [req.params.id]);
   ok(res, { ok: true });
+});
+// Convierte lo que venga en la celda de teléfono (a veces Excel lo guarda como número) a texto,
+// sin el ".0" que agrega si la columna quedó con formato numérico.
+function celdaTelefono(v) {
+  if (v === undefined || v === null) return '';
+  const s = String(v).trim();
+  return s.endsWith('.0') ? s.slice(0, -2) : s;
+}
+// Carga por lote desde la planilla de Excel (una fila por cliente, mismas columnas que la plantilla
+// que se les da a los técnicos). Se procesa en orden de arriba hacia abajo, así un edificio puede
+// quedar "Administrado por" una administración cargada en una fila anterior de la misma planilla.
+// La fila de ejemplo de la plantilla se salta sola, y un cliente ya existente (mismo nombre) no se
+// duplica — se informa como omitido para que se revise a mano si hace falta.
+app.post('/api/clientes/importar', requireStaff, async (req, res) => {
+  const { archivo } = req.body || {};
+  if (!archivo) return bad(res, 'Falta el archivo.');
+  let filas;
+  try {
+    const base64 = (archivo || '').split(',')[1] || archivo;
+    const wb = XLSX.read(Buffer.from(base64, 'base64'), { type: 'buffer' });
+    const hoja = wb.Sheets['Clientes'] || wb.Sheets[wb.SheetNames[0]];
+    filas = XLSX.utils.sheet_to_json(hoja, { header: 1, defval: '' });
+  } catch (e) {
+    return bad(res, 'No se pudo leer el archivo. ¿Es un Excel (.xlsx) válido?');
+  }
+  const ROLES_VALIDOS = ['Administración', 'Edificio', 'Apartamento'];
+  const existentes = (await pool.query('select id, nombre from clientes')).rows;
+  const idPorNombre = {};
+  for (const c of existentes) idPorNombre[c.nombre.trim().toLowerCase()] = c.id;
+
+  const creados = [];
+  const omitidos = [];
+  const administradorNoEncontrado = [];
+
+  // Arranca en la fila 2 (después del encabezado); se salta la fila de ejemplo de la plantilla.
+  for (let i = 1; i < filas.length; i++) {
+    const fila = filas[i];
+    const nombre = String(fila[0] || '').trim();
+    const correo = String(fila[4] || '').trim();
+    if (!nombre) continue;
+    if (nombre === 'Edificio Riviera' && correo === 'administracion@ejemplo.com') continue; // fila de ejemplo
+    if (idPorNombre[nombre.toLowerCase()]) { omitidos.push({ nombre, motivo: 'Ya existe un cliente con ese nombre' }); continue; }
+
+    const direccion = String(fila[1] || '').trim();
+    const telefono = celdaTelefono(fila[2]);
+    const contactoNombre = String(fila[3] || '').trim();
+    const correoInformes = String(fila[5] || '').trim();
+    const rolTexto = String(fila[6] || '').trim();
+    const administradoPorNombre = String(fila[7] || '').trim();
+    const mantenimientoTexto = String(fila[8] || '').trim().toLowerCase();
+
+    const rolCliente = ROLES_VALIDOS.includes(rolTexto) ? rolTexto : '';
+    const esMantenimiento = mantenimientoTexto.startsWith('s');
+    let administradoPorId = null;
+    if (administradoPorNombre) {
+      administradoPorId = idPorNombre[administradoPorNombre.toLowerCase()] || null;
+      if (!administradoPorId) administradorNoEncontrado.push({ nombre, buscado: administradoPorNombre });
+    }
+
+    const r = await pool.query(
+      `insert into clientes (nombre, direccion, telefono, correo, correo_informes, rol, contacto_nombre, rol_cliente, administrado_por_id, es_mantenimiento)
+       values ($1,$2,$3,$4,$5,'',$6,$7,$8,$9) returning id`,
+      [nombre, direccion, telefono, correo, correoInformes, contactoNombre, rolCliente, administradoPorId, esMantenimiento]
+    );
+    idPorNombre[nombre.toLowerCase()] = r.rows[0].id;
+    creados.push(nombre);
+  }
+  ok(res, { creados, omitidos, administradorNoEncontrado });
 });
 /* ---------------- Contrato de mantenimiento (un solo contrato por cliente, con varios sistemas) ----------------
    Un cliente marcado "es_mantenimiento" puede tener un contrato con la lista de sistemas que cubre
