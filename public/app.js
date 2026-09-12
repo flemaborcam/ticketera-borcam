@@ -4135,7 +4135,7 @@ function renderContratoMantenimientoModal() {
     <form onsubmit="return submitContratoMantenimiento(event)">
       <div class="field"><label>Sistemas que cubre</label>
         ${SISTEMAS_MANTENIMIENTO_BASE.map((s, i) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <input type="checkbox" id="contrato-sistema-${i}" name="sistemas" value="${s}" ${sistemasActuales.includes(s) ? 'checked' : ''}>
+          <input type="checkbox" id="contrato-sistema-${i}" name="sistemas" value="${s}" style="width:16px !important;min-width:16px !important;flex:0 0 auto !important;padding:0 !important;" ${sistemasActuales.includes(s) ? 'checked' : ''}>
           <label for="contrato-sistema-${i}" style="display:inline !important;text-transform:none !important;font-weight:400 !important;font-size:13.5px !important;color:inherit !important;letter-spacing:normal !important;text-align:left !important;margin:0 !important;">${s}</label>
         </div>`).join('')}
         <input name="sistemaOtro" placeholder="Otro sistema (opcional)" value="${escapeHtml(sistemasExtra.join(', '))}">
