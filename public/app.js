@@ -203,7 +203,7 @@ async function loadStaffData() {
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
-  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal }));
+  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
@@ -561,11 +561,11 @@ function openEditarGrupoModal(id) { state.modal = 'editar-grupo'; state.editGrup
 async function submitGrupo(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
-  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null };
+  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null, esMantenimiento: fd.get('esMantenimiento') === 'on' };
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
     state.modal = null;
     render();
   } catch (e) { showToast(e.message); }
@@ -1044,13 +1044,16 @@ function renderServicioTecnicoTab() {
     { v: 'turnos', label: 'Próximos turnos' },
     { v: 'realizados', label: 'Servicios Realizados' },
     { v: 'reporte', label: '📊 Reporte mensual' },
-    { v: 'catalogo', label: '💲 Costos precargados' }
+    { v: 'catalogo', label: '💲 Costos precargados' },
+    { v: 'plantillas', label: '🔧 Plantillas de mantenimiento' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
   let contenido;
   if (tab === 'catalogo') {
     contenido = renderCatalogoCostosTab();
   } else if (tab === 'reporte') {
     contenido = renderReporteMensualDashboardTab();
+  } else if (tab === 'plantillas') {
+    contenido = renderPlantillasMantenimientoTab();
   } else {
     const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
@@ -1059,7 +1062,7 @@ function renderServicioTecnicoTab() {
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div style="display:flex;gap:8px;">
-        ${tab !== 'catalogo' && tab !== 'reporte' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+        ${tab !== 'catalogo' && tab !== 'reporte' && tab !== 'plantillas' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
     </div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
@@ -1069,6 +1072,118 @@ function cambiarServicioTecnicoTab(t) {
   state.servicioTecnicoTab = t;
   render();
   if (t === 'reporte') cargarReporteMensualDashboard();
+  if (t === 'plantillas') cargarPlantillasMantenimiento();
+}
+// --- Plantillas de mantenimiento: una por sistema, con secciones e ítems editables. Se copian tal
+// cual al generar cada turno de mantenimiento, así una edición posterior no afecta visitas ya hechas.
+async function cargarPlantillasMantenimiento() {
+  if (cache.plantillasMantenimiento) { refrescarVistaServicioTecnico(); return; }
+  try { cache.plantillasMantenimiento = await api('GET', '/api/plantillas-mantenimiento'); }
+  catch (e) { cache.plantillasMantenimiento = []; }
+  refrescarVistaServicioTecnico();
+}
+function renderPlantillasMantenimientoTab() {
+  const plantillas = cache.plantillasMantenimiento;
+  if (!plantillas) return '<div class="empty-state">Cargando…</div>';
+  return `<div class="page-head" style="margin-top:0;"><div></div><button type="button" class="btn btn-ghost" onclick="abrirNuevaPlantillaMantenimiento()">+ Nueva plantilla</button></div>
+    <div class="stub-list">${plantillas.map(p => `
+    <div class="user-row" style="border:1px solid var(--line);">
+      <div class="avatar" style="cursor:pointer;" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">🔧</div>
+      <div style="flex:1;cursor:pointer;" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')"><div class="u-name">${escapeHtml(p.sistema)}</div>
+        <div class="u-sub">${(p.secciones || []).length} sección${(p.secciones || []).length === 1 ? '' : 'es'} · ${(p.secciones || []).reduce((n, s) => n + (s.items || []).length, 0)} ítems</div></div>
+      <button type="button" class="btn btn-ghost" onclick="event.stopPropagation(); duplicarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">Duplicar</button>
+      <button type="button" class="btn btn-ghost" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">Editar</button>
+    </div>`).join('')}</div>`;
+}
+function abrirEditarPlantillaMantenimiento(sistema) {
+  state.editandoPlantillaSistema = sistema;
+  state.plantillaEditorSecciones = null;
+  state.modal = 'plantilla-mantenimiento';
+  render();
+}
+// Para un sistema nuevo que no está en la lista (por ejemplo, uno específico de un solo cliente,
+// como el sensor de cable perimetral de Canarias): se pide el nombre y arranca con una sección vacía
+// para completar a mano.
+function abrirNuevaPlantillaMantenimiento() {
+  const nombre = (prompt('Nombre del sistema (ej: Intrepid MicroPoint II)') || '').trim();
+  if (!nombre) return;
+  if ((cache.plantillasMantenimiento || []).some(p => p.sistema === nombre)) { showToast('Ya existe una plantilla con ese nombre.'); return; }
+  state.editandoPlantillaSistema = nombre;
+  state.plantillaEditorSecciones = [{ nombre: '', items: [''] }];
+  state.modal = 'plantilla-mantenimiento';
+  render();
+}
+function agregarSeccionPlantillaEditor() {
+  state.plantillaEditorSecciones.push({ nombre: '', items: [''] });
+  render();
+}
+function quitarSeccionPlantillaEditor(idx) {
+  state.plantillaEditorSecciones.splice(idx, 1);
+  render();
+}
+// El textarea de ítems guarda un texto por línea; se separa recién al guardar (así no se pierden
+// líneas vacías mientras se está escribiendo o pegando un bloque grande).
+function actualizarItemsPlantillaEditorDesdeTextarea(secIdx, texto) {
+  state.plantillaEditorSecciones[secIdx].itemsTexto = texto;
+}
+function renderPlantillaMantenimientoModal() {
+  const sistema = state.editandoPlantillaSistema;
+  if (!state.plantillaEditorSecciones) {
+    const p = (cache.plantillasMantenimiento || []).find(x => x.sistema === sistema);
+    state.plantillaEditorSecciones = JSON.parse(JSON.stringify((p && p.secciones) || []));
+  }
+  const secciones = state.plantillaEditorSecciones;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) cerrarPlantillaMantenimientoModal()"><div class="modal" style="max-width:620px;">
+    <h2>🔧 Plantilla: ${escapeHtml(sistema)}</h2>
+    <p class="sub">Estos son los puntos que se copian a cada visita de mantenimiento que use este sistema. En "Ítems" va uno por línea — podés pegar una lista entera de una sola vez.</p>
+    <form onsubmit="return guardarPlantillaMantenimiento(event)">
+      <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:14px;">
+        ${secciones.map((sec, secIdx) => `
+          <div style="border:1px solid var(--line);border-radius:10px;padding:10px;">
+            <div class="field-row" style="align-items:center;">
+              <input type="text" value="${escapeHtml(sec.nombre)}" placeholder="Nombre de la sección" oninput="state.plantillaEditorSecciones[${secIdx}].nombre=this.value" style="flex:1;">
+              <button type="button" class="btn btn-ghost" onclick="quitarSeccionPlantillaEditor(${secIdx})">Quitar sección</button>
+            </div>
+            <textarea rows="${Math.min(Math.max((sec.items || []).length, 3), 14)}" placeholder="Un ítem por línea" style="width:100%;margin-top:8px;font-family:inherit;font-size:13px;" oninput="actualizarItemsPlantillaEditorDesdeTextarea(${secIdx}, this.value)">${escapeHtml((sec.itemsTexto !== undefined ? sec.itemsTexto : (sec.items || []).join('\n')))}</textarea>
+          </div>`).join('')}
+      </div>
+      <button type="button" class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="agregarSeccionPlantillaEditor()">+ Agregar sección</button>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="cerrarPlantillaMantenimientoModal()">Cancelar</button><button type="submit" class="btn btn-primary">Guardar plantilla</button></div>
+    </form></div></div>`;
+}
+function cerrarPlantillaMantenimientoModal() {
+  state.modal = null;
+  state.plantillaEditorSecciones = null;
+  render();
+}
+async function guardarPlantillaMantenimiento(ev) {
+  ev.preventDefault();
+  const secciones = state.plantillaEditorSecciones.map(sec => ({
+    nombre: sec.nombre,
+    items: (sec.itemsTexto !== undefined ? sec.itemsTexto.split('\n') : (sec.items || [])).map(x => x.trim()).filter(Boolean)
+  }));
+  try {
+    const actualizado = await api('PUT', `/api/plantillas-mantenimiento/${encodeURIComponent(state.editandoPlantillaSistema)}`, { secciones });
+    const idx = (cache.plantillasMantenimiento || []).findIndex(x => x.sistema === actualizado.sistema);
+    if (idx >= 0) cache.plantillasMantenimiento[idx] = actualizado; else cache.plantillasMantenimiento.push(actualizado);
+    cerrarPlantillaMantenimientoModal();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+// Duplica una plantilla entera con otro nombre (por ejemplo, para armar la Torre D copiando la C) —
+// se puede ajustar lo que cambie desde el editor una vez creada.
+async function duplicarPlantillaMantenimiento(sistemaOrigen) {
+  const nombre = (prompt(`Nombre de la nueva plantilla (copia de "${sistemaOrigen}")`) || '').trim();
+  if (!nombre) return;
+  if ((cache.plantillasMantenimiento || []).some(p => p.sistema === nombre)) { showToast('Ya existe una plantilla con ese nombre.'); return; }
+  const origen = (cache.plantillasMantenimiento || []).find(p => p.sistema === sistemaOrigen);
+  if (!origen) return;
+  try {
+    const actualizado = await api('PUT', `/api/plantillas-mantenimiento/${encodeURIComponent(nombre)}`, { secciones: origen.secciones });
+    cache.plantillasMantenimiento.push(actualizado);
+    showToast(`Plantilla "${nombre}" creada como copia de "${sistemaOrigen}".`);
+    render();
+  } catch (e) { showToast(e.message); }
 }
 // --- Reporte mensual de servicios técnicos realizados (control interno, no es factura DGI) ---
 // Se puede ver como dashboard acá en la sección (tab "Reporte mensual") o bajar en PDF desde ese
@@ -1296,7 +1411,7 @@ function renderServicioTecnicoLista(filtro, mensajeVacio) {
   const html = turnos.length ? turnos.map(s => `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
       <div class="avatar">🛠️</div>
-      <div><div class="u-name">${escapeHtml(s.titulo)}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
+      <div><div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
       <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
     </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
@@ -1510,6 +1625,118 @@ async function toggleAplicaIvaServicio(id, aplicaIva) {
     render();
   } catch (e) { showToast(e.message); }
 }
+const ESTADOS_CHECKLIST_MANTENIMIENTO = [
+  { v: 'satisfactorio', label: '✅ Satisfactorio' },
+  { v: 'atencion', label: '⚠️ Necesita atención' },
+  { v: 'inmediata', label: '❌ Atención inmediata' },
+  { v: 'no_aplica', label: '— No aplica' }
+];
+async function actualizarItemChecklistServicio(id, sistema, itemId, estado) {
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/checklist-item`, { sistema, itemId, estado });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    render();
+  } catch (e) { showToast(e.message); }
+}
+async function guardarMotivoItemChecklistServicio(id, sistema, itemId, estadoActual, motivo) {
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/checklist-item`, { sistema, itemId, estado: estadoActual, motivo });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+  } catch (e) { showToast(e.message); }
+}
+// Checklist detallado (secciones + ítems) para turnos generados desde un contrato de mantenimiento,
+// copiado de la plantilla del sistema en el momento en que se generó la visita. Cada ítem se responde
+// con Satisfactorio / Necesita atención / Atención inmediata / No aplica (con motivo si aplica).
+function renderChecklistSistemasServicio(s) {
+  const checklist = s.checklist_sistemas || {};
+  const sistemas = Object.keys(checklist);
+  if (!sistemas.length) return '';
+  return sistemas.map(sistema => {
+    const secciones = (checklist[sistema] && checklist[sistema].secciones) || [];
+    if (!secciones.length) return '';
+    return `<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+      <div style="font-weight:600;font-size:14px;margin-bottom:10px;">🔧 ${escapeHtml(sistema)}</div>
+      ${secciones.map(sec => `
+        <div style="margin-bottom:12px;">
+          <div style="font-weight:600;font-size:12.5px;color:var(--ink-soft);text-transform:uppercase;margin-bottom:6px;">${escapeHtml(sec.nombre)}</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            ${(sec.items || []).map(item => `
+              <div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;">
+                <div style="font-size:13.5px;margin-bottom:6px;">${escapeHtml(item.texto)}</div>
+                <select onchange="actualizarItemChecklistServicio('${s.id}', '${escapeHtml(sistema)}', '${item.id}', this.value)" style="font-size:12.5px;">
+                  <option value="">Sin responder</option>
+                  ${ESTADOS_CHECKLIST_MANTENIMIENTO.map(e => `<option value="${e.v}" ${item.estado === e.v ? 'selected' : ''}>${e.label}</option>`).join('')}
+                </select>
+                ${['no_aplica', 'atencion', 'inmediata'].includes(item.estado) ? `<input type="text" placeholder="${item.estado === 'no_aplica' ? 'Motivo (opcional)' : 'Detalle qué se necesita (ej: cambio de cámara, cambio de balun, revisar cableado)'}" value="${escapeHtml(item.motivo || '')}" style="margin-top:6px;width:100%;" onblur="guardarMotivoItemChecklistServicio('${s.id}', '${escapeHtml(sistema)}', '${item.id}', '${item.estado}', this.value)">` : ''}
+              </div>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>`;
+  }).join('');
+}
+// Notas libres de la visita de mantenimiento (observaciones generales, con fecha) — quedan guardadas
+// solo en este turno/comprobante.
+async function agregarNotaMantenimientoServicio(id) {
+  const input = document.getElementById('nueva-nota-mantenimiento');
+  const texto = (input.value || '').trim();
+  if (!texto) return;
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/nota-mantenimiento`, { texto });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    render();
+  } catch (e) { showToast(e.message); }
+}
+async function eliminarNotaMantenimientoServicio(id, idx) {
+  try {
+    const actualizado = await api('DELETE', `/api/servicios-tecnicos/${id}/nota-mantenimiento/${idx}`);
+    const i = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (i >= 0) cache.serviciosTecnicos[i] = actualizado;
+    render();
+  } catch (e) { showToast(e.message); }
+}
+function renderNotasMantenimientoServicio(s) {
+  if (!s.checklist_sistemas) return '';
+  const notas = s.notas_mantenimiento || [];
+  return `<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+    <div style="font-weight:600;font-size:14px;margin-bottom:8px;">📝 Notas de la visita</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
+      ${notas.length ? notas.map((n, idx) => `
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:8px;padding:6px 10px;">
+          <div style="font-size:13px;"><span style="color:var(--ink-soft);">${fmtDateTime(n.fecha)}</span> — ${escapeHtml(n.texto)}</div>
+          <button type="button" class="btn btn-ghost" style="padding:4px 8px;font-size:12px;" onclick="eliminarNotaMantenimientoServicio('${s.id}', ${idx})">✕</button>
+        </div>`).join('') : `<div class="hint-text">Sin notas todavía.</div>`}
+    </div>
+    <div style="display:flex;gap:6px;">
+      <input type="text" id="nueva-nota-mantenimiento" placeholder="Agregar una observación de la visita" style="flex:1;">
+      <button type="button" class="btn btn-ghost" onclick="agregarNotaMantenimientoServicio('${s.id}')">Agregar</button>
+    </div>
+  </div>`;
+}
+// Envío de la orden completa (PDF con checklist + notas) al correo del cliente, por una casilla
+// aparte de la de tickets. Solo tiene sentido una vez que el turno ya está marcado como realizado
+// (con o sin firma) — antes no hay nada terminado que mandar.
+async function enviarOrdenMantenimientoServicio(id) {
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/enviar-orden-mantenimiento`);
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    showToast('Orden de mantenimiento enviada al cliente.');
+    render();
+  } catch (e) { showToast(e.message); }
+}
+function renderEnvioOrdenMantenimiento(s) {
+  if (s.estado !== 'realizado') return `<div class="hint-text" style="margin-bottom:14px;">La orden se puede mandar por correo una vez que el turno quede marcado como realizado.</div>`;
+  if (s.orden_mantenimiento_enviada) {
+    return `<div class="hint-text" style="margin-bottom:14px;">✅ Orden enviada al cliente el ${fmtDateTime(s.orden_mantenimiento_enviada_fecha)}. <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:12px;" onclick="enviarOrdenMantenimientoServicio('${s.id}')">Reenviar</button></div>`;
+  }
+  return `<div style="margin-bottom:14px;">
+    <button type="button" class="btn btn-primary" onclick="enviarOrdenMantenimientoServicio('${s.id}')">📧 Enviar orden por correo al cliente</button>
+    <div class="hint-text" style="margin-top:6px;">Si no la mandás a mano, se manda sola a las 2 horas.</div>
+  </div>`;
+}
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
   if (!s) return '';
@@ -1521,6 +1748,7 @@ function renderDetalleServicioTecnicoModal() {
     ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
     ['Duración', s.todo_el_dia ? '—' : `${s.duracion_minutos || 60} min`],
     ['Cargado por', s.creado_por ? escapeHtml(s.creado_por) : '—'],
+    ...(s.tecnico_realizo_nombre ? [['Técnico que la realizó', escapeHtml(s.tecnico_realizo_nombre)]] : []),
     ['Estado', s.estado === 'realizado' ? 'Realizado' : s.estado === 'en_curso' ? '🚗 En curso' : 'Pendiente']
   ];
   const puedeMarcar = s.estado !== 'realizado';
@@ -1537,6 +1765,9 @@ function renderDetalleServicioTecnicoModal() {
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
+    ${s.checklist_sistemas ? renderChecklistSistemasServicio(s) : ''}
+    ${s.checklist_sistemas ? renderNotasMantenimientoServicio(s) : ''}
+    ${s.checklist_sistemas ? renderEnvioOrdenMantenimiento(s) : ''}
 
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
@@ -2138,6 +2369,9 @@ function renderModalFirmaServicio() {
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>✍️ Conformidad del cliente</h2>
     <div class="hint-text" style="margin-bottom:10px;">Se le pide al cliente que firme para dejar constancia de que el service se realizó.</div>
+    <div class="field"><label>Técnico que realizó la visita</label>
+      <select id="firma-tecnico">${(cache.usuarios || []).map(u => `<option value="${escapeHtml(u.nombre + ' ' + u.apellido)}" ${currentUser() && currentUser().id === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('')}</select>
+    </div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;color:var(--ink-soft);">
       <input type="checkbox" id="firma-sin-firma-check" ${sinFirma ? 'checked' : ''} onchange="toggleFirmaSinFirma(this.checked)"> No hay nadie presente para firmar
     </label>
@@ -2200,10 +2434,11 @@ async function confirmarMarcarServicioRealizado() {
   const servicioId = state.firmaServicioId;
   const ticketId = state.firmaServicioTicketId;
   try {
+    const tecnicoNombre = (document.getElementById('firma-tecnico') || {}).value || '';
     let payload;
     if (state.firmaSinFirma) {
       const motivo = document.getElementById('firma-motivo').value;
-      payload = { conFirma: false, motivoSinFirma: motivo };
+      payload = { conFirma: false, motivoSinFirma: motivo, tecnicoNombre };
     } else {
       const nombre = document.getElementById('firma-nombre').value.trim();
       const apellido = document.getElementById('firma-apellido').value.trim();
@@ -2211,7 +2446,7 @@ async function confirmarMarcarServicioRealizado() {
       if (!nombre || !apellido || !cedula) { showToast('Completá nombre, apellido y cédula.'); return; }
       if (!firmaTieneTrazo) { showToast('Falta la firma — dibujala en el recuadro.'); return; }
       const canvas = document.getElementById('firma-canvas');
-      payload = { conFirma: true, nombre, apellido, cedula, firmaDataUrl: canvas.toDataURL('image/png') };
+      payload = { conFirma: true, nombre, apellido, cedula, firmaDataUrl: canvas.toDataURL('image/png'), tecnicoNombre };
     }
     const actualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/marcar-realizado`, payload);
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(servicioId));
@@ -2345,7 +2580,11 @@ async function submitConfiguracion(ev) {
     respaldoCorreoDestino: fd.get('respaldoCorreoDestino').trim(),
     respaldoFrecuenciaDias: Number(fd.get('respaldoFrecuenciaDias')) || 7,
     recordatorioSinAsignarActivo: fd.get('recordatorioSinAsignarActivo') === 'on',
-    recordatorioSinAsignarHora: fd.get('recordatorioSinAsignarHora') || '18:00'
+    recordatorioSinAsignarHora: fd.get('recordatorioSinAsignarHora') || '18:00',
+    correoMantenimientoActivo: fd.get('correoMantenimientoActivo') === 'on',
+    casillaNombreMant: fd.get('casillaNombreMant').trim(), smtpHostMant: fd.get('smtpHostMant').trim(),
+    smtpPortMant: Number(fd.get('smtpPortMant')) || 465, smtpUsuarioMant: fd.get('smtpUsuarioMant').trim(),
+    smtpPasswordMant: fd.get('smtpPasswordMant').trim()
   };
   await api('PUT', '/api/configuracion', payload);
   cache.configuracion = await api('GET', '/api/configuracion');
@@ -2362,6 +2601,14 @@ async function probarConexionCorreo() {
     if (el) el.innerHTML = `
       <div class="hint-text">IMAP (recibir): ${r.imap.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.imap.error || '')}`}</div>
       <div class="hint-text">SMTP (enviar): ${r.smtp.ok ? '<strong style="color:var(--stamp-green);">funciona ✓</strong>' : `<strong style="color:var(--stamp-red);">falló</strong> — ${escapeHtml(r.smtp.error || '')}`}</div>`;
+  } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
+}
+async function probarConexionCorreoMantenimiento() {
+  const el = document.getElementById('resultado-prueba-mant');
+  if (el) el.innerHTML = '<span class="hint-text">Probando conexión…</span>';
+  try {
+    await api('POST', '/api/configuracion/probar-mantenimiento');
+    if (el) el.innerHTML = `<span style="color:var(--stamp-green);font-weight:600;">Funciona ✓</span>`;
   } catch (e) { if (el) el.innerHTML = `<span class="error-text">${escapeHtml(e.message)}</span>`; }
 }
 
@@ -3539,6 +3786,7 @@ async function renderGrupoDetailAsync(id) {
   // que ellas mismas administran.
   if (g.rolCliente === 'Administración') { cache.proveedores = await api('GET', '/api/proveedores'); }
   const serviciosTecnicosCliente = await api('GET', `/api/clientes/${id}/servicios-tecnicos`).catch(() => []);
+  const contratoMantenimiento = g.esMantenimiento ? await api('GET', `/api/clientes/${id}/contrato-mantenimiento`).catch(() => null) : null;
   return `${ticketStyleTag()}
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
@@ -3554,6 +3802,7 @@ async function renderGrupoDetailAsync(id) {
     </div>
     ${renderDependientesGrupo(g)}
     ${g.rolCliente === 'Administración' ? renderProveedoresGrupo(g) : ''}
+    ${g.esMantenimiento ? renderContratoMantenimientoGrupo(g, contratoMantenimiento) : ''}
     ${renderHistorialServiciosTecnicosCliente(serviciosTecnicosCliente)}
     <div class="page-head"><div><h1 style="font-size:18px;">Tickets de este cliente</h1><div class="sub">${tickets.length} en total</div></div></div>
     ${list}`;
@@ -3599,6 +3848,84 @@ function renderProveedoresGrupo(g) {
       ${edificioIds.length ? `<button type="button" class="btn btn-ghost" onclick="openNuevoProveedorModal('${g.id}')">+ Nuevo proveedor</button>` : ''}</div>
     ${!edificioIds.length ? `<div class="hint-text" style="margin-bottom:14px;">Esta administración todavía no tiene edificios a cargo; asignale al menos uno antes de cargar proveedores.</div>` : ''}
     ${proveedores.length ? rows : (edificioIds.length ? `<div class="hint-text" style="margin-bottom:14px;">Todavía no hay proveedores cargados.</div>` : '')}`;
+}
+/* ---------------- Contrato de mantenimiento (clientes marcados "Cliente de mantenimiento") ----------------
+   Un solo contrato por cliente, que cubre uno o varios sistemas (CCTV, Portería, Redes, Control de
+   acceso, Sistema de Incendio, u otro que se agregue a mano). El cobro es mensual y aparte — acá solo
+   se agenda: cuando falten 7 días para la "próxima visita", el sistema genera solo el turno de
+   Servicio Técnico correspondiente (sin ticket ni costos) y calcula la siguiente fecha. */
+const SISTEMAS_MANTENIMIENTO_BASE = ['CCTV', 'Portería', 'Redes', 'Control de acceso', 'Sistema de Incendio'];
+const FRECUENCIAS_MANTENIMIENTO = [{ v: 1, label: 'Mensual' }, { v: 2, label: 'Bimestral' }, { v: 3, label: 'Trimestral' }, { v: 4, label: 'Cuatrimestral' }];
+function frecuenciaMantenimientoLabel(meses) {
+  const f = FRECUENCIAS_MANTENIMIENTO.find(x => x.v === Number(meses));
+  return f ? f.label : `Cada ${meses} meses`;
+}
+function renderContratoMantenimientoGrupo(g, contrato) {
+  return `<div class="page-head"><div><h1 style="font-size:18px;">🔧 Contrato de mantenimiento</h1><div class="sub">${contrato ? (contrato.activo ? 'Activo' : 'Pausado') : 'Todavía no configurado'}</div></div>
+      <button type="button" class="btn btn-ghost" onclick="openContratoMantenimientoModal('${g.id}')">${contrato ? 'Editar contrato' : '+ Configurar contrato'}</button></div>
+    ${contrato ? `
+    <div class="user-row" style="border:1px solid var(--line);align-items:flex-start;">
+      <div class="avatar">🔧</div>
+      <div style="flex:1;">
+        <div class="u-name">${(contrato.sistemas || []).map(s => `<span class="tag" style="margin-right:6px;">${escapeHtml(s)}</span>`).join('')}</div>
+        <div class="u-sub" style="margin-top:6px;">Frecuencia: ${frecuenciaMantenimientoLabel(contrato.frecuencia_meses)} · Próxima visita: ${new Date(contrato.proxima_fecha + 'T00:00:00-03:00').toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        ${contrato.activo
+          ? `<button type="button" class="btn btn-ghost" onclick="pausarContratoMantenimiento('${contrato.id}')">Pausar</button>`
+          : `<button type="button" class="btn btn-ghost" onclick="reactivarContratoMantenimiento('${contrato.id}')">Reactivar</button>`}
+        <button type="button" class="btn btn-danger" onclick="eliminarContratoMantenimiento('${contrato.id}')">Eliminar</button>
+      </div>
+    </div>` : `<div class="hint-text" style="margin-bottom:14px;">Este cliente está marcado como "Cliente de mantenimiento" pero todavía no tiene un contrato configurado.</div>`}`;
+}
+async function openContratoMantenimientoModal(clienteId) {
+  state.contratoMantenimientoClienteId = clienteId;
+  cache.contratoMantenimientoEdit = await api('GET', `/api/clientes/${clienteId}/contrato-mantenimiento`).catch(() => null);
+  state.modal = 'contrato-mantenimiento';
+  render();
+}
+async function submitContratoMantenimiento(ev) {
+  ev.preventDefault();
+  const fd = new FormData(ev.target);
+  const sistemas = fd.getAll('sistemas').map(s => (s || '').trim()).filter(Boolean);
+  const otro = (fd.get('sistemaOtro') || '').trim();
+  if (otro) sistemas.push(...otro.split(',').map(s => s.trim()).filter(Boolean));
+  if (!sistemas.length) { showToast('Elegí al menos un sistema.'); return false; }
+  const payload = { sistemas, frecuenciaMeses: Number(fd.get('frecuenciaMeses')), proximaFecha: fd.get('proximaFecha') };
+  try {
+    await api('POST', `/api/clientes/${state.contratoMantenimientoClienteId}/contrato-mantenimiento`, payload);
+    state.modal = null;
+    render();
+  } catch (e) { showToast(e.message); }
+  return false;
+}
+async function pausarContratoMantenimiento(id) {
+  try { await api('POST', `/api/contratos-mantenimiento/${id}/pausar`); render(); } catch (e) { showToast(e.message); }
+}
+async function reactivarContratoMantenimiento(id) {
+  try { await api('POST', `/api/contratos-mantenimiento/${id}/reactivar`); render(); } catch (e) { showToast(e.message); }
+}
+async function eliminarContratoMantenimiento(id) {
+  if (!confirm('¿Eliminar este contrato de mantenimiento? No se puede deshacer.')) return;
+  try { await api('DELETE', `/api/contratos-mantenimiento/${id}`); render(); } catch (e) { showToast(e.message); }
+}
+function renderContratoMantenimientoModal() {
+  const contrato = cache.contratoMantenimientoEdit;
+  const sistemasActuales = contrato ? (contrato.sistemas || []) : [];
+  const sistemasExtra = sistemasActuales.filter(s => !SISTEMAS_MANTENIMIENTO_BASE.includes(s));
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>${contrato ? 'Editar contrato de mantenimiento' : 'Configurar contrato de mantenimiento'}</h2>
+    <form onsubmit="return submitContratoMantenimiento(event)">
+      <div class="field"><label>Sistemas que cubre</label>
+        ${SISTEMAS_MANTENIMIENTO_BASE.map(s => `<label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:6px;"><input type="checkbox" name="sistemas" value="${s}" ${sistemasActuales.includes(s) ? 'checked' : ''}> ${s}</label>`).join('')}
+        <input name="sistemaOtro" placeholder="Otro sistema (opcional)" value="${escapeHtml(sistemasExtra.join(', '))}">
+        <div class="hint-text">Si hay más de uno, separalos con coma.</div></div>
+      <div class="field"><label>Frecuencia de visitas</label>
+        <select name="frecuenciaMeses">${FRECUENCIAS_MANTENIMIENTO.map(f => `<option value="${f.v}" ${contrato && Number(contrato.frecuencia_meses) === f.v ? 'selected' : ''}>${f.label}</option>`).join('')}</select></div>
+      <div class="field"><label>Próxima visita</label><input type="date" name="proximaFecha" value="${contrato ? contrato.proxima_fecha : ''}" required></div>
+      <div class="hint-text">El sistema va a generar solo el turno de Servicio Técnico 7 días antes de esta fecha, y va a calcular la siguiente sumando la frecuencia — sin crear ticket ni costos.</div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Guardar contrato</button></div>
+    </form></div></div>`;
 }
 function openNuevoProveedorModal(administracionId) {
   state.modal = 'nuevo-proveedor';
@@ -4609,6 +4936,24 @@ function renderConfiguracion() {
         </div>
       </div>
 
+      <div class="card card-narrow" style="max-width:560px;${tab === 'correo' ? '' : 'display:none;'}">
+        ${configSectionHead('🔧', 'Casilla para órdenes de mantenimiento', 'Casilla aparte, solo para mandar las órdenes de mantenimiento por correo — nunca la de tickets. Así, si el cliente contesta ese mail, no se genera un ticket sin querer (esta casilla no se revisa nunca).')}
+        <label class="switch-row" style="margin-bottom:16px;">
+          <input type="checkbox" name="correoMantenimientoActivo" ${c.correoMantenimientoActivo ? 'checked' : ''}> Activar el envío de órdenes de mantenimiento
+        </label>
+        <div class="field"><label>Correo de esta casilla</label><input name="smtpUsuarioMant" type="email" value="${escapeHtml(c.smtpUsuarioMant || '')}" placeholder="mantenimiento@borcam.com.uy"></div>
+        <div class="field"><label>Nombre para mostrar</label><input name="casillaNombreMant" value="${escapeHtml(c.casillaNombreMant || '')}" placeholder="Ej: Borcam Mantenimiento"></div>
+        <div class="field-row">
+          <div class="field"><label>Servidor SMTP</label><input name="smtpHostMant" value="${escapeHtml(c.smtpHostMant || '')}" placeholder="mail.borcam.com.uy"></div>
+          <div class="field"><label>Puerto</label><input name="smtpPortMant" type="number" value="${c.smtpPortMant || 465}"></div>
+        </div>
+        <div class="field"><label>Contraseña</label><input name="smtpPasswordMant" type="password" placeholder="${c.tieneSmtpPasswordMant ? 'Dejar en blanco para no cambiarla' : 'Contraseña del correo'}"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+          <button type="button" class="btn btn-ghost btn-block" onclick="probarConexionCorreoMantenimiento()">Probar conexión de esta casilla</button>
+          <div id="resultado-prueba-mant" style="margin-top:8px;"></div>
+        </div>
+      </div>
+
       <div class="card card-narrow" style="max-width:560px;${tab === 'telegram' ? '' : 'display:none;'}">
         ${configSectionHead('✈️', 'Notificaciones en Telegram', `Cada vez que llega un ticket nuevo (no en respuestas posteriores), se manda un aviso a un grupo de Telegram con un resumen y un enlace para abrirlo. Los tickets que contengan la palabra "reserva" no se avisan por acá.${c.telegramConfiguradoServidor ? '' : '<br><strong style="color:var(--stamp-red);">Falta configurar el bot en el servidor (variable TELEGRAM_BOT_TOKEN).</strong>'}`)}
         <label class="switch-row">
@@ -4737,6 +5082,8 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-correo') return renderNuevoCorreoModal();
   if (state.modal === 'nueva-respuesta' || state.modal === 'editar-respuesta') return renderRespuestaModal();
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
+  if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
+  if (state.modal === 'plantilla-mantenimiento') return renderPlantillaMantenimientoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
   if (state.modal === 'editar-usuario') return renderEditarUsuarioModal();
   if (state.modal === 'nuevo-usuario') return renderNuevoUsuarioModal();
@@ -4859,6 +5206,8 @@ function renderGrupoModal() {
       <div class="field"><label>Administrado por</label>
         <select name="administradoPorId" id="grupo-administrado-por-select">${opcionesAdministradoPorHtml(g ? g.rolCliente : '', g ? g.id : null, g ? g.administradoPorId : null)}</select>
         <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá; si es un apartamento, elegí a qué edificio pertenece. La lista cambia según el Rol de arriba.</div></div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:12px 0 4px;padding-top:12px;border-top:1px dashed var(--line-strong);"><input type="checkbox" name="esMantenimiento" ${g && g.esMantenimiento ? 'checked' : ''}> 🔧 Cliente de mantenimiento</label>
+      <div class="hint-text" style="margin-bottom:8px;">Tiene un contrato de visitas periódicas de mantenimiento (se configura desde la ficha del cliente una vez creado).</div>
       <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
       <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
