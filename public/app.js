@@ -561,9 +561,7 @@ function openEditarGrupoModal(id) { state.modal = 'editar-grupo'; state.editGrup
 async function submitGrupo(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
-  // telefono y contactoNombre ya no se cargan desde acá (el cliente los completa desde su portal),
-  // así que no van en el payload — el backend conserva lo que ya hubiera en vez de borrarlo.
-  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), correo: fd.get('correo'), correoInformes: fd.get('correoInformes'), rol: fd.get('rol'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null, esMantenimiento: fd.get('esMantenimiento') === 'on' };
+  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), contactoNombre: fd.get('contactoNombre'), correo: fd.get('correo'), correoInformes: fd.get('correoInformes'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null, esMantenimiento: fd.get('esMantenimiento') === 'on' };
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
@@ -5418,7 +5416,6 @@ function actualizarAdministradoPorSegunRol() {
 function renderGrupoModal() {
   const editing = state.modal === 'editar-grupo';
   const g = editing ? cache.clientes.find(x => x.id === state.editGrupoId) : null;
-  const rolOptions = CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rol === r ? 'selected' : ''}>${r}</option>`).join('');
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>${editing ? 'Editar cliente' : 'Nuevo cliente'}</h2>
     <form onsubmit="return submitGrupo(event)">
@@ -5433,7 +5430,7 @@ function renderGrupoModal() {
         <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá; si es un apartamento, elegí a qué edificio pertenece. La lista cambia según el Rol de arriba.</div></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:12px 0 4px;padding-top:12px;border-top:1px dashed var(--line-strong);"><input type="checkbox" name="esMantenimiento" ${g && g.esMantenimiento ? 'checked' : ''}> 🔧 Cliente de mantenimiento</label>
       <div class="hint-text" style="margin-bottom:8px;">Tiene un contrato de visitas periódicas de mantenimiento (se configura desde la ficha del cliente una vez creado).</div>
-      <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
+      <div class="field-row"><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div><div class="field"><label>Nombre</label><input name="contactoNombre" placeholder="Quién atiende ese número" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div></div>
       <div class="field" style="margin-top:6px;padding-top:14px;border-top:1px dashed var(--line-strong);"><label>Acceso al portal (contraseña)</label>
         <input name="portalPassword" type="password" placeholder="${editing ? 'Dejar en blanco para no cambiarla' : 'Definí una contraseña de acceso'}" autocomplete="new-password">
         <div class="hint-text">Con el correo de arriba y esta contraseña, el cliente entra al portal a ver sus tickets.</div></div>
