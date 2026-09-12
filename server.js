@@ -159,6 +159,21 @@ const pool = new Pool({
     ? false
     : { rejectUnauthorized: false }
 });
+// Supabase (y cualquier Postgres) puede cerrar de vez en cuando una conexión que el pool tenía
+// reutilizable "en reposo" (es normal, no es un error del sistema). Cuando eso pasa, "pg" avisa con
+// un evento 'error' en el pool — si nadie lo escucha, Node lo trata como un error fatal no manejado
+// y apaga TODO el servidor (por eso Render mandaba el aviso de "Exited with status 1"). Con este
+// listener simplemente lo logueamos y el pool abre una conexión nueva sola la próxima vez que la
+// necesita, sin voltear el servicio.
+pool.on('error', (err) => {
+  console.error('Error en una conexión inactiva del pool de la base de datos (no fatal, el servidor sigue funcionando):', err.message);
+});
+// Salvavidas general: si en algún otro lugar del código queda una promesa sin capturar, se loguea
+// en vez de apagar el servidor entero (igual que arriba, pero para cualquier otro caso, no solo la
+// base de datos).
+process.on('unhandledRejection', (err) => {
+  console.error('Promesa sin capturar (no fatal, el servidor sigue funcionando):', err && err.message ? err.message : err);
+});
 // Migración automática: agrega la columna de nombre de contacto si todavía no existe (no rompe nada si ya está).
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
 pool.query('alter table clientes add column if not exists rol_cliente text').catch(e => console.error('No se pudo migrar rol_cliente:', e.message));
