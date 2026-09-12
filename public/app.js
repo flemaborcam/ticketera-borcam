@@ -1081,8 +1081,9 @@ function cambiarServicioTecnicoTab(t) {
 // --- Subsección "🔧 Mantenimiento": agrupa lo que antes eran turnos/realizados mezclados con el
 // resto más las plantillas, todo junto y separado del servicio técnico común.
 function renderMantenimientoSeccion() {
-  const sub = state.mantenimientoSubTab || 'turnos';
+  const sub = state.mantenimientoSubTab || 'dashboard';
   const subTabsHtml = [
+    { v: 'dashboard', label: '📊 Dashboard' },
     { v: 'turnos', label: 'Próximos' },
     { v: 'realizados', label: 'Realizados' },
     { v: 'plantillas', label: 'Plantillas' }
@@ -1090,6 +1091,8 @@ function renderMantenimientoSeccion() {
   let contenido;
   if (sub === 'plantillas') {
     contenido = renderPlantillasMantenimientoTab();
+  } else if (sub === 'dashboard') {
+    contenido = renderDashboardMantenimiento();
   } else {
     const filtro = sub === 'realizados'
       ? (s => s.estado === 'realizado' && s.contrato_mantenimiento_id)
@@ -1101,8 +1104,192 @@ function renderMantenimientoSeccion() {
 }
 function cambiarMantenimientoSubTab(t) {
   state.mantenimientoSubTab = t;
+  state.mantenimientoClienteSeleccionado = null;
   render();
   if (t === 'plantillas') cargarPlantillasMantenimiento();
+}
+
+/* ---------------- Dashboard de Mantenimiento ----------------
+   Todo se arma con lo que ya está en cache (cache.serviciosTecnicos trae checklist_sistemas,
+   notas_mantenimiento, contrato_mantenimiento_id, etc. para cada turno) — no hace falta pegarle
+   de nuevo al servidor para los números generales. Sirve para tener una foto rápida del estado de
+   todos los clientes de mantenimiento, y también como base para armar un reporte de un cliente
+   puntual si lo pide (se entra a "Ver historial" y ahí está todo lo de ese cliente junto). */
+const ESTADOS_CHECKLIST_ORDEN = ['inmediata', 'atencion', 'satisfactorio', 'no_aplica'];
+function turnosMantenimiento() {
+  return (cache.serviciosTecnicos || []).filter(s => s.contrato_mantenimiento_id);
+}
+// Rango de fechas para las estadísticas del período (no aplica al listado de "puntos abiertos",
+// que siempre mira la última visita de cada cliente sin importar el filtro de fecha).
+function rangoFechasDashboardMantenimiento() {
+  const dias = Number(state.mantenimientoDashboardRango || 90);
+  const hasta = new Date();
+  const desde = new Date(hasta.getTime() - dias * 24 * 60 * 60 * 1000);
+  return { desde, hasta, dias };
+}
+function cambiarRangoDashboardMantenimiento(dias) {
+  state.mantenimientoDashboardRango = dias;
+  render();
+}
+function renderDashboardMantenimiento() {
+  const todos = turnosMantenimiento();
+  const { desde, dias } = rangoFechasDashboardMantenimiento();
+  const ahora = new Date();
+  const enPeriodo = todos.filter(s => new Date(s.fecha_hora) >= desde);
+  const realizadosPeriodo = enPeriodo.filter(s => s.estado === 'realizado');
+  const pendientesTodos = todos.filter(s => s.estado !== 'realizado');
+  const atrasados = pendientesTodos.filter(s => new Date(s.fecha_hora) < ahora);
+
+  // Distribución de estados de ítems del checklist, sumando todas las visitas realizadas del período.
+  const conteoEstados = { satisfactorio: 0, atencion: 0, inmediata: 0, no_aplica: 0 };
+  let totalItems = 0;
+  for (const s of realizadosPeriodo) {
+    for (const sistema of Object.keys(s.checklist_sistemas || {})) {
+      for (const sec of ((s.checklist_sistemas[sistema] || {}).secciones || [])) {
+        for (const item of (sec.items || [])) {
+          if (item.estado && conteoEstados.hasOwnProperty(item.estado)) { conteoEstados[item.estado]++; totalItems++; }
+        }
+      }
+    }
+  }
+
+  // Órdenes enviadas vs pendientes, solo entre las visitas realizadas del período que ya tienen checklist.
+  const conChecklistPeriodo = realizadosPeriodo.filter(s => s.checklist_sistemas);
+  const ordenesEnviadas = conChecklistPeriodo.filter(s => s.orden_mantenimiento_enviada).length;
+  const ordenesPendientes = conChecklistPeriodo.length - ordenesEnviadas;
+
+  // Puntos abiertos: de la última visita realizada de cada cliente (sin importar el rango de fecha
+  // elegido), los ítems que quedaron en "Necesita atención" o "Atención inmediata".
+  const ultimaPorCliente = {};
+  for (const s of todos) {
+    if (s.estado !== 'realizado' || !s.checklist_sistemas) continue;
+    const actual = ultimaPorCliente[s.cliente_id];
+    if (!actual || new Date(s.fecha_hora) > new Date(actual.fecha_hora)) ultimaPorCliente[s.cliente_id] = s;
+  }
+  const puntosAbiertos = [];
+  for (const clienteId of Object.keys(ultimaPorCliente)) {
+    const s = ultimaPorCliente[clienteId];
+    for (const sistema of Object.keys(s.checklist_sistemas || {})) {
+      for (const sec of ((s.checklist_sistemas[sistema] || {}).secciones || [])) {
+        for (const item of (sec.items || [])) {
+          if (item.estado === 'inmediata' || item.estado === 'atencion') {
+            puntosAbiertos.push({ clienteId, clienteNombre: nombreClientePorId(clienteId), sistema, texto: item.texto, motivo: item.motivo, estado: item.estado, fecha: s.fecha_hora });
+          }
+        }
+      }
+    }
+  }
+  puntosAbiertos.sort((a, b) => (a.estado === b.estado ? 0 : a.estado === 'inmediata' ? -1 : 1));
+
+  const clientesMantenimiento = (cache.clientes || []).filter(c => c.esMantenimiento);
+
+  const barraEstados = totalItems ? ESTADOS_CHECKLIST_ORDEN.map(e => {
+    const pct = Math.round((conteoEstados[e] / totalItems) * 100);
+    if (!pct) return '';
+    return `<div style="background:${ESTADOS_CHECKLIST_COLOR_JS[e]};width:${pct}%;height:100%;" title="${ESTADOS_CHECKLIST_LABEL_JS[e]}: ${conteoEstados[e]} (${pct}%)"></div>`;
+  }).join('') : '';
+
+  return `
+    <div class="field-row" style="align-items:center;margin-bottom:16px;">
+      <div class="sub" style="margin:0;">Período de las estadísticas:</div>
+      ${[[30, 'Último mes'], [90, 'Últimos 3 meses'], [365, 'Último año'], [3650, 'Todo']].map(([d, label]) =>
+        `<button type="button" class="btn ${Number(state.mantenimientoDashboardRango || 90) === d ? 'btn-primary' : 'btn-ghost'}" style="padding:4px 10px;font-size:12px;" onclick="cambiarRangoDashboardMantenimiento(${d})">${label}</button>`
+      ).join('')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;">
+      <div class="user-row" style="border:1px solid var(--line);flex-direction:column;align-items:flex-start;gap:4px;">
+        <div class="u-sub">Clientes de mantenimiento</div><div style="font-size:26px;font-weight:700;">${clientesMantenimiento.length}</div>
+      </div>
+      <div class="user-row" style="border:1px solid var(--line);flex-direction:column;align-items:flex-start;gap:4px;">
+        <div class="u-sub">Visitas realizadas (período)</div><div style="font-size:26px;font-weight:700;">${realizadosPeriodo.length}</div>
+      </div>
+      <div class="user-row" style="border:1px solid var(--line);flex-direction:column;align-items:flex-start;gap:4px;">
+        <div class="u-sub">Visitas atrasadas</div><div style="font-size:26px;font-weight:700;color:${atrasados.length ? '#c0392b' : 'inherit'};">${atrasados.length}</div>
+      </div>
+      <div class="user-row" style="border:1px solid var(--line);flex-direction:column;align-items:flex-start;gap:4px;">
+        <div class="u-sub">Órdenes sin enviar al cliente</div><div style="font-size:26px;font-weight:700;color:${ordenesPendientes ? '#b8860b' : 'inherit'};">${ordenesPendientes}</div>
+      </div>
+    </div>
+    ${totalItems ? `
+    <div style="margin-bottom:20px;">
+      <div class="u-sub" style="margin-bottom:6px;">Estado general de los sistemas revisados en el período (${totalItems} ítems)</div>
+      <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line);">${barraEstados}</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--ink-soft);">
+        ${ESTADOS_CHECKLIST_ORDEN.map(e => `<div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${ESTADOS_CHECKLIST_COLOR_JS[e]};margin-right:5px;"></span>${ESTADOS_CHECKLIST_LABEL_JS[e]}: ${conteoEstados[e]}</div>`).join('')}
+      </div>
+    </div>` : `<div class="hint-text" style="margin-bottom:20px;">Todavía no hay visitas realizadas con checklist en este período.</div>`}
+    ${puntosAbiertos.length ? `
+    <div style="margin-bottom:20px;">
+      <div class="u-sub" style="margin-bottom:6px;">⚠️ Puntos abiertos (según la última visita de cada cliente)</div>
+      <div class="stub-list">${puntosAbiertos.map(p => `
+        <div class="user-row" style="border:1px solid var(--line);cursor:pointer;" onclick="abrirHistorialClienteMantenimiento('${p.clienteId}')">
+          <div class="avatar">${p.estado === 'inmediata' ? '❌' : '⚠️'}</div>
+          <div><div class="u-name">${escapeHtml(p.clienteNombre)} — ${escapeHtml(p.sistema)}</div>
+            <div class="u-sub">${escapeHtml(p.texto)}${p.motivo ? ' — ' + escapeHtml(p.motivo) : ''}</div></div>
+        </div>`).join('')}</div>
+    </div>` : ''}
+    <div>
+      <div class="u-sub" style="margin-bottom:6px;">Clientes de mantenimiento</div>
+      <div class="stub-list">${clientesMantenimiento.map(c => `
+        <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirHistorialClienteMantenimiento('${c.id}')">
+          <div class="avatar">🔧</div>
+          <div><div class="u-name">${escapeHtml(c.nombre)}</div><div class="u-sub">Ver historial de mantenimiento →</div></div>
+        </button>`).join('')}</div>
+    </div>
+    ${state.mantenimientoClienteSeleccionado ? renderHistorialClienteMantenimiento(state.mantenimientoClienteSeleccionado) : ''}`;
+}
+const ESTADOS_CHECKLIST_LABEL_JS = { satisfactorio: 'Satisfactorio', atencion: 'Necesita atención', inmediata: 'Atención inmediata', no_aplica: 'No aplica' };
+const ESTADOS_CHECKLIST_COLOR_JS = { satisfactorio: '#1e8e4f', atencion: '#b8860b', inmediata: '#c0392b', no_aplica: '#8a8a8a' };
+function abrirHistorialClienteMantenimiento(clienteId) {
+  state.mantenimientoClienteSeleccionado = clienteId;
+  refrescarVistaServicioTecnico();
+  cargarContratoMantenimientoCliente(clienteId);
+  // Pequeño scroll para que se vea el historial recién abierto, sin tener que buscarlo en la página.
+  setTimeout(() => { const el = document.getElementById('historial-mantenimiento-cliente'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 50);
+}
+function cerrarHistorialClienteMantenimiento() {
+  state.mantenimientoClienteSeleccionado = null;
+  refrescarVistaServicioTecnico();
+}
+async function cargarContratoMantenimientoCliente(clienteId) {
+  cache.contratosMantenimientoPorCliente = cache.contratosMantenimientoPorCliente || {};
+  if (cache.contratosMantenimientoPorCliente[clienteId] !== undefined) return;
+  try { cache.contratosMantenimientoPorCliente[clienteId] = await api('GET', `/api/clientes/${clienteId}/contrato-mantenimiento`); }
+  catch (e) { cache.contratosMantenimientoPorCliente[clienteId] = null; }
+  refrescarVistaServicioTecnico();
+}
+// Historial de un cliente puntual: pensado como la pantalla que usás de base si te piden un reporte
+// — acá está todo junto (visitas, checklist resumido, notas) sin tener que ir turno por turno.
+function renderHistorialClienteMantenimiento(clienteId) {
+  const cliente = (cache.clientes || []).find(c => c.id === clienteId);
+  const contrato = (cache.contratosMantenimientoPorCliente || {})[clienteId];
+  const visitas = turnosMantenimiento().filter(s => s.cliente_id === clienteId && s.estado === 'realizado').sort((a, b) => new Date(b.fecha_hora) - new Date(a.fecha_hora));
+  return `<div id="historial-mantenimiento-cliente" style="margin-top:24px;border-top:2px solid var(--line);padding-top:16px;">
+    <div class="page-head" style="margin-top:0;">
+      <div><h1 style="font-size:18px;">🔧 ${escapeHtml(cliente ? cliente.nombre : '')}</h1>
+        <div class="sub">${contrato ? `Frecuencia: ${frecuenciaMantenimientoLabel(contrato.frecuencia_meses)} · Próxima visita: ${new Date(contrato.proxima_fecha + 'T00:00:00-03:00').toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}` : (contrato === null ? 'Sin contrato de mantenimiento configurado' : 'Cargando contrato…')}</div></div>
+      <button type="button" class="btn btn-ghost" onclick="cerrarHistorialClienteMantenimiento()">Cerrar</button>
+    </div>
+    ${visitas.length ? `<div class="stub-list">${visitas.map(s => {
+      const conteo = { satisfactorio: 0, atencion: 0, inmediata: 0, no_aplica: 0 };
+      for (const sistema of Object.keys(s.checklist_sistemas || {})) {
+        for (const sec of ((s.checklist_sistemas[sistema] || {}).secciones || [])) {
+          for (const item of (sec.items || [])) { if (item.estado && conteo.hasOwnProperty(item.estado)) conteo[item.estado]++; }
+        }
+      }
+      return `<div class="user-row" style="border:1px solid var(--line);cursor:pointer;flex-direction:column;align-items:flex-start;gap:6px;" onclick="abrirDetalleServicioTecnico('${s.id}')">
+        <div style="display:flex;justify-content:space-between;width:100%;">
+          <div class="u-name">${new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' })}${s.tecnico_realizo_nombre ? ' — ' + escapeHtml(s.tecnico_realizo_nombre) : ''}</div>
+          ${s.orden_mantenimiento_enviada ? '<span class="tag tag-resuelto">Orden enviada</span>' : '<span class="tag tag-cat">Orden sin enviar</span>'}
+        </div>
+        <div class="u-sub">${Object.keys(s.checklist_sistemas || {}).join(', ')}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--ink-soft);">
+          ${ESTADOS_CHECKLIST_ORDEN.filter(e => conteo[e]).map(e => `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ESTADOS_CHECKLIST_COLOR_JS[e]};margin-right:4px;"></span>${ESTADOS_CHECKLIST_LABEL_JS[e]}: ${conteo[e]}</span>`).join('')}
+        </div>
+        ${(s.notas_mantenimiento || []).length ? `<div class="u-sub" style="font-style:italic;">📝 ${(s.notas_mantenimiento || []).length} nota${(s.notas_mantenimiento || []).length === 1 ? '' : 's'} de visita</div>` : ''}
+      </div>`;
+    }).join('')}</div>` : `<div class="hint-text">Este cliente todavía no tiene visitas de mantenimiento realizadas.</div>`}
+  </div>`;
 }
 // --- Plantillas de mantenimiento: una por sistema, con secciones e ítems editables. Se copian tal
 // cual al generar cada turno de mantenimiento, así una edición posterior no afecta visitas ya hechas.
