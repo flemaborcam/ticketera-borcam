@@ -177,6 +177,10 @@ process.on('unhandledRejection', (err) => {
 });
 // Migración automática: agrega la columna de nombre de contacto si todavía no existe (no rompe nada si ya está).
 pool.query('alter table clientes add column if not exists contacto_nombre text').catch(e => console.error('No se pudo migrar contacto_nombre:', e.message));
+// Correo aparte para mandarle informes/notificaciones (ej: la orden de mantenimiento) si el cliente
+// quiere que le lleguen a una casilla distinta de la principal de la ficha. Si queda vacío, se usa
+// el correo de siempre — no reemplaza al principal, es solo un override opcional.
+pool.query('alter table clientes add column if not exists correo_informes text').catch(e => console.error('No se pudo migrar correo_informes:', e.message));
 pool.query('alter table clientes add column if not exists rol_cliente text').catch(e => console.error('No se pudo migrar rol_cliente:', e.message));
 // Migración automática: permite que un cliente "Edificio" quede gestionado por un cliente
 // "Administración" (una misma administración puede manejar varios edificios sin tener que
@@ -1559,7 +1563,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
 /* ---------------- Clientes ---------------- */
 app.get('/api/clientes', requireStaff, async (req, res) => {
   const clientes = (await pool.query(
-    `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.rol,c.rol_cliente,c.contacto_nombre,
+    `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.correo_informes,c.rol,c.rol_cliente,c.contacto_nombre,
             (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id, c.es_mantenimiento,
             a.nombre as administrado_por_nombre
      from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
@@ -1571,31 +1575,36 @@ app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   ok(res, tickets);
 });
 app.post('/api/clientes', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
+  const { nombre, direccion, telefono, correo, correoInformes, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
   if (!nombre) return bad(res, 'Falta el nombre del cliente.');
   const hash = portalPassword ? bcrypt.hashSync(portalPassword, 10) : null;
   const r = await pool.query(
-    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre, rol_cliente, administrado_por_id, es_mantenimiento)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
-    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorId || null, !!esMantenimiento]
+    `insert into clientes (nombre, direccion, telefono, correo, correo_informes, rol, portal_password_hash, contacto_nombre, rol_cliente, administrado_por_id, es_mantenimiento)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+    [nombre, direccion || '', telefono || '', correo || '', (correoInformes || '').trim(), rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorId || null, !!esMantenimiento]
   );
   ok(res, { id: r.rows[0].id });
 });
 app.put('/api/clientes/:id', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
+  const { nombre, direccion, telefono, correo, correoInformes, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
   // Evita crear un ciclo (A administrado por B, y B administrado por A) y que un cliente quede
   // "administrado por sí mismo" si lo elige por error.
   const administradoPorFinal = (administradoPorId && administradoPorId !== req.params.id) ? administradoPorId : null;
+  // telefono y contactoNombre ya no se cargan desde este formulario (el cliente los completa desde
+  // su portal) — si no vienen en el body, se conserva lo que ya había en vez de borrarlo.
+  const actual = (await pool.query('select telefono, contacto_nombre from clientes where id=$1', [req.params.id])).rows[0] || {};
+  const telefonoFinal = telefono != null ? (telefono || '') : (actual.telefono || '');
+  const contactoNombreFinal = contactoNombre != null ? (contactoNombre || '').trim() : (actual.contacto_nombre || '');
   if (portalPassword) {
     const hash = bcrypt.hashSync(portalPassword, 10);
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7,rol_cliente=$8,administrado_por_id=$9,es_mantenimiento=$10 where id=$11`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,correo_informes=$5,rol=$6,portal_password_hash=$7,contacto_nombre=$8,rol_cliente=$9,administrado_por_id=$10,es_mantenimiento=$11 where id=$12`,
+      [nombre, direccion || '', telefonoFinal, correo || '', (correoInformes || '').trim(), rol || '', hash, contactoNombreFinal, (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
     );
   } else {
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6,rol_cliente=$7,administrado_por_id=$8,es_mantenimiento=$9 where id=$10`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,correo_informes=$5,rol=$6,contacto_nombre=$7,rol_cliente=$8,administrado_por_id=$9,es_mantenimiento=$10 where id=$11`,
+      [nombre, direccion || '', telefonoFinal, correo || '', (correoInformes || '').trim(), rol || '', contactoNombreFinal, (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
     );
   }
   ok(res, { ok: true });
@@ -1876,14 +1885,17 @@ async function enviarOrdenMantenimientoPorCorreo(servicioId) {
   if (!servicio) throw new Error('Turno no encontrado.');
   if (!servicio.checklist_sistemas) throw new Error('Este turno no es de mantenimiento.');
   const cliente = servicio.cliente_id ? (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0] : null;
-  if (!cliente || !cliente.correo) throw new Error('El cliente no tiene un correo cargado.');
+  // Si el cliente cargó un correo aparte para informes, la orden va ahí; si no, al correo principal
+  // de su ficha (el mismo con el que entra al portal).
+  const correoDestino = (cliente && cliente.correo_informes) ? cliente.correo_informes : (cliente && cliente.correo);
+  if (!cliente || !correoDestino) throw new Error('El cliente no tiene un correo cargado.');
   const cfg = await getConfig();
   const transport = await getSmtpTransportMantenimiento(cfg);
   if (!transport) throw new Error('Falta activar y configurar la casilla de correo para órdenes de mantenimiento, en Configuración → Correo.');
   const pdfBuffer = await generarPdfOrdenMantenimiento(servicio, cliente);
   await transport.sendMail({
     from: `"${cfg.casilla_nombre_mant || 'Borcam Mantenimiento'}" <${cfg.smtp_usuario_mant}>`,
-    to: cliente.correo,
+    to: correoDestino,
     subject: `Orden de mantenimiento — ${cliente.nombre}`,
     text: 'Adjuntamos la orden de mantenimiento con el detalle de la visita realizada.',
     html: '<p>Adjuntamos la orden de mantenimiento con el detalle de la visita realizada.</p>',
