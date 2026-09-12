@@ -1045,24 +1045,28 @@ function renderServicioTecnicoTab() {
     { v: 'realizados', label: 'Servicios Realizados' },
     { v: 'reporte', label: '📊 Reporte mensual' },
     { v: 'catalogo', label: '💲 Costos precargados' },
-    { v: 'plantillas', label: '🔧 Plantillas de mantenimiento' }
+    { v: 'mantenimiento', label: '🔧 Mantenimiento' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
   let contenido;
   if (tab === 'catalogo') {
     contenido = renderCatalogoCostosTab();
   } else if (tab === 'reporte') {
     contenido = renderReporteMensualDashboardTab();
-  } else if (tab === 'plantillas') {
-    contenido = renderPlantillasMantenimientoTab();
+  } else if (tab === 'mantenimiento') {
+    contenido = renderMantenimientoSeccion();
   } else {
-    const filtro = tab === 'realizados' ? (s => s.estado === 'realizado') : (s => s.estado !== 'realizado');
+    // Acá solo van los turnos de servicio técnico comunes — los de mantenimiento (con contrato) se
+    // ven aparte, dentro de la subsección "🔧 Mantenimiento", para no mezclarlos con el resto.
+    const filtro = tab === 'realizados'
+      ? (s => s.estado === 'realizado' && !s.contrato_mantenimiento_id)
+      : (s => s.estado !== 'realizado' && !s.contrato_mantenimiento_id);
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
     contenido = renderServicioTecnicoLista(filtro, mensajeVacio);
   }
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div style="display:flex;gap:8px;">
-        ${tab !== 'catalogo' && tab !== 'reporte' && tab !== 'plantillas' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+        ${tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
     </div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
@@ -1072,6 +1076,32 @@ function cambiarServicioTecnicoTab(t) {
   state.servicioTecnicoTab = t;
   render();
   if (t === 'reporte') cargarReporteMensualDashboard();
+  if (t === 'mantenimiento' && (state.mantenimientoSubTab || 'turnos') === 'plantillas') cargarPlantillasMantenimiento();
+}
+// --- Subsección "🔧 Mantenimiento": agrupa lo que antes eran turnos/realizados mezclados con el
+// resto más las plantillas, todo junto y separado del servicio técnico común.
+function renderMantenimientoSeccion() {
+  const sub = state.mantenimientoSubTab || 'turnos';
+  const subTabsHtml = [
+    { v: 'turnos', label: 'Próximos' },
+    { v: 'realizados', label: 'Realizados' },
+    { v: 'plantillas', label: 'Plantillas' }
+  ].map(t => `<button class="reply-tab ${sub === t.v ? 'active' : ''}" type="button" onclick="cambiarMantenimientoSubTab('${t.v}')">${t.label}</button>`).join('');
+  let contenido;
+  if (sub === 'plantillas') {
+    contenido = renderPlantillasMantenimientoTab();
+  } else {
+    const filtro = sub === 'realizados'
+      ? (s => s.estado === 'realizado' && s.contrato_mantenimiento_id)
+      : (s => s.estado !== 'realizado' && s.contrato_mantenimiento_id);
+    const mensajeVacio = sub === 'realizados' ? 'Todavía no hay ninguna visita de mantenimiento marcada como realizada.' : 'No hay visitas de mantenimiento próximas ni pendientes.';
+    contenido = renderServicioTecnicoLista(filtro, mensajeVacio);
+  }
+  return `<div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>${contenido}`;
+}
+function cambiarMantenimientoSubTab(t) {
+  state.mantenimientoSubTab = t;
+  render();
   if (t === 'plantillas') cargarPlantillasMantenimiento();
 }
 // --- Plantillas de mantenimiento: una por sistema, con secciones e ítems editables. Se copian tal
