@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const PDFDocument = require('pdfkit');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const ENC_KEY = crypto.createHash('sha256').update(process.env.COOKIE_SECRET || 'cambia-este-secreto').digest();
@@ -182,6 +183,260 @@ pool.query('alter table clientes add column if not exists rol_cliente text').cat
 // duplicar su usuario del portal). Es un solo nivel: el que administra no puede a la vez estar
 // administrado por otro.
 pool.query('alter table clientes add column if not exists administrado_por_id uuid').catch(e => console.error('No se pudo migrar administrado_por_id:', e.message));
+// Cliente de mantenimiento: tiene un contrato de visitas periódicas (mensual, bimestral, etc.) que
+// cubre uno o varios sistemas instalados (CCTV, Portería, Redes, Control de acceso, Incendio). El
+// cobro es aparte y mensual, no por visita — el sistema solo se encarga de generar el turno de
+// Servicio Técnico solo cuando se acerca la fecha, sin ticket ni costos asociados.
+pool.query('alter table clientes add column if not exists es_mantenimiento boolean not null default false').catch(e => console.error('No se pudo migrar es_mantenimiento:', e.message));
+pool.query(`create table if not exists contratos_mantenimiento (
+  id serial primary key,
+  cliente_id uuid not null,
+  sistemas text[] not null default '{}',
+  frecuencia_meses integer not null default 1,
+  proxima_fecha date not null,
+  ultima_generacion date,
+  activo boolean not null default true,
+  creado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear contratos_mantenimiento:', e.message));
+// El turno que genera el mantenimiento automático queda vinculado al contrato (para trazabilidad)
+// y lleva un checklist propio de qué sistemas ya se revisaron en esa visita puntual.
+pool.query('alter table servicios_tecnicos add column if not exists contrato_mantenimiento_id integer').catch(e => console.error('No se pudo migrar contrato_mantenimiento_id:', e.message));
+pool.query(`alter table servicios_tecnicos add column if not exists checklist_sistemas jsonb`).catch(e => console.error('No se pudo migrar checklist_sistemas:', e.message));
+pool.query(`alter table servicios_tecnicos add column if not exists notas_mantenimiento jsonb not null default '[]'::jsonb`).catch(e => console.error('No se pudo migrar notas_mantenimiento:', e.message));
+// Técnico que efectivamente realizó la visita de mantenimiento (se elige, editable, al marcar el
+// turno como realizado — no necesariamente el mismo que lo cargó o lo agendó).
+pool.query('alter table servicios_tecnicos add column if not exists tecnico_realizo_nombre text').catch(e => console.error('No se pudo migrar tecnico_realizo_nombre:', e.message));
+// Frecuencia del contrato en el momento en que se generó esta visita puntual (se copia, igual que el
+// checklist, para que un cambio posterior de frecuencia en el contrato no reescriba visitas pasadas).
+pool.query('alter table servicios_tecnicos add column if not exists frecuencia_mantenimiento_meses integer').catch(e => console.error('No se pudo migrar frecuencia_mantenimiento_meses:', e.message));
+// La orden de mantenimiento (PDF con checklist + notas) se manda por una casilla de correo aparte de
+// la de tickets, para que si el cliente contesta ese mail no se genere un ticket sin querer (nadie
+// revisa esa casilla, solo se usa para enviar). Se puede mandar a mano con un botón, o si nadie lo
+// hizo, se manda solo a las 2 horas de marcado el turno como realizado.
+pool.query('alter table servicios_tecnicos add column if not exists orden_mantenimiento_enviada boolean not null default false').catch(e => console.error('No se pudo migrar orden_mantenimiento_enviada:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists orden_mantenimiento_enviada_fecha timestamptz').catch(e => console.error('No se pudo migrar orden_mantenimiento_enviada_fecha:', e.message));
+pool.query('alter table configuracion add column if not exists correo_mantenimiento_activo boolean not null default false').catch(e => console.error('No se pudo migrar correo_mantenimiento_activo:', e.message));
+pool.query('alter table configuracion add column if not exists casilla_nombre_mant text').catch(e => console.error('No se pudo migrar casilla_nombre_mant:', e.message));
+pool.query('alter table configuracion add column if not exists smtp_host_mant text').catch(e => console.error('No se pudo migrar smtp_host_mant:', e.message));
+pool.query('alter table configuracion add column if not exists smtp_port_mant integer').catch(e => console.error('No se pudo migrar smtp_port_mant:', e.message));
+pool.query('alter table configuracion add column if not exists smtp_usuario_mant text').catch(e => console.error('No se pudo migrar smtp_usuario_mant:', e.message));
+pool.query('alter table configuracion add column if not exists smtp_pass_enc_mant text').catch(e => console.error('No se pudo migrar smtp_pass_enc_mant:', e.message));
+// Plantillas de mantenimiento: una por sistema (CCTV, Portería, Redes, Control de acceso, Incendio),
+// con secciones e ítems editables, tal como se usaban en Gestioo. Se copian tal cual al generar cada
+// turno de mantenimiento, así una edición posterior no afecta visitas ya generadas.
+pool.query(`create table if not exists plantillas_mantenimiento (
+  sistema text primary key,
+  secciones jsonb not null default '[]'::jsonb,
+  creado timestamptz not null default now(),
+  actualizado timestamptz not null default now()
+)`).then(async () => {
+  const PLANTILLAS_INICIALES = {
+    'CCTV': [
+      { nombre: 'NVR/DVR/XVR', items: ['Revisión de Fuente', 'Revisión de Almacenamiento: Disco Duro', 'Conectividad de RED', 'Anclaje o Sistema de Soporte', 'Hora y Fecha', 'Revisar estado de Grabación', 'Revisión de Usuarios y Contraseñas'] },
+      { nombre: 'Cámaras', items: ['Limpieza', 'Sistema de Sujeción', 'Estado de Ficha RJ45 (si aplica)', 'Estado de Balunes (si aplica)'] },
+      { nombre: 'Elementos anexos', items: ['Verificación de histórico de elementos', 'Verificación del estado de las fuentes adicionales (si aplica)'] }
+    ],
+    'Control de acceso': [
+      { nombre: 'Paneles', items: ['Fuente', 'Estado de Pila y Batería', 'Conectividad', 'Estado del Cableado Interno', 'Anclaje del Gabinete', 'Descarga de Eventos'] },
+      { nombre: 'Elementos del control de acceso', items: ['Chequeo de Cerrojos: tipo Perno (si aplica)', 'Chequeo de Cerrojos: Electroimanes (si aplica)', 'Botones de Egreso', 'Lectoras', 'Antenas Vehiculares (si aplica)'] }
+    ],
+    'Sistema de Incendio': [
+      { nombre: 'Central de incendio', items: ['Revisión de Baterías', 'Revisión de Fuente', 'Descargar Historial de Eventos', 'Revisión de Lazos', 'Prueba de Sirenas', 'Teclados'] },
+      { nombre: 'Sensores', items: ['Limpieza', 'Calibración', 'Ensayo de Funcionamiento'] },
+      { nombre: 'Barreras', items: ['Calibración', 'Limpieza', 'Revisión de Fuentes'] },
+      { nombre: 'Accesorios', items: ['Cajas de Empalmes', 'Módulos de Monitoreo (si aplica)', 'Módulos de Sirena (si aplica)', 'Repetidores o Estaciones de Gestión'] },
+      { nombre: 'Pulsadores', items: ['Limpieza', 'Calibración', 'Ensayo de Funcionamiento'] }
+    ],
+    'Portería': [
+      { nombre: 'Infraestructura', items: ['Anclajes', 'Cableado', 'Fuentes'] },
+      { nombre: 'QoS - Calidad de servicio', items: ['Direccionamiento del o los Frentes de Calle', 'Comunicación con Unidades', 'Revisión de Central Telefónica (si aplica)'] }
+    ],
+    'Redes': [
+      { nombre: 'Infraestructura', items: ['Cableado', 'Puestos de Datos', 'Anclajes de Rack', 'Estado de las Pacheras', 'Distribución Interna en Rack del Cableado', 'PDU'] },
+      { nombre: 'Equipamiento activo', items: ['Router', 'Switches', 'Modem'] },
+      { nombre: 'QoS - Calidad de servicio', items: ['Test de Velocidad - Ancho de Banda', 'Pruebas de Latencia y Análisis de Tráfico (Realizar PING)', 'Analizar espectro de la Red Wi-Fi (Interferencias)'] }
+    ],
+    // Plantilla específica de Canarias (sensor de cable perimetral Intrepid MicroPoint II) — no aplica
+    // a otros clientes, se elige como sistema aparte en el contrato de mantenimiento de ese cliente.
+    'Intrepid MicroPoint II': [
+      { nombre: 'Cable Sensor', items: ['Revisión: exceso de vegetación, basura, daños, cortes, postes sueltos, erosión.', 'Integridad: revisar, cortes, raspaduras, torceduras o daños de ningún tipo', 'Amarre: Confirme que todos los cinturones de amarre plásticos o alambres de acero que sujetan el cable estén en buenas condiciones'] },
+      { nombre: 'Módulo Procesador PM II', items: ['Integridad del Módulo: confirme que no existan daños físicos en el gabinete.', 'Integridad Interior: confirme que no existan ingreso de insectos, agua o exceso de polvo', 'Integridad de la Placa'] },
+      { nombre: 'Chequeo de Software', items: ['Descargue las alarmas guardadas en la memoria del PM II.', 'Simule intentos de corte', 'Genere un reporte de configuración.'] }
+    ],
+    // Plantillas específicas de Riba (3 torres por ahora — cuando se agregue la Torre D se puede
+    // duplicar una de estas y ajustar). Cada sensor/jaladora es un ítem propio, con su dirección.
+    'Riba: Ameneties': [
+      { nombre: 'Ameneties', items: [
+        'Pulsador: Etiqueta (barbacoa jaladora), Direccion: 94', 'Pulsador: Etiqueta (gimnasio jaladora), Direccion: 106',
+        'Sensor Humo: Etiqueta (barbacoa baños), Direccion: 96', 'Sensor Humo: Etiqueta (barbacoa cocina), Direccion: 97',
+        'Sensor Humo: Etiqueta (ameneties baños ext), Direccion: 98', 'Sensor Humo: Etiqueta (ameneties baños ext), Direccion: 99',
+        'Sensor Humo: Etiqueta (barbacoa), Direccion: 100', 'Sensor Humo: Etiqueta (ameneties cowork), Direccion: 101',
+        'Sensor Humo: Etiqueta (gimnasio), Direccion: 102', 'Sensor Humo: Etiqueta (gimnasio), Direccion: 103',
+        'Sensor Humo: Etiqueta (gimnasio), Direccion: 104', 'Sensor Humo: Etiqueta (gimnasio), Direccion: 105'
+      ]}
+    ],
+    'Riba Torre A: Sensores y Jaladoras': [
+      { nombre: 'Estacionamiento TA', items: [
+        'Sensor Subsuelo: Temperatura, Direccion: 68', 'Sensor Subsuelo: Temperatura, Direccion: 69', 'Sensor Subsuelo: Temperatura, Direccion: 70',
+        'Sensor Subsuelo: Temperatura, Direccion: 71', 'Sensor Subsuelo: Temperatura, Direccion: 72', 'Sensor Subsuelo: Temperatura, Direccion: 73',
+        'Sensor Subsuelo: Temperatura, Direccion: 74', 'Sensor Subsuelo: Temperatura, Direccion: 75', 'Sensor Subsuelo: Temperatura, Direccion: 76',
+        'Sensor Subsuelo: Temperatura, Direccion: 77', 'Sensor Subsuelo: Temperatura, Direccion: 78', 'Sensor Subsuelo: Humo, Direccion: 79',
+        'Sensor Subsuelo: Temperatura, Direccion: 80', 'Sensor Subsuelo: Temperatura, Direccion: 81', 'Sensor Subsuelo: Temperatura, Direccion: 82',
+        'Sensor Subsuelo: Temperatura, Direccion: 83', 'Sensor Subsuelo: Temperatura, Direccion: 84', 'Sensor Subsuelo: Humo, Direccion: 85',
+        'Sensor Subsuelo: Temperatura, Direccion: 86', 'Sensor Subsuelo: Temperatura, Direccion: 87', 'Sensor Subsuelo: Temperatura, Direccion: 88',
+        'Sensor Subsuelo:Lavadero, Temperatura, Direccion: 89', 'Sensor Subsuelo:Lavadero, Temperatura, Direccion: 90', 'Sensor Subsuelo:Lavadero, Temperatura, Direccion: 91',
+        'Sensor Subsuelo:Lavadero, Temperatura, Direccion: 92', 'Sensor Subsuelo: Temperatura, Direccion: 93',
+        'Pulsador: En Pared, Direccion: 121', 'Pulsador: En Pared (Sala de Contadores), Direccion: 124'
+      ]},
+      { nombre: 'Planta Baja TA', items: [
+        'Sensor PB: Humo, Direccion: 47', 'Sensor PB: Humo, Direccion: 43', 'Pulsador: En Pared, Direccion: 122', 'Pulsador: En Pared, Direccion: 123'
+      ]},
+      { nombre: 'Piso N°1: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:A P1 Jaladora hall) En Pared, Direccion: 1',
+        'Sensor Humo: Etiqueta (T:A P1 hall) Sobre Cielorraso, Direccion: 5', 'Sensor Humo: Etiqueta (T:A P1 hall) Bajo Cielorraso, Direccion: 8',
+        'AP 101: Sensor Humo, Etiqueta (T:A ap 101 hall) Bajo Cielorraso, Direccion: 2', 'AP 101: Sensor Humo, Etiqueta (T:A ap 101 hall) Bajo Cielorraso, Direccion: 3',
+        'AP 101: Sensor Humo, Etiqueta (T:A ap 101 entrada) Bajo Cielorraso, Direccion: 4', 'AP 102: Sensor Humo, Etiqueta (T:A ap 102 hall) Bajo Cielorraso, Direccion: 6',
+        'AP 103: Sensor Humo, Etiqueta (T:A ap 103 hall) Bajo Cielorraso, Direccion: 7', 'AP 104: Sensor Humo, Etiqueta (T:A ap 104 hall) Bajo Cielorraso, Direccion: 9',
+        'AP 104: Sensor Humo, Etiqueta (T:A ap 104 hall) Bajo Cielorraso, Direccion: 10', 'AP 104: Sensor Humo, Etiqueta (T:A ap 104 hall) Bajo Cielorraso, Direccion: 11'
+      ]},
+      { nombre: 'Piso N°2: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:A P2 Jaladora hall) En Pared, Direccion: 13',
+        'Sensor Humo: TA Piso 2, Etiqueta (P2 Halla) Bajo Cielorraso, Direccion: 17', 'Sensor Humo: TA Piso 2, Etiqueta (P2 Halla) Sobre Cielorraso, Direccion: 26',
+        'AP 201: Sensor Humo, Etiqueta (T:A ap 201 hall) Bajo Cielorraso, Direccion: 14', 'AP 201: Sensor Humo, Etiqueta (T:A ap 201 hall) Bajo Cielorraso, Direccion: 16',
+        'AP 202: Sensor Humo, Etiqueta (T:A ap 202 hall) Bajo Cielorraso, Direccion: 18', 'AP 203: Sensor Humo, Etiqueta (T:A ap 203) Bajo Cielorraso, Direccion: 19',
+        'AP 204: Sensor Humo, Etiqueta (T:A ap 204 hall) Bajo Cielorraso, Direccion: 21', 'AP 204: Sensor Humo, Etiqueta (T:A ap 204 ent) Bajo Cielorraso, Direccion: 22',
+        'AP 204: Sensor Humo, Etiqueta (T:A ap 204 hall) Bajo Cielorraso, Direccion: 23'
+      ]},
+      { nombre: 'Piso N°3: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:A P3 Jaladora hall) En Pared, Direccion: 29', 'Sensor Humo: Etiqueta (T:A P3 hall), Direccion: 30',
+        'AP 302: Sensor Humo, Etiqueta (T:A ap 302) Bajo Cielorraso, Direccion: 28', 'Sensor Humo: Etiqueta (T:A P3 hall) En Pared, Direccion: 32',
+        'AP 303: Sensor Humo, Etiqueta (T:A ap 303) Bajo Cielorraso, Direccion: 31', 'AP 304: Sensor Humo, Etiqueta (T:A ap 304 hall) Bajo Cielorraso, Direccion: 33',
+        'AP 304: Sensor Humo, Etiqueta (T:A ap 304 ent) Bajo Cielorraso, Direccion: 34', 'AP 304: Sensor Humo, Etiqueta (T:A ap 304 hall) Bajo Cielorraso, Direccion: 35'
+      ]},
+      { nombre: 'Piso N°4: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:A P4 Jaladora hall) En Pared, Direccion: 48', 'Sensor Humo: Etiqueta (T:A P4 hall), Direccion: 38',
+        'AP 401: Sensor Humo, Etiqueta (T:A ap 401 hall) Bajo Cielorraso, Direccion: 44', 'AP 401: Sensor Humo, Etiqueta (T:A ap 401 hall) Bajo Cielorraso, Direccion: 45',
+        'AP 401: Sensor Humo, Etiqueta (T:A ap 401 ent) Bajo Cielorraso, Direccion: 46', 'AP 403: Sensor Humo, Etiqueta (T:A ap 403 ent) Bajo Cielorraso, Direccion: 40',
+        'AP 403: Sensor Humo, Etiqueta (T:A ap 403 hall) Bajo Cielorraso, Direccion: 41', 'AP 403: Sensor Humo, Etiqueta (T:A ap 403 hall) Bajo Cielorraso, Direccion: 42'
+      ]},
+      { nombre: 'Piso N°5: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:A P5 Jaladora hall) En Pared, Direccion: 49', 'Sensor Humo: Etiqueta (T:A P5 hall), Direccion: 51',
+        'Sensor Humo: Etiqueta (T:A P5 hall), Direccion: 56', 'AP 501: Sensor Humo, Etiqueta (T:A ap 501 hall) Bajo Cielorraso, Direccion: 50',
+        'AP 501: Sensor Humo, Etiqueta (T:A ap 501 ent) Bajo Cielorraso, Direccion: 52', 'AP 502: Sensor Humo, Etiqueta (T:A ap 502 hall) Bajo Cielorraso, Direccion: 54',
+        'AP 502: Sensor Humo, Etiqueta (T:A ap 502 ent) Bajo Cielorraso, Direccion: 55', 'AP 502: Sensor Humo, Etiqueta (T:A ap 502 hall), Direccion: 57'
+      ]}
+    ],
+    'Riba Torre B: Sensores y Jaladoras': [
+      { nombre: 'Estacionamiento TB', items: [
+        'Sensor Subsuelo: Humo, etiqueta (T:B SS Hall lavadero) Direccion: 1', 'Sensor Subsuelo: Humo, etiqueta (T:B SS lavadero) Direccion: 2',
+        'Sensor Subsuelo: Humo, etiqueta (T:B SS lavadero) Direccion: 3', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 4',
+        'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 5', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 7',
+        'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 8', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 9',
+        'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 10', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 12',
+        'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 13', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 15',
+        'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 17', 'Sensor Subsuelo: Temperatura, etiqueta (T:B SS estacionamiento) Direccion: 18',
+        'Sensor Subsuelo: Humo, etiqueta (T:B SS estacionamiento) Direccion: 20', 'Sensor Subsuelo: Humo, etiqueta (T:B SS estacionamiento) Direccion: 22',
+        'Sensor Subsuelo: Humo, etiqueta (T:B SS estacionamiento) Direccion: 23', 'Sensor Subsuelo: Humo, etiqueta (T:B SS estacionamiento) Direccion: 24',
+        'Sensor Subsuelo: Humo, etiqueta (T:B SS Bombas) Direccion: 93', 'Sensor Subsuelo: Humo, etiqueta (T:B SS contadores) Direccion: 125'
+      ]},
+      { nombre: 'Planta Baja TB', items: [
+        'Pulsador: En Pared, Etiqueta (T:B PB Jaladora Hall), Direccion: 30', 'Sensor PB: Humo, Etiqueta (T:B PB hall) Direccion: 25',
+        'Sensor PB: Humo, Etiqueta (T:B PB hall) Direccion: 28', 'Sensor PB: Humo, Etiqueta (T:B PB hall) Direccion: 29',
+        'Pulsador: En Pared, Etiqueta (T:B PB Jaladora), Direccion: 116', 'Pulsador: En Pared, Etiqueta (T:B PB hall), Direccion: 118',
+        'Pulsador: En Pared, Etiqueta (T:B PB hall), Direccion: 120'
+      ]},
+      { nombre: 'Piso N°1: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:B P1 Jaladora hall) En Pared, Direccion: 31', 'Pulsador: Etiqueta (T:B P1 Jaladora hall) En Pared, Direccion: 108',
+        'Sensor Humo: Etiqueta (T:B P1 hall), Direccion: 35', 'Sensor Humo: Etiqueta (T:B P1 hall), Direccion: 38',
+        'AP 101: Sensor Humo, Etiqueta (T:B P1 ap 101 hall), Direccion: 32', 'AP 101: Sensor Humo, Etiqueta (T:B P1 ap 101 ent), Direccion: 33',
+        'AP 101: Sensor Humo, Etiqueta (T:B P1 ap 101 hall), Direccion: 34', 'AP 102: Sensor Humo, Etiqueta (T:B P1 ap 102 hall), Direccion: 36',
+        'AP 103: Sensor Humo, Etiqueta (T:B P1 ap 103 hall), Direccion: 37', 'AP 104: Sensor Humo, Etiqueta (T:B P1 ap 104 hall), Direccion: 39',
+        'AP 104: Sensor Humo, Etiqueta (T:B P1 ap 104 ent), Direccion: 40', 'AP 104: Sensor Humo, Etiqueta (T:B P1 ap 104 hall), Direccion: 41'
+      ]},
+      { nombre: 'Piso N°2: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:B P2 Jaladora hall) En Pared, Direccion: 42', 'Pulsador: Etiqueta (T:B P2 Jaladora hall) En Pared, Direccion: 54',
+        'Sensor Humo: Etiqueta (T:B P2 hall), Direccion: 47', 'Sensor Humo: Etiqueta (T:B P2 hall), Direccion: 50',
+        'AP 201: Sensor Humo, Etiqueta (T:B P2 ap 201 hall), Direccion: 44', 'AP 201: Sensor Humo, Etiqueta (T:B P2 ap 201 hall), Direccion: 45',
+        'AP 202: Sensor Humo, Etiqueta (T:B P2 ap 202 hall), Direccion: 48', 'AP 203: Sensor Humo, Etiqueta (T:B P2 ap 203 hall), Direccion: 49',
+        'AP 204: Sensor Humo, Etiqueta (T:B P2 ap 204 hall), Direccion: 51', 'AP 204: Sensor Humo, Etiqueta (T:B P2 ap 204 ent), Direccion: 52',
+        'AP 204: Sensor Humo, Etiqueta (T:B P2 ap 204 hall), Direccion: 53'
+      ]},
+      { nombre: 'Piso N°3: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:B P3 Jaladora hall) En Pared, Direccion: 66', 'Pulsador: Etiqueta (T:B P3 Jaladora hall) En Pared, Direccion: 102',
+        'Sensor Humo: Etiqueta (T:B P3 hall), Direccion: 59', 'Sensor Humo: Etiqueta (T:B P3 hall), Direccion: 62',
+        'AP 301: Sensor Humo, Etiqueta (T:B P3 ap 301 ent), Direccion: 57', 'AP 302: Sensor Humo, Etiqueta (T:B P3 ap 302 hall), Direccion: 60',
+        'AP 304: Sensor Humo, Etiqueta (T:B P3 ap 304 hall), Direccion: 63', 'AP 304: Sensor Humo, Etiqueta (T:B P3 ap 304 ent), Direccion: 64',
+        'AP 304: Sensor Humo, Etiqueta (T:B P3 ap 304 hall), Direccion: 65'
+      ]},
+      { nombre: 'Piso N°4: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:B P4 Jaladora hall) En Pared, Direccion: 67', 'Pulsador: Etiqueta (T:B P4 Jaladora hall) En Pared, Direccion: 84',
+        'Sensor Humo: Etiqueta (T:B P4 hall), Direccion: 6', 'Sensor Humo: Etiqueta (T:B P4 hall), Direccion: 85',
+        'AP 404: Sensor Humo, Etiqueta (T:B P4 ap 404 hall), Direccion: 72', 'AP 404: Sensor Humo, Etiqueta (T:B P4 ap 404 hall), Direccion: 75',
+        'AP 404: Sensor Humo, Etiqueta (T:B P4 ap 404 ent), Direccion: 76', 'AP 404: Sensor Humo, Etiqueta (T:B P4 ap 404 hall), Direccion: 77'
+      ]},
+      { nombre: 'Piso N°5: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (T:B P5 Jaladora hall) En Pared, Direccion: 82', 'Pulsador: Etiqueta (T:B P5 Jaladora hall) En Pared, Direccion: 90',
+        'Sensor Humo: Etiqueta (T:B P5 hall), Direccion: 95', 'Sensor Humo: Etiqueta (T:B P5 hall), Direccion: 99',
+        'AP 501: Sensor Humo, Etiqueta (T:B P5 ap 501 hall), Direccion: 79', 'AP 501: Sensor Humo, Etiqueta (T:B P5 ap 501 serv), Direccion: 80',
+        'AP 501: Sensor Humo, Etiqueta (T:B P5 ap 501 ent), Direccion: 81', 'AP 502: Sensor Humo, Etiqueta (T:B P5 ap 502 hall), Direccion: 96',
+        'AP 502: Sensor Humo, Etiqueta (T:B P5 ap 502 hall), Direccion: 97', 'AP 502: Sensor Humo, Etiqueta (T:B P5 ap 502 ent), Direccion: 98'
+      ]}
+    ],
+    'Riba Torre C: Sensores y Jaladoras': [
+      { nombre: 'Estacionamiento TC', items: [
+        'Sensor Subsuelo: Temperatura, Direccion: 4', 'Sensor Subsuelo: Temperatura, Direccion: 5', 'Sensor Subsuelo: Temperatura, Direccion: 6',
+        'Sensor Subsuelo: Temperatura, Direccion: 7', 'Sensor Subsuelo: Temperatura, Direccion: 8', 'Sensor Subsuelo: Temperatura, Direccion: 9',
+        'Sensor Subsuelo: Temperatura, Direccion: 13', 'Sensor Subsuelo: Temperatura, Direccion: 14', 'Sensor Subsuelo: Temperatura, Direccion: 15',
+        'Sensor Subsuelo: Temperatura, Direccion: 16', 'Sensor Subsuelo: Temperatura, Direccion: 17', 'Sensor Subsuelo: Temperatura, Direccion: 19',
+        'Sensor Subsuelo: Temperatura, Direccion: 20', 'Sensor Subsuelo: Temperatura, Direccion: 21', 'Sensor Subsuelo: Temperatura, Direccion: 22',
+        'Sensor Subsuelo: Temperatura, Direccion: 23', 'Sensor Subsuelo: Temperatura, Direccion: 24',
+        'Sensor Subsuelo: Lavadero, Humo, Direccion: 2', 'Sensor Subsuelo: Hab. tras el Lavadero, Humo, Direccion: 3',
+        'Sensor Subsuelo: Sala de Bombas, Direccion: 11', 'Sensor Subsuelo: Sala de Contadores, Humo, Direccion: 25'
+      ]},
+      { nombre: 'Planta Baja TC', items: [
+        'Pulsador: En Pared, Jaladora TB, Direccion: 26', 'Pulsador: En Pared, Jaladora TA, Direccion: 30',
+        'Sensor PB: Humo, Direccion: 27', 'Sensor PB: Humo, Direccion: 28', 'Sensor PB: Humo, Direccion: 29'
+      ]},
+      { nombre: 'Piso N°1: Jaladoras, Sensores y Sirenas', items: [
+        'Pulsador: Etiqueta (TB P1 Jaladora hall) En Pared, Direccion: 32',
+        'Sensor Humo: Etiqueta (humo sobre cielorraso) Sobre Cielorraso Hall, Direccion: 34',
+        'Sensor Humo: Etiqueta (AP 104 hall), Direccion: 35', 'Sensor Humo: Etiqueta (AP 104 hall), Direccion: 37',
+        'Sensor Humo: Etiqueta (humo sobre cielorraso) Sobre Cielorraso Hall TA, Direccion: 43',
+        'Sensor Humo: Etiqueta (humo hall TA P1) Bajo Cielorraso Hall, Direccion: 34',
+        'Pulsador: Etiqueta (TA P1 Jaladora hall) En Pared, Direccion: 46', 'Pulsador: Etiqueta (TB P1 Jaladora hall) En Pared, Direccion: 48'
+      ]},
+      { nombre: 'Piso N°2: Jaladoras, Sensores y Sirenas', items: [
+        'AP 201: Sensor Humo, Etiqueta (ap 201 hall) Bajo Cielorraso, Direccion: 58',
+        'AP 204: Sensor Humo (W), Etiqueta (ap 204 hall), Direccion: 51', 'AP 204: Sensor Humo (W), Etiqueta (ap 204 hall), Direccion: 53',
+        'Sensor Humo (W): TA Piso 2, Etiqueta (Humo Hall), Direccion: 60', 'Pulsador: TA Piso 2, Etiqueta (Jaladora TA) En Pared, Direccion: 62',
+        'Pulsador: TB Piso 2, Etiqueta (Jaladora T.B) En Pared, Direccion: 64', 'Sensor Humo (W): TA Piso 2, Etiqueta (Humo Hall TB), Direccion: 64'
+      ]},
+      { nombre: 'Piso N°3: Jaladoras, Sensores y Sirenas', items: [
+        'AP 3: Sensor Humo, Piso 3, Etiqueta (ap3_hall), Direccion: 67', 'AP 3: Sensor Humo, Piso 3, Etiqueta (ap3_entrada), Direccion: 68',
+        'AP 3: Sensor Humo, Piso 3, Etiqueta (ap3_hall), Direccion: 69', 'AP 302: Sensor Humo, Piso 3, Etiqueta (ap302_hall), Direccion: 70',
+        'AP 301: Sensor Humo, Piso 3, Etiqueta (ap301_hall), Direccion: 71', 'AP 301: Sensor Humo, Piso 3, Etiqueta (ap301_hall), Direccion: 73',
+        'Pulsador: TA Piso 2, Etiqueta (Jaladora TA) En Pared, Direccion: 77', 'Pulsador: TB Piso 2, Etiqueta (Jaladora TB) En Pared, Direccion: 79',
+        'Sensor Humo (W): TB Piso 3, Etiqueta (Humo Hall), Direccion: 80', 'AP 301: Sensor Humo, Piso 3, Etiqueta (AP 301 hall), Direccion: 108',
+        'AP 301: Sensor Humo, Piso 3, Etiqueta (AP 301 entrada), Direccion: 107'
+      ]},
+      { nombre: 'Piso N°4: Jaladoras, Sensores y Sirenas', items: [
+        'AP 402: Sensor Humo, Etiqueta (T:A ap 402 hall) Bajo Cielorraso, Direccion: 82',
+        'AP 402: Sensor Humo, Etiqueta (T:A ap 402 cuarto de servicio), Direccion: 83', 'AP 402: Sensor Humo, Etiqueta (T:A ap 402 hall), Direccion: 86',
+        'AP 402: Sensor Humo, Etiqueta (T:A ap 402 hall), Direccion: 87', 'AP 401: Sensor Humo, Etiqueta (T:A ap 401 entrada), Direccion: 90',
+        'AP 401: Sensor Humo, Etiqueta (T:A ap 401 hall), Direccion: 91', 'AP 401: Sensor Humo, Etiqueta (humo 401), Direccion: 92',
+        'Pulsador: TB Piso 4, Etiqueta (Jaladora TB) En Pared, Direccion: 97', 'Pulsador: TB Piso 4, Etiqueta (Jaladora TB) En Pared, Direccion: 99',
+        'Sensor Humo: TB Piso 4, Etiqueta (hall TB), Direccion: 100', 'Sensor Humo: TB Piso..., Etiqueta (Sin ETIQUETA REVISAR), Direccion: 101',
+        'AP 4: Sensor Humo, Etiqueta (T:A ap4_cuarto de servicio), Direccion: 103', 'AP 4: Sensor Humo, Etiqueta (T:A ap4_comedor), Direccion: 104',
+        'AP ?: Sensor Humo, Etiqueta (T:A ap_hall), Direccion: 102', 'Sensor Humo: TA Piso 4, Etiqueta (hall TA), Direccion: 110',
+        'Pulsador: TA Piso 4, Etiqueta (T:A P4 Jaladora TA) En Pared, Direccion: 112'
+      ]}
+    ]
+  };
+  for (const [sistema, secciones] of Object.entries(PLANTILLAS_INICIALES)) {
+    await pool.query('insert into plantillas_mantenimiento (sistema, secciones) values ($1,$2) on conflict (sistema) do nothing', [sistema, JSON.stringify(secciones)]);
+  }
+}).catch(e => console.error('No se pudo crear/precargar plantillas_mantenimiento:', e.message));
 pool.query('alter table telegram_notificaciones_ticket add column if not exists es_grupo boolean default false').catch(e => console.error('No se pudo migrar es_grupo:', e.message));
 // Migración automática: columnas para la encuesta de satisfacción que se manda al resolver un ticket.
 pool.query('alter table tickets add column if not exists satisfaccion_token text').catch(e => console.error('No se pudo migrar satisfaccion_token:', e.message));
@@ -483,6 +738,22 @@ async function getSmtpTransport(cfg) {
   cfg = cfg || await getConfig();
   if (!cfg.correo_activo) return null;
   return construirTransporteSmtp(cfg);
+}
+// Casilla aparte, solo de envío, para las órdenes de mantenimiento — nunca la misma que la de
+// tickets, así si el cliente contesta el correo no se genera un ticket sin querer.
+function construirTransporteSmtpMantenimiento(cfg) {
+  if (!cfg.smtp_host_mant || !cfg.smtp_usuario_mant || !cfg.smtp_pass_enc_mant) return null;
+  const pass = decrypt(cfg.smtp_pass_enc_mant);
+  if (!pass) return null;
+  return nodemailer.createTransport({
+    host: cfg.smtp_host_mant, port: cfg.smtp_port_mant || 465, secure: (cfg.smtp_port_mant || 465) == 465,
+    auth: { user: cfg.smtp_usuario_mant, pass }
+  });
+}
+async function getSmtpTransportMantenimiento(cfg) {
+  cfg = cfg || await getConfig();
+  if (!cfg.correo_mantenimiento_activo) return null;
+  return construirTransporteSmtpMantenimiento(cfg);
 }
 // Envía un correo real (si la casilla está activa y configurada); si no, no hace nada.
 async function demasiadosEnviosAutomaticosRecientes() {
@@ -1289,7 +1560,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
 app.get('/api/clientes', requireStaff, async (req, res) => {
   const clientes = (await pool.query(
     `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.rol,c.rol_cliente,c.contacto_nombre,
-            (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id,
+            (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id, c.es_mantenimiento,
             a.nombre as administrado_por_nombre
      from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
   )).rows;
@@ -1300,31 +1571,31 @@ app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   ok(res, tickets);
 });
 app.post('/api/clientes', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
   if (!nombre) return bad(res, 'Falta el nombre del cliente.');
   const hash = portalPassword ? bcrypt.hashSync(portalPassword, 10) : null;
   const r = await pool.query(
-    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre, rol_cliente, administrado_por_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
-    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorId || null]
+    `insert into clientes (nombre, direccion, telefono, correo, rol, portal_password_hash, contacto_nombre, rol_cliente, administrado_por_id, es_mantenimiento)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+    [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorId || null, !!esMantenimiento]
   );
   ok(res, { id: r.rows[0].id });
 });
 app.put('/api/clientes/:id', requireStaff, async (req, res) => {
-  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId } = req.body;
+  const { nombre, direccion, telefono, correo, rol, portalPassword, contactoNombre, rolCliente, administradoPorId, esMantenimiento } = req.body;
   // Evita crear un ciclo (A administrado por B, y B administrado por A) y que un cliente quede
   // "administrado por sí mismo" si lo elige por error.
   const administradoPorFinal = (administradoPorId && administradoPorId !== req.params.id) ? administradoPorId : null;
   if (portalPassword) {
     const hash = bcrypt.hashSync(portalPassword, 10);
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7,rol_cliente=$8,administrado_por_id=$9 where id=$10`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,portal_password_hash=$6,contacto_nombre=$7,rol_cliente=$8,administrado_por_id=$9,es_mantenimiento=$10 where id=$11`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', hash, (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
     );
   } else {
     await pool.query(
-      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6,rol_cliente=$7,administrado_por_id=$8 where id=$9`,
-      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, req.params.id]
+      `update clientes set nombre=$1,direccion=$2,telefono=$3,correo=$4,rol=$5,contacto_nombre=$6,rol_cliente=$7,administrado_por_id=$8,es_mantenimiento=$9 where id=$10`,
+      [nombre, direccion || '', telefono || '', correo || '', rol || '', (contactoNombre || '').trim(), (rolCliente || '').trim(), administradoPorFinal, !!esMantenimiento, req.params.id]
     );
   }
   ok(res, { ok: true });
@@ -1336,8 +1607,334 @@ app.delete('/api/clientes/:id', requireStaff, async (req, res) => {
   // borran: solo quedan sueltos (sin administración a cargo), en vez de arrastrarlos en la eliminación.
   await pool.query('update clientes set administrado_por_id=null where administrado_por_id=$1', [req.params.id]);
   await pool.query('delete from proveedores where edificio_cliente_id=$1', [req.params.id]);
+  await pool.query('delete from contratos_mantenimiento where cliente_id=$1', [req.params.id]);
   await pool.query('delete from clientes where id=$1', [req.params.id]);
   ok(res, { ok: true });
+});
+/* ---------------- Contrato de mantenimiento (un solo contrato por cliente, con varios sistemas) ----------------
+   Un cliente marcado "es_mantenimiento" puede tener un contrato con la lista de sistemas que cubre
+   (CCTV, Portería, Redes, etc.), su frecuencia y la fecha de la próxima visita. El cobro es mensual
+   y aparte, así que acá no se maneja ni un peso — solo la agenda. Un proceso automático (más abajo,
+   revisarContratosMantenimiento) genera el turno de Servicio Técnico solo, sin ticket ni costos. */
+app.get('/api/clientes/:id/contrato-mantenimiento', requireStaff, async (req, res) => {
+  const contrato = (await pool.query('select * from contratos_mantenimiento where cliente_id=$1 order by creado desc limit 1', [req.params.id])).rows[0];
+  ok(res, contrato || null);
+});
+app.post('/api/clientes/:id/contrato-mantenimiento', requireStaff, async (req, res) => {
+  const { sistemas, frecuenciaMeses, proximaFecha } = req.body || {};
+  if (!Array.isArray(sistemas) || !sistemas.length) return bad(res, 'Elegí al menos un sistema.');
+  if (![1, 2, 3, 4].includes(Number(frecuenciaMeses))) return bad(res, 'Frecuencia inválida.');
+  if (!proximaFecha) return bad(res, 'Falta la fecha de la próxima visita.');
+  const existente = (await pool.query('select id from contratos_mantenimiento where cliente_id=$1', [req.params.id])).rows[0];
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  let contrato;
+  if (existente) {
+    contrato = (await pool.query(
+      `update contratos_mantenimiento set sistemas=$1, frecuencia_meses=$2, proxima_fecha=$3, activo=true where id=$4 returning *`,
+      [sistemas, Number(frecuenciaMeses), proximaFecha, existente.id]
+    )).rows[0];
+  } else {
+    contrato = (await pool.query(
+      `insert into contratos_mantenimiento (cliente_id, sistemas, frecuencia_meses, proxima_fecha, creado_por) values ($1,$2,$3,$4,$5) returning *`,
+      [req.params.id, sistemas, Number(frecuenciaMeses), proximaFecha, staff ? `${staff.nombre} ${staff.apellido}` : null]
+    )).rows[0];
+  }
+  ok(res, contrato);
+});
+app.post('/api/contratos-mantenimiento/:id/pausar', requireStaff, async (req, res) => {
+  const r = await pool.query('update contratos_mantenimiento set activo=false where id=$1 returning *', [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Contrato no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+app.post('/api/contratos-mantenimiento/:id/reactivar', requireStaff, async (req, res) => {
+  const r = await pool.query('update contratos_mantenimiento set activo=true where id=$1 returning *', [req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Contrato no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/contratos-mantenimiento/:id', requireStaff, async (req, res) => {
+  await pool.query('delete from contratos_mantenimiento where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+/* ---------------- Plantillas de mantenimiento (una por sistema: CCTV, Portería, Redes, Control de
+   acceso, Incendio) — cada una con secciones e ítems, editables desde una pantalla aparte. Cuando se
+   genera un turno de mantenimiento se copia tal cual la plantilla de ese momento (así una edición
+   posterior no cambia visitas ya generadas). Cada ítem se responde con: Satisfactorio / Necesita
+   atención / Atención inmediata / No aplica (con motivo opcional). */
+app.get('/api/plantillas-mantenimiento', requireStaff, async (req, res) => {
+  const filas = (await pool.query('select * from plantillas_mantenimiento order by sistema asc')).rows;
+  ok(res, filas);
+});
+app.put('/api/plantillas-mantenimiento/:sistema', requireStaff, async (req, res) => {
+  const { secciones } = req.body || {};
+  if (!Array.isArray(secciones)) return bad(res, 'Formato de secciones inválido.');
+  const limpio = secciones.map(sec => ({
+    nombre: (sec.nombre || '').trim() || 'Sección',
+    items: (sec.items || []).map(it => (typeof it === 'string' ? it.trim() : (it.texto || '').trim())).filter(Boolean)
+  })).filter(sec => sec.items.length);
+  const r = await pool.query(
+    `insert into plantillas_mantenimiento (sistema, secciones) values ($1,$2)
+     on conflict (sistema) do update set secciones=$2, actualizado=now() returning *`,
+    [req.params.sistema, JSON.stringify(limpio)]
+  );
+  ok(res, r.rows[0]);
+});
+// Arma, a partir de la plantilla vigente de un sistema, la copia del checklist para un turno nuevo
+// (cada ítem arranca sin responder). Si no hay plantilla para ese sistema (uno cargado a mano en el
+// contrato), queda con secciones vacías — igual se puede usar para cargar notas de la visita.
+function checklistDesdePlantilla(plantilla) {
+  const secciones = plantilla ? (plantilla.secciones || []) : [];
+  return {
+    secciones: secciones.map(sec => ({
+      nombre: sec.nombre,
+      items: (sec.items || []).map((texto, idx) => ({ id: `${sec.nombre}-${idx}`, texto, estado: null, motivo: '' }))
+    }))
+  };
+}
+const ESTADOS_CHECKLIST_LABEL = { satisfactorio: 'Satisfactorio', atencion: 'Necesita atención', inmediata: 'Atención inmediata', no_aplica: 'No aplica' };
+const ESTADOS_CHECKLIST_COLOR = { satisfactorio: '#1e8e4f', atencion: '#b8860b', inmediata: '#c0392b', no_aplica: '#8a8a8a' };
+const BORCAM_AZUL = '#0F2A4D';
+const BORCAM_NARANJA = '#E8622C';
+const BORCAM_PIE = 'BORCAM EQUIPAMIENTOS S.R.L — Av 8 de Octubre 2956, Montevideo — Tel.: 598+ 24878281 — administracion@borcam.com.uy';
+const FRECUENCIA_MANTENIMIENTO_LABEL = { 1: 'Mensual', 2: 'Bimestral', 3: 'Trimestral', 4: 'Cuatrimestral' };
+// Arma el PDF de la orden de mantenimiento con look corporativo (franja naranja, encabezado con los
+// datos de Borcam, secciones con tablas prolijas y la firma del cliente dibujada, no solo la
+// aclaración) — mismo espíritu que los informes que ya se usaban en Gestioo.
+// Mide el alto real que va a ocupar un texto: hay que fijar la fuente/tamaño en el doc ANTES de medir
+// (pasarlos como opción de heightOfString da un resultado mayor al real y hace que el texto de abajo
+// quede pisado con el de arriba).
+function medirAlto(doc, texto, ancho, font, size) {
+  doc.font(font).fontSize(size);
+  return doc.heightOfString(texto, { width: ancho });
+}
+async function generarPdfOrdenMantenimiento(servicio, cliente) {
+  let firmaBuffer = null;
+  if (servicio.firma_path) {
+    try {
+      const upstream = await descargarArchivoStorage(servicio.firma_path);
+      firmaBuffer = Buffer.from(await upstream.arrayBuffer());
+    } catch (e) { console.error('No se pudo descargar la firma para el PDF de la orden:', e.message); }
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
+      const chunks = [];
+      doc.on('data', c => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const M = 42; // margen de contenido
+      const pageW = doc.page.width;
+      const contentW = pageW - M * 2;
+      const bottomLimit = doc.page.height - 60;
+
+      function piePagina() {
+        doc.fontSize(7.5).fillColor('#999')
+          .text(BORCAM_PIE, M, doc.page.height - 34, { width: contentW, align: 'center' });
+      }
+      function nuevaFranjaSiHaceFalta(alturaNecesaria) {
+        if (doc.y + alturaNecesaria > bottomLimit) {
+          piePagina();
+          doc.addPage();
+          doc.rect(0, 0, pageW, 6).fill(BORCAM_NARANJA);
+          doc.y = 34;
+        }
+      }
+
+      // Encabezado
+      doc.rect(0, 0, pageW, 6).fill(BORCAM_NARANJA);
+      doc.fontSize(22).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('BORCAM', M, 30);
+      doc.fontSize(9).fillColor('#888').font('Helvetica-Oblique').text('Tu hogar a otra dimensión', M, 54);
+      doc.fontSize(15).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('Orden de mantenimiento', M, 30, { width: contentW, align: 'right' });
+      const fechaRealizado = servicio.firma_fecha || servicio.creado;
+      doc.fontSize(9).fillColor('#555').font('Helvetica')
+        .text(`Turno N° ${servicio.id}`, M, 52, { width: contentW, align: 'right' })
+        .text(`Realizado: ${new Date(fechaRealizado).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}`, M, 64, { width: contentW, align: 'right' });
+      doc.moveTo(M, 84).lineTo(pageW - M, 84).strokeColor('#ddd').lineWidth(1).stroke();
+
+      // Datos del cliente y del trabajo, en un recuadro. "Mantenimiento" muestra solo la frecuencia
+      // del contrato (Mensual, Bimestral, etc.) y "Sistemas" la lista de sistemas cubiertos, en vez
+      // de repetir el título completo armado para la agenda.
+      const infoY = 96;
+      const anchoTrabajo = contentW / 2 - 12;
+      const sistemasLista = Object.keys(servicio.checklist_sistemas || {}).join(', ');
+      // Si el/los sistemas de esta visita mencionan una torre (ej: "Riba Torre A: ..."), la mostramos
+      // como un dato más del cliente — útil para edificios con varias torres con plantillas separadas.
+      const torreMatch = sistemasLista.match(/Torre\s+([A-Za-zÀ-ÿ0-9]+)/i);
+      const lineaTorre = torreMatch ? `Torre ${torreMatch[1]}` : null;
+      const frecuenciaLabel = servicio.frecuencia_mantenimiento_meses
+        ? (FRECUENCIA_MANTENIMIENTO_LABEL[servicio.frecuencia_mantenimiento_meses] || `Cada ${servicio.frecuencia_mantenimiento_meses} meses`)
+        : null;
+      const lineaMantenimiento = frecuenciaLabel ? `Mantenimiento: ${frecuenciaLabel}` : servicio.titulo;
+      const alturaMantenimiento = medirAlto(doc, lineaMantenimiento, anchoTrabajo, 'Helvetica', 10);
+      const alturaSistemas = sistemasLista ? medirAlto(doc, `Sistemas: ${sistemasLista}`, anchoTrabajo, 'Helvetica', 9) : 0;
+      const alturaTrabajoTotal = alturaMantenimiento + (sistemasLista ? alturaSistemas + 6 : 0);
+      const infoAltoCliente = cliente && cliente.direccion ? 56 : 42;
+      const infoAlto = Math.max(
+        lineaTorre ? infoAltoCliente + 14 : infoAltoCliente,
+        34 + alturaTrabajoTotal + (servicio.tecnico_realizo_nombre ? 16 : 0)
+      );
+      doc.roundedRect(M, infoY, contentW, infoAlto, 4).fillAndStroke('#F7F8FA', '#E3E6EA');
+      doc.fontSize(9.5).fillColor('#666').font('Helvetica-Bold').text('CLIENTE', M + 12, infoY + 10);
+      doc.fontSize(10.5).fillColor('#000').font('Helvetica').text(cliente ? cliente.nombre : '—', M + 12, infoY + 22);
+      if (cliente && cliente.direccion) doc.fontSize(9).fillColor('#555').font('Helvetica').text(cliente.direccion, M + 12, infoY + 38);
+      if (lineaTorre) {
+        doc.fontSize(9).fillColor('#555').font('Helvetica-Bold').text(lineaTorre, M + 12, infoY + (cliente && cliente.direccion ? 52 : 38));
+      }
+      doc.fontSize(9.5).fillColor('#666').font('Helvetica-Bold').text('TRABAJO REALIZADO', M + contentW / 2, infoY + 10, { width: anchoTrabajo });
+      doc.fontSize(10).fillColor('#000').font('Helvetica').text(lineaMantenimiento, M + contentW / 2, infoY + 22, { width: anchoTrabajo });
+      let yTrabajo = infoY + 22 + alturaMantenimiento;
+      if (sistemasLista) {
+        doc.fontSize(9).fillColor('#555').font('Helvetica').text(`Sistemas: ${sistemasLista}`, M + contentW / 2, yTrabajo + 4, { width: anchoTrabajo });
+        yTrabajo += alturaSistemas + 6;
+      }
+      if (servicio.tecnico_realizo_nombre) {
+        doc.fontSize(9).fillColor('#555').font('Helvetica')
+          .text(`Técnico: ${servicio.tecnico_realizo_nombre}`, M + contentW / 2, yTrabajo + 4, { width: anchoTrabajo });
+      }
+      doc.y = infoY + infoAlto + 18;
+
+      // Checklist por sistema
+      const checklist = servicio.checklist_sistemas || {};
+      for (const sistema of Object.keys(checklist)) {
+        const secciones = (checklist[sistema] && checklist[sistema].secciones) || [];
+        if (!secciones.length) continue;
+        nuevaFranjaSiHaceFalta(30);
+        doc.rect(M, doc.y, contentW, 22).fill(BORCAM_AZUL);
+        doc.fontSize(11).fillColor('#fff').font('Helvetica-Bold').text(sistema, M + 10, doc.y + 6);
+        doc.y += 22;
+        for (const sec of secciones) {
+          nuevaFranjaSiHaceFalta(20);
+          doc.rect(M, doc.y, contentW, 16).fill('#EDEFF2');
+          doc.fontSize(8.5).fillColor('#444').font('Helvetica-Bold').text(sec.nombre.toUpperCase(), M + 10, doc.y + 4);
+          doc.y += 16;
+          for (const item of (sec.items || [])) {
+            const badgeAncho = 118;
+            const textoAncho = contentW - badgeAncho - 24;
+            const alturaTexto = medirAlto(doc, item.texto, textoAncho, 'Helvetica', 9.5);
+            const alturaMotivo = item.motivo ? medirAlto(doc, item.motivo, contentW - 24, 'Helvetica-Oblique', 8.5) + 6 : 0;
+            const alturaFila = Math.max(alturaTexto, 14) + 12 + alturaMotivo;
+            nuevaFranjaSiHaceFalta(alturaFila + 4);
+            const filaY = doc.y;
+            doc.fontSize(9.5).fillColor('#222').font('Helvetica').text(item.texto, M + 12, filaY + 6, { width: textoAncho });
+            const estadoLabel = item.estado ? ESTADOS_CHECKLIST_LABEL[item.estado] : 'Sin responder';
+            const color = item.estado ? (ESTADOS_CHECKLIST_COLOR[item.estado] || '#666') : '#aaa';
+            const badgeX = M + contentW - badgeAncho - 10;
+            doc.roundedRect(badgeX, filaY + 5, badgeAncho, 16, 8).fill(color);
+            doc.fontSize(8).fillColor('#fff').font('Helvetica-Bold').text(estadoLabel, badgeX, filaY + 9, { width: badgeAncho, align: 'center' });
+            if (item.motivo) {
+              doc.fontSize(8.5).fillColor('#666').font('Helvetica-Oblique').text(item.motivo, M + 12, filaY + Math.max(alturaTexto, 14) + 10, { width: contentW - 24 });
+            }
+            doc.y = filaY + alturaFila;
+            doc.moveTo(M, doc.y).lineTo(M + contentW, doc.y).strokeColor('#eee').lineWidth(0.5).stroke();
+          }
+        }
+        doc.y += 12;
+      }
+
+      // Notas de la visita
+      const notas = servicio.notas_mantenimiento || [];
+      if (notas.length) {
+        nuevaFranjaSiHaceFalta(30);
+        doc.rect(M, doc.y, contentW, 22).fill(BORCAM_AZUL);
+        doc.fontSize(11).fillColor('#fff').font('Helvetica-Bold').text('Notas de la visita', M + 10, doc.y + 6);
+        doc.y += 22 + 8;
+        for (const n of notas) {
+          const alturaTexto = medirAlto(doc, n.texto, contentW - 24, 'Helvetica', 9.5);
+          nuevaFranjaSiHaceFalta(alturaTexto + 16);
+          doc.fontSize(8).fillColor('#999').font('Helvetica-Bold').text(new Date(n.fecha).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' }), M + 12, doc.y);
+          doc.fontSize(9.5).fillColor('#222').font('Helvetica').text(n.texto, M + 12, doc.y + 11, { width: contentW - 24 });
+          doc.y += alturaTexto + 20;
+        }
+      }
+
+      // Conformidad / firma del cliente
+      nuevaFranjaSiHaceFalta(firmaBuffer ? 130 : 40);
+      doc.moveTo(M, doc.y).lineTo(M + contentW, doc.y).strokeColor('#ddd').lineWidth(1).stroke();
+      doc.y += 14;
+      doc.fontSize(10.5).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('Conformidad del cliente', M, doc.y);
+      doc.y += 16;
+      if (firmaBuffer) {
+        try { doc.image(firmaBuffer, M, doc.y, { fit: [200, 80] }); } catch (e) { /* firma corrupta, se omite */ }
+        doc.y += 86;
+        doc.fontSize(9).fillColor('#333').font('Helvetica')
+          .text(`Firmado por ${servicio.firma_nombre || ''} ${servicio.firma_apellido || ''} — C.I. ${servicio.firma_cedula || '—'}`, M, doc.y);
+        doc.fontSize(8).fillColor('#888').text(`${new Date(servicio.firma_fecha).toLocaleString('es-UY', { timeZone: 'America/Montevideo' })}`, M, doc.y + 12);
+      } else if (servicio.firma_sin_firma) {
+        doc.fontSize(9).fillColor('#666').font('Helvetica-Oblique')
+          .text(`Sin firma del cliente — ${servicio.firma_motivo_sin_firma || 'no había nadie presente.'}`, M, doc.y);
+      }
+
+      piePagina();
+      doc.end();
+    } catch (e) { reject(e); }
+  });
+}
+// Genera el PDF y lo manda por la casilla aparte de mantenimiento (nunca la de tickets). Se puede
+// llamar a mano desde el botón, o solo desde el proceso automático de las 2 horas.
+async function enviarOrdenMantenimientoPorCorreo(servicioId) {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+  if (!servicio) throw new Error('Turno no encontrado.');
+  if (!servicio.checklist_sistemas) throw new Error('Este turno no es de mantenimiento.');
+  const cliente = servicio.cliente_id ? (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0] : null;
+  if (!cliente || !cliente.correo) throw new Error('El cliente no tiene un correo cargado.');
+  const cfg = await getConfig();
+  const transport = await getSmtpTransportMantenimiento(cfg);
+  if (!transport) throw new Error('Falta activar y configurar la casilla de correo para órdenes de mantenimiento, en Configuración → Correo.');
+  const pdfBuffer = await generarPdfOrdenMantenimiento(servicio, cliente);
+  await transport.sendMail({
+    from: `"${cfg.casilla_nombre_mant || 'Borcam Mantenimiento'}" <${cfg.smtp_usuario_mant}>`,
+    to: cliente.correo,
+    subject: `Orden de mantenimiento — ${cliente.nombre}`,
+    text: 'Adjuntamos la orden de mantenimiento con el detalle de la visita realizada.',
+    html: '<p>Adjuntamos la orden de mantenimiento con el detalle de la visita realizada.</p>',
+    attachments: [{ filename: `Orden de mantenimiento - ${servicio.id}.pdf`, content: pdfBuffer }]
+  });
+  await pool.query('update servicios_tecnicos set orden_mantenimiento_enviada=true, orden_mantenimiento_enviada_fecha=now() where id=$1', [servicioId]);
+  return (await pool.query('select * from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+}
+app.post('/api/servicios-tecnicos/:id/enviar-orden-mantenimiento', requireStaff, async (req, res) => {
+  try {
+    const actualizado = await enviarOrdenMantenimientoPorCorreo(req.params.id);
+    ok(res, actualizado);
+  } catch (e) { bad(res, e.message); }
+});
+// Actualiza la respuesta de un ítem puntual (estado + motivo opcional) dentro del checklist de un
+// sistema, en una visita de mantenimiento ya generada.
+app.post('/api/servicios-tecnicos/:id/checklist-item', requireStaff, async (req, res) => {
+  const { sistema, itemId, estado, motivo } = req.body || {};
+  if (!sistema || !itemId) return bad(res, 'Faltan datos del ítem.');
+  if (estado && !['satisfactorio', 'atencion', 'inmediata', 'no_aplica'].includes(estado)) return bad(res, 'Estado inválido.');
+  const s = (await pool.query('select checklist_sistemas from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!s) return bad(res, 'Turno no encontrado.', 404);
+  const checklist = { ...(s.checklist_sistemas || {}) };
+  const sis = checklist[sistema];
+  if (!sis) return bad(res, 'Sistema no encontrado en este turno.');
+  for (const sec of (sis.secciones || [])) {
+    const item = (sec.items || []).find(it => it.id === itemId);
+    if (item) { item.estado = estado || null; item.motivo = motivo || ''; break; }
+  }
+  const r = await pool.query('update servicios_tecnicos set checklist_sistemas=$1 where id=$2 returning *', [JSON.stringify(checklist), req.params.id]);
+  ok(res, r.rows[0]);
+});
+// Notas libres de la visita de mantenimiento (observaciones generales, no atadas a un ítem puntual),
+// con fecha — solo quedan guardadas en este turno/comprobante, no en un historial aparte del cliente.
+app.post('/api/servicios-tecnicos/:id/nota-mantenimiento', requireStaff, async (req, res) => {
+  const { texto } = req.body || {};
+  if (!texto || !texto.trim()) return bad(res, 'Falta el texto de la nota.');
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const s = (await pool.query('select notas_mantenimiento from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!s) return bad(res, 'Turno no encontrado.', 404);
+  const notas = [...(s.notas_mantenimiento || []), { fecha: new Date().toISOString(), texto: texto.trim(), autor: staff ? `${staff.nombre} ${staff.apellido}` : null }];
+  const r = await pool.query('update servicios_tecnicos set notas_mantenimiento=$1 where id=$2 returning *', [JSON.stringify(notas), req.params.id]);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/servicios-tecnicos/:id/nota-mantenimiento/:idx', requireStaff, async (req, res) => {
+  const s = (await pool.query('select notas_mantenimiento from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!s) return bad(res, 'Turno no encontrado.', 404);
+  const notas = [...(s.notas_mantenimiento || [])];
+  notas.splice(Number(req.params.idx), 1);
+  const r = await pool.query('update servicios_tecnicos set notas_mantenimiento=$1 where id=$2 returning *', [JSON.stringify(notas), req.params.id]);
+  ok(res, r.rows[0]);
 });
 /* ---------------- Proveedores y Servicios (por Edificio, cargados por la Administración o por staff) ---------------- */
 app.get('/api/proveedores', requireStaff, async (req, res) => {
@@ -1871,7 +2468,10 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     respaldoActivo: !!c.respaldo_activo, respaldoCorreoDestino: c.respaldo_correo_destino || '',
     respaldoFrecuenciaDias: c.respaldo_frecuencia_dias || 7, respaldoUltimo: c.respaldo_ultimo,
     recordatorioSinAsignarActivo: c.recordatorio_sin_asignar_activo !== false,
-    recordatorioSinAsignarHora: c.recordatorio_sin_asignar_hora || '18:00'
+    recordatorioSinAsignarHora: c.recordatorio_sin_asignar_hora || '18:00',
+    correoMantenimientoActivo: !!c.correo_mantenimiento_activo, casillaNombreMant: c.casilla_nombre_mant || '',
+    smtpHostMant: c.smtp_host_mant || '', smtpPortMant: c.smtp_port_mant || 465, smtpUsuarioMant: c.smtp_usuario_mant || '',
+    tieneSmtpPasswordMant: !!c.smtp_pass_enc_mant
   });
 });
 app.put('/api/configuracion', requireStaff, async (req, res) => {
@@ -1889,7 +2489,10 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
        telegram_activo=$20, telegram_chat_id=$21,
        seguimiento_activo=$22, seguimiento_dias_recordatorio=$23, seguimiento_repetir_dias=$24, seguimiento_dias_escalar=$25,
        respaldo_activo=$26, respaldo_correo_destino=$27, respaldo_frecuencia_dias=$28,
-       recordatorio_sin_asignar_activo=$29, recordatorio_sin_asignar_hora=$30
+       recordatorio_sin_asignar_activo=$29, recordatorio_sin_asignar_hora=$30,
+       correo_mantenimiento_activo=$31, casilla_nombre_mant=$32,
+       smtp_host_mant=$33, smtp_port_mant=$34, smtp_usuario_mant=$35,
+       smtp_pass_enc_mant = case when $36 <> '' then $37 else smtp_pass_enc_mant end
      where id=1`,
     [
       b.casillaEmail || '', b.casillaNombre || '', !!b.correoActivo,
@@ -1903,7 +2506,10 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
       !!b.telegramActivo, b.telegramChatId || '',
       !!b.seguimientoActivo, b.seguimientoDiasRecordatorio || 2, b.seguimientoRepetirDias || 2, b.seguimientoDiasEscalar || 0,
       !!b.respaldoActivo, b.respaldoCorreoDestino || '', b.respaldoFrecuenciaDias || 7,
-      !!b.recordatorioSinAsignarActivo, b.recordatorioSinAsignarHora || '18:00'
+      !!b.recordatorioSinAsignarActivo, b.recordatorioSinAsignarHora || '18:00',
+      !!b.correoMantenimientoActivo, b.casillaNombreMant || '',
+      b.smtpHostMant || '', b.smtpPortMant || 465, b.smtpUsuarioMant || '',
+      b.smtpPasswordMant || '', encrypt(b.smtpPasswordMant || '')
     ]
   );
   ok(res, { ok: true });
@@ -1942,6 +2548,15 @@ app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
     resultado.smtp.ok = true;
   } catch (e) { resultado.smtp.error = e.message; }
   ok(res, resultado);
+});
+app.post('/api/configuracion/probar-mantenimiento', requireStaff, async (req, res) => {
+  const c = await getConfig();
+  try {
+    const transport = construirTransporteSmtpMantenimiento(c);
+    if (!transport) throw new Error('Faltan datos de esta casilla (servidor, usuario o contraseña).');
+    await transport.verify();
+    ok(res, { ok: true });
+  } catch (e) { bad(res, e.message); }
 });
 /* ---------------- Agenda de instalaciones (calendario público) ---------------- */
 const DIA_MAP = { Sun: 'domingo', Mon: 'lunes', Tue: 'martes', Wed: 'miercoles', Thu: 'jueves', Fri: 'viernes', Sat: 'sabado' };
@@ -2506,10 +3121,11 @@ app.delete('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   ok(res, { ok: true });
 });
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
-  const { conFirma, nombre, apellido, cedula, firmaDataUrl, motivoSinFirma } = req.body || {};
+  const { conFirma, nombre, apellido, cedula, firmaDataUrl, motivoSinFirma, tecnicoNombre } = req.body || {};
   const id = req.params.id;
   const existente = (await pool.query('select id from servicios_tecnicos where id=$1', [id])).rows[0];
   if (!existente) return bad(res, 'Turno no encontrado.', 404);
+  const tecnico = (tecnicoNombre || '').trim() || null;
   if (conFirma) {
     if (!nombre || !apellido || !cedula || !firmaDataUrl) return bad(res, 'Faltan datos de la firma (nombre, apellido, cédula o el dibujo de la firma).');
     const base64 = (firmaDataUrl || '').split(',')[1] || '';
@@ -2519,14 +3135,14 @@ app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (re
     } catch (e) { return bad(res, 'No se pudo guardar la firma: ' + e.message); }
     await pool.query(
       `update servicios_tecnicos set estado='realizado', firma_nombre=$1, firma_apellido=$2, firma_cedula=$3,
-        firma_path=$4, firma_sin_firma=false, firma_motivo_sin_firma=null, firma_fecha=now() where id=$5`,
-      [nombre.trim(), apellido.trim(), cedula.trim(), path, id]
+        firma_path=$4, firma_sin_firma=false, firma_motivo_sin_firma=null, firma_fecha=now(), tecnico_realizo_nombre=$5 where id=$6`,
+      [nombre.trim(), apellido.trim(), cedula.trim(), path, tecnico, id]
     );
   } else {
     await pool.query(
       `update servicios_tecnicos set estado='realizado', firma_nombre=null, firma_apellido=null, firma_cedula=null,
-        firma_path=null, firma_sin_firma=true, firma_motivo_sin_firma=$1, firma_fecha=now() where id=$2`,
-      [(motivoSinFirma || '').trim() || 'No había nadie presente para firmar.', id]
+        firma_path=null, firma_sin_firma=true, firma_motivo_sin_firma=$1, firma_fecha=now(), tecnico_realizo_nombre=$2 where id=$3`,
+      [(motivoSinFirma || '').trim() || 'No había nadie presente para firmar.', tecnico, id]
     );
   }
   const r = await pool.query('select * from servicios_tecnicos where id=$1', [id]);
@@ -3720,6 +4336,71 @@ async function revisarReservasVencidas() {
 }
 setTimeout(revisarReservasVencidas, 35000);
 setInterval(revisarReservasVencidas, 30 * 60 * 1000);
+// Generación automática de turnos de mantenimiento: para cada contrato activo, cuando falten 7 días o
+// menos para la "próxima fecha", se crea solo el turno de Servicio Técnico (sin ticket ni costos), con
+// el checklist de los sistemas del contrato sin marcar, y se calcula la siguiente fecha sumando la
+// frecuencia — esto pasa sí o sí, sin esperar a que el turno anterior se haya marcado como realizado.
+function nombreSistemasParaTitulo(sistemas) {
+  return Array.isArray(sistemas) && sistemas.length ? sistemas.join(', ') : 'Mantenimiento';
+}
+async function revisarContratosMantenimiento() {
+  try {
+    const contratos = (await pool.query(
+      `select * from contratos_mantenimiento
+       where activo = true
+         and proxima_fecha <= (current_date + interval '7 days')
+         and (ultima_generacion is null or ultima_generacion < proxima_fecha)`
+    )).rows;
+    for (const c of contratos) {
+      const cliente = (await pool.query('select nombre from clientes where id=$1', [c.cliente_id])).rows[0];
+      const checklist = {};
+      for (const s of (c.sistemas || [])) {
+        const plantilla = (await pool.query('select * from plantillas_mantenimiento where sistema=$1', [s])).rows[0];
+        checklist[s] = checklistDesdePlantilla(plantilla);
+      }
+      const fechaStr = c.proxima_fecha instanceof Date ? c.proxima_fecha.toISOString().slice(0, 10) : c.proxima_fecha;
+      await pool.query(
+        `insert into servicios_tecnicos (cliente_id, titulo, fecha_hora, estado, contrato_mantenimiento_id, checklist_sistemas, frecuencia_mantenimiento_meses)
+         values ($1,$2,$3,'pendiente',$4,$5,$6)`,
+        [
+          c.cliente_id,
+          `Mantenimiento: ${nombreSistemasParaTitulo(c.sistemas)}${cliente ? ' — ' + cliente.nombre : ''}`,
+          `${fechaStr}T09:00:00-03:00`,
+          c.id,
+          JSON.stringify(checklist),
+          c.frecuencia_meses
+        ]
+      );
+      const siguiente = new Date(c.proxima_fecha);
+      siguiente.setMonth(siguiente.getMonth() + c.frecuencia_meses);
+      await pool.query(
+        'update contratos_mantenimiento set ultima_generacion=$1, proxima_fecha=$2 where id=$3',
+        [c.proxima_fecha, siguiente.toISOString().slice(0, 10), c.id]
+      );
+    }
+    if (contratos.length) console.log(`Turnos de mantenimiento generados automáticamente: ${contratos.length}`);
+  } catch (e) { console.error('Error revisando contratos de mantenimiento:', e.message); }
+}
+setTimeout(revisarContratosMantenimiento, 40000);
+setInterval(revisarContratosMantenimiento, 30 * 60 * 1000);
+// Red de seguridad: si un turno de mantenimiento se marcó como realizado y nadie mandó la orden a
+// mano dentro de las 2 horas, se manda sola — así nunca queda un cliente sin recibirla por olvido.
+async function revisarOrdenesMantenimientoPendientes() {
+  try {
+    const pendientes = (await pool.query(
+      `select id from servicios_tecnicos
+       where estado='realizado' and checklist_sistemas is not null
+         and orden_mantenimiento_enviada=false
+         and firma_fecha is not null and firma_fecha < now() - interval '2 hours'`
+    )).rows;
+    for (const s of pendientes) {
+      await enviarOrdenMantenimientoPorCorreo(s.id).catch(e => console.error(`No se pudo mandar automáticamente la orden de mantenimiento del turno ${s.id}:`, e.message));
+    }
+    if (pendientes.length) console.log(`Órdenes de mantenimiento mandadas automáticamente (respaldo 2hs): ${pendientes.length}`);
+  } catch (e) { console.error('Error revisando órdenes de mantenimiento pendientes de enviar:', e.message); }
+}
+setTimeout(revisarOrdenesMantenimientoPendientes, 45000);
+setInterval(revisarOrdenesMantenimientoPendientes, 30 * 60 * 1000);
 /* ---------------- Descarga protegida de adjuntos (Supabase Storage) ---------------- */
 app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
   if (!req.session || !req.session.type) return res.status(401).json({ error: 'No autenticado' });
