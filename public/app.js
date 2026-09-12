@@ -203,7 +203,7 @@ async function loadStaffData() {
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
-  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
   cache.configuracion = configuracion;
@@ -561,11 +561,13 @@ function openEditarGrupoModal(id) { state.modal = 'editar-grupo'; state.editGrup
 async function submitGrupo(ev) {
   ev.preventDefault();
   const fd = new FormData(ev.target);
-  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), telefono: fd.get('telefono'), correo: fd.get('correo'), rol: fd.get('rol'), contactoNombre: fd.get('contactoNombre'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null, esMantenimiento: fd.get('esMantenimiento') === 'on' };
+  // telefono y contactoNombre ya no se cargan desde acá (el cliente los completa desde su portal),
+  // así que no van en el payload — el backend conserva lo que ya hubiera en vez de borrarlo.
+  const payload = { nombre: fd.get('nombre'), direccion: fd.get('direccion'), correo: fd.get('correo'), correoInformes: fd.get('correoInformes'), rol: fd.get('rol'), rolCliente: fd.get('rolCliente'), portalPassword: (fd.get('portalPassword') || '').trim(), administradoPorId: fd.get('administradoPorId') || null, esMantenimiento: fd.get('esMantenimiento') === 'on' };
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
     state.modal = null;
     render();
   } catch (e) { showToast(e.message); }
@@ -4009,6 +4011,7 @@ async function renderGrupoDetailAsync(id) {
     <div class="ticket-head">
       <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
         <div class="ticket-from">${[g.direccion, g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
+        ${g.correoInformes ? `<div class="ticket-from">📧 Informes a: <strong>${escapeHtml(g.correoInformes)}</strong></div>` : ''}
         <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div>
         ${g.administradoPorNombre ? `<div class="ticket-from">Administrado por: <strong>${escapeHtml(g.administradoPorNombre)}</strong></div>` : ''}
       </div>
@@ -5422,14 +5425,14 @@ function renderGrupoModal() {
       <div class="field"><label>Nombre de cliente</label><input name="nombre" value="${g ? escapeHtml(g.nombre) : ''}" required></div>
       <div class="field"><label>Dirección</label><input name="direccion" value="${g ? escapeHtml(g.direccion || '') : ''}"></div>
       <div class="field"><label>Correo electrónico</label><input name="correo" type="email" value="${g ? escapeHtml(g.correo || '') : ''}"></div>
+      <div class="field"><label>Correo para informes (opcional)</label><input name="correoInformes" type="email" placeholder="Se usa el de arriba si lo dejás en blanco" value="${g ? escapeHtml(g.correoInformes || '') : ''}">
+        <div class="hint-text">A esta casilla se mandan los informes y notificaciones (ej: la orden de mantenimiento) si el cliente quiere que le lleguen a otro lado que no sea el correo de arriba.</div></div>
       <div class="field"><label>Rol</label><select name="rolCliente" id="grupo-rol-select" onchange="actualizarAdministradoPorSegunRol()"><option value="" ${!g || !g.rolCliente ? 'selected' : ''}>Sin especificar</option>${CAT.ROLES_CLIENTE.map(r => `<option value="${r}" ${g && g.rolCliente === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
       <div class="field"><label>Administrado por</label>
         <select name="administradoPorId" id="grupo-administrado-por-select">${opcionesAdministradoPorHtml(g ? g.rolCliente : '', g ? g.id : null, g ? g.administradoPorId : null)}</select>
         <div class="hint-text">Si este cliente es un edificio que gestiona una administración, elegila acá; si es un apartamento, elegí a qué edificio pertenece. La lista cambia según el Rol de arriba.</div></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin:12px 0 4px;padding-top:12px;border-top:1px dashed var(--line-strong);"><input type="checkbox" name="esMantenimiento" ${g && g.esMantenimiento ? 'checked' : ''}> 🔧 Cliente de mantenimiento</label>
       <div class="hint-text" style="margin-bottom:8px;">Tiene un contrato de visitas periódicas de mantenimiento (se configura desde la ficha del cliente una vez creado).</div>
-      <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Datos de contacto</div>
-      <div class="field-row"><div class="field"><label>Nombre</label><input name="contactoNombre" value="${g ? escapeHtml(g.contactoNombre || '') : ''}"></div><div class="field"><label>Teléfono</label><input name="telefono" value="${g ? escapeHtml(g.telefono || '') : ''}"></div></div>
       <div class="field"><label>Rol</label><select name="rol" required><option value="" disabled ${!g ? 'selected' : ''}>Elegí un rol</option>${rolOptions}</select></div>
       <div class="field" style="margin-top:6px;padding-top:14px;border-top:1px dashed var(--line-strong);"><label>Acceso al portal (contraseña)</label>
         <input name="portalPassword" type="password" placeholder="${editing ? 'Dejar en blanco para no cambiarla' : 'Definí una contraseña de acceso'}" autocomplete="new-password">
