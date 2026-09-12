@@ -3160,6 +3160,41 @@ function navItems(activeView) {
   );
   return items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
 }
+// Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
+// 13+ botones apretados en una sola fila ilegible. El resto del menú completo vive en el modal
+// "menu-movil" (ver renderMenuMovilModal).
+const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario'];
+function navItemsBottom(activeView) {
+  const todos = [
+    { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
+    { v: 'servicio-tecnico', label: 'S. Técnico', ico: '&#128295;' }, { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
+  ];
+  const enMenuMovil = NAV_ITEMS_BOTTOM_PRINCIPALES.includes(activeView) ? false : true;
+  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+  return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
+}
+function openMenuMovil() { state.modal = 'menu-movil'; render(); }
+function irDesdeMenuMovil(view) { state.modal = null; go(view); }
+function renderMenuMovilModal() {
+  const items = [
+    { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
+    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' }, { v: 'tags', label: 'Tags', ico: '&#127991;' },
+  ];
+  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
+  items.push(
+    { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
+    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
+  );
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
+    <h2>Más opciones</h2>
+    <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+      ${items.map(it => `<button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
+      <button class="nav-btn" style="color:var(--stamp-red);justify-content:flex-start;" onclick="logout()"><span class="ico" style="background:var(--gray-tint);">&#8630;</span><span>Cerrar sesión</span></button>
+    </div>
+  </div></div>`;
+}
 function renderShell(inner) {
   const u = currentUser();
   return `
@@ -3274,7 +3309,7 @@ function renderShell(inner) {
     <div class="main">
       <div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
-      <div class="bottomnav">${navItems(state.view)}</div>
+      <div class="bottomnav">${navItemsBottom(state.view)}</div>
     </div>
   </div>
   ${renderActiveModal()}
@@ -5308,6 +5343,7 @@ function renderActiveModal() {
   if (state.modal === 'nueva-respuesta' || state.modal === 'editar-respuesta') return renderRespuestaModal();
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
   if (state.modal === 'importar-clientes') return renderImportarClientesModal();
+  if (state.modal === 'menu-movil') return renderMenuMovilModal();
   if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
   if (state.modal === 'plantilla-mantenimiento') return renderPlantillaMantenimientoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
