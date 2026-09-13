@@ -456,6 +456,8 @@ pool.query('alter table citas add column if not exists caja_domotica boolean').c
 pool.query('alter table usuarios add column if not exists foto_path text').catch(e => console.error('No se pudo migrar foto_path:', e.message));
 // Migración automática: vincular cada ticket a un edificio concreto (antes solo se podía inferir del asunto).
 pool.query('alter table tickets add column if not exists edificio text').catch(e => console.error('No se pudo migrar edificio:', e.message));
+// Migración automática: dato de Torre del ticket (junto con Apartamento), para precargar el Pedido de Tag.
+pool.query('alter table tickets add column if not exists torre text').catch(e => console.error('No se pudo migrar torre:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -1087,11 +1089,12 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   ok(res, { ticket, automatizado });
 });
 app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
-  const { categoria, prioridad, estado, asignadoA, clienteId, edificio } = req.body;
+  const { categoria, prioridad, estado, asignadoA, clienteId, edificio, torre } = req.body;
   const id = req.params.id;
   if (categoria !== undefined) await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, id]);
   if (prioridad !== undefined) await pool.query('update tickets set prioridad=$1, actualizado=now() where id=$2', [prioridad, id]);
   if (edificio !== undefined) await pool.query('update tickets set edificio=$1, actualizado=now() where id=$2', [(edificio || '').trim() || null, id]);
+  if (torre !== undefined) await pool.query('update tickets set torre=$1, actualizado=now() where id=$2', [(torre || '').trim() || null, id]);
   if (asignadoA !== undefined) {
     if (asignadoA) {
       // Reasignar desde el desplegable "Asignado a" tiene que hacer exactamente lo mismo que "Tomar
