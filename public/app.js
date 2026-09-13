@@ -4994,19 +4994,23 @@ function renderTagsHistorialTabla() {
 // "Venta por lote": una Administración compra de una sola vez una cantidad de tags que gestiona
 // por su cuenta. No se descuenta del stock de peatonales/vehiculares (ese stock es para lo que
 // Borcam entrega puerta a puerta con pedidos individuales) — es solo un registro de la venta.
+// Una misma compra puede incluir los dos tipos a la vez (ej: 50 peatonales + 20 vehiculares juntos),
+// así que se cargan las dos cantidades en el mismo formulario en vez de tener que hacerlo dos veces.
 function actualizarCostoTagsLote() {
-  const tipoEl = document.getElementById('tags-lote-tipo');
-  const cantEl = document.getElementById('tags-lote-cantidad');
+  const peatEl = document.getElementById('tags-lote-peatonal');
+  const vehEl = document.getElementById('tags-lote-vehicular');
   const costoEl = document.getElementById('tags-lote-costo');
-  if (!tipoEl || !cantEl || !costoEl) return;
-  const precioUnitario = tipoEl.value.toLowerCase().startsWith('peat') ? PRECIOS_TAGS_UYU.peatonales : PRECIOS_TAGS_UYU.vehiculares;
-  const cantidad = Number(cantEl.value) || 0;
-  costoEl.value = (precioUnitario * cantidad).toFixed(2);
+  if (!peatEl || !vehEl || !costoEl) return;
+  const peatonal = Number(peatEl.value) || 0;
+  const vehicular = Number(vehEl.value) || 0;
+  costoEl.value = (peatonal * PRECIOS_TAGS_UYU.peatonales + vehicular * PRECIOS_TAGS_UYU.vehiculares).toFixed(2);
 }
 function renderTagsLote() {
   const lotes = cache.tagsLotes || [];
   const filas = lotes.map(l => `<tr>
-    <td>${escapeHtml(l.cliente)}</td><td>${escapeHtml(l.tipo_tags || '')}</td><td>${l.cantidad_tags}</td>
+    <td>${escapeHtml(l.cliente)}</td>
+    <td>${l.cantidad_peatonal ? l.cantidad_peatonal : '—'}</td>
+    <td>${l.cantidad_vehicular ? l.cantidad_vehicular : '—'}</td>
     <td>${l.costo != null ? l.costo : ''}</td><td>${l.notas ? escapeHtml(l.notas) : ''}</td>
     <td>${l.fecha ? new Date(l.fecha).toLocaleDateString('es-UY') : ''}</td>
     <td>${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarLoteTags(${l.id})">Eliminar</button>` : ''}</td>
@@ -5016,13 +5020,12 @@ function renderTagsLote() {
     <div class="field"><label>Cliente / Administración</label>
       <select id="tags-lote-cliente">${opcionesEdificiosTagsHtml('')}</select>
     </div>
-    <div class="field"><label>Tipo de tags</label>
-      <select id="tags-lote-tipo" onchange="actualizarCostoTagsLote()"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
-    </div>
     <div class="field-row">
-      <div class="field"><label>Cantidad</label><input type="number" id="tags-lote-cantidad" min="1" placeholder="Cantidad" oninput="actualizarCostoTagsLote()"></div>
-      <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-lote-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
+      <div class="field"><label>Cant. peatonales</label><input type="number" id="tags-lote-peatonal" min="0" value="0" oninput="actualizarCostoTagsLote()"></div>
+      <div class="field"><label>Cant. vehiculares</label><input type="number" id="tags-lote-vehicular" min="0" value="0" oninput="actualizarCostoTagsLote()"></div>
     </div>
+    <div class="hint-text">Podés cargar los dos tipos juntos si la Administración los compró en la misma tanda.</div>
+    <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-lote-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
     <div class="field"><label>Notas (opcional)</label><input type="text" id="tags-lote-notas" placeholder="Ej: N° de factura, detalle del pedido..."></div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
       <button type="button" class="btn btn-primary btn-block" onclick="guardarLoteTags()">Registrar venta</button>
@@ -5030,20 +5033,20 @@ function renderTagsLote() {
   </div>
   <div class="card" style="margin-top:16px;">
     ${lotes.length ? `<div class="table-scroll"><table class="reportes-table">
-      <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Costo</th><th>Notas</th><th>Fecha</th><th>Acción</th></tr></thead>
+      <thead><tr><th>Cliente</th><th>Peat.</th><th>Veh.</th><th>Costo</th><th>Notas</th><th>Fecha</th><th>Acción</th></tr></thead>
       <tbody>${filas}</tbody></table></div>` : `<div class="empty-state">Todavía no se registró ninguna venta por lote.</div>`}
   </div>`;
 }
 async function guardarLoteTags() {
   const cliente = document.getElementById('tags-lote-cliente').value.trim();
-  const tipoTags = document.getElementById('tags-lote-tipo').value;
-  const cantidadTags = Number(document.getElementById('tags-lote-cantidad').value);
+  const cantidadPeatonal = Number(document.getElementById('tags-lote-peatonal').value) || 0;
+  const cantidadVehicular = Number(document.getElementById('tags-lote-vehicular').value) || 0;
   const costo = document.getElementById('tags-lote-costo').value;
   const notas = document.getElementById('tags-lote-notas').value.trim();
   if (!cliente) { showToast('Elegí un cliente/Administración.'); return; }
-  if (!cantidadTags) { showToast('Ingresá la cantidad de tags.'); return; }
+  if (!cantidadPeatonal && !cantidadVehicular) { showToast('Ingresá al menos una cantidad (peatonales o vehiculares).'); return; }
   try {
-    await api('POST', '/api/tags/lotes', { cliente, tipoTags, cantidadTags, costo, notas });
+    await api('POST', '/api/tags/lotes', { cliente, cantidadPeatonal, cantidadVehicular, costo, notas });
     showToast('Venta por lote registrada.');
     renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
