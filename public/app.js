@@ -489,7 +489,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -737,7 +737,7 @@ async function deleteDocumentoEdificio(id) {
 /* ---------------- Automatizaciones ---------------- */
 
 function openNuevaAutomatizacionModal() {
-  state.modal = 'nueva-automatizacion'; state.editAutomatizacionId = null;
+  state.modal = 'nueva-automatizacion'; state.editAutomatizacionId = null; state.duplicarNombreBase = null;
   state.editandoPasos = [{ id: uid(), matchAny: false, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', asignadoA: null, soloNuevoTicket: false }];
   render();
 }
@@ -785,7 +785,7 @@ async function submitAutomatizacion(ev) {
     else await api('POST', '/api/automatizaciones', { nombre, activo, pasos });
     const autos = await api('GET', '/api/automatizaciones');
     cache.automatizaciones = autos.map(mapAutomatizacion);
-    state.modal = null; state.editandoPasos = [];
+    state.modal = null; state.editandoPasos = []; state.duplicarNombreBase = null;
     render();
   } catch (e) { showToast(e.message); }
   return false;
@@ -4342,12 +4342,54 @@ function renderAutomatizaciones() {
           <button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;" title="Bajar prioridad" ${idx === cache.automatizaciones.length - 1 ? 'disabled' : ''} onclick="moverAutomatizacion('${a.id}','abajo')">▼</button>
         </div>
         <button class="btn btn-ghost" onclick="toggleAutomatizacion('${a.id}')">${a.activo ? 'Pausar' : 'Activar'}</button>
+        <button class="btn btn-ghost" onclick="abrirHistorialAutomatizacion('${a.id}')">Historial</button>
+        <button class="btn btn-ghost" onclick="duplicarAutomatizacion('${a.id}')">Duplicar</button>
         <button class="btn btn-ghost" onclick="openEditarAutomatizacionModal('${a.id}')">Editar</button><button class="btn btn-danger" onclick="deleteAutomatizacion('${a.id}')">Eliminar</button>
       </div>
     </div></div>`;
   }).join('');
   const list = cache.automatizaciones.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay automatizaciones</div></div>`;
   return `<div class="page-head"><div><h1>Automatizaciones</h1><div class="sub">Cadenas de pasos que responden solas ante ciertas palabras. El orden de la lista es la prioridad: si dos podrían coincidir con el mismo texto, gana la de más arriba.</div></div><button class="btn btn-primary" onclick="openNuevaAutomatizacionModal()">+ Nueva automatización</button></div>${list}`;
+}
+// Precarga el modal de "Nueva automatización" con los mismos pasos que una ya existente, para
+// modificarla y guardarla como otra distinta en vez de armarla de cero.
+function duplicarAutomatizacion(id) {
+  const a = cache.automatizaciones.find(x => x.id === id);
+  if (!a) return;
+  state.modal = 'nueva-automatizacion'; state.editAutomatizacionId = null;
+  state.editandoPasos = a.pasos.map(p => ({ id: uid(), matchAny: !!p.matchAny, palabras: (p.palabras || []).join(', '), respuestaId: p.respuestaId, accionEstado: p.accionEstado || 'Sin cambio', asignadoA: p.asignadoA || null, soloNuevoTicket: !!p.soloNuevoTicket }));
+  state.duplicarNombreBase = a.nombre;
+  render();
+}
+function abrirHistorialAutomatizacion(id) {
+  state.modal = 'historial-automatizacion';
+  state.historialAutomatizacionId = id;
+  state.historialAutomatizacionDatos = null;
+  render();
+  api('GET', `/api/automatizaciones/${id}/historial`).then(filas => {
+    state.historialAutomatizacionDatos = filas;
+    if (state.modal === 'historial-automatizacion') render();
+  }).catch(e => { state.historialAutomatizacionDatos = []; showToast(e.message); if (state.modal === 'historial-automatizacion') render(); });
+}
+function renderHistorialAutomatizacionModal() {
+  const a = cache.automatizaciones.find(x => x.id === state.historialAutomatizacionId);
+  if (!a) return '';
+  const datos = state.historialAutomatizacionDatos;
+  let cuerpo;
+  if (datos === null) cuerpo = `<div class="empty-state cargando">Cargando…</div>`;
+  else if (!datos.length) cuerpo = `<div class="empty-state">Esta automatización todavía no se disparó en ningún ticket.</div>`;
+  else cuerpo = `<div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;">
+    ${datos.map(f => `<div style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer;" onclick="closeModal(); openTicket('${f.ticket_id}')">
+      <div style="display:flex;justify-content:space-between;gap:10px;"><strong>${escapeHtml(f.numero)}</strong><span class="hint-text">${fmtDateTime(f.fecha)}</span></div>
+      <div class="hint-text" style="margin-top:2px;">${escapeHtml(f.asunto)}</div>
+    </div>`).join('')}
+  </div>`;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>Historial de "${escapeHtml(a.nombre)}"</h2>
+    <p class="sub">Últimos tickets donde se disparó (máx. 25). Tocá uno para abrirlo.</p>
+    ${cuerpo}
+    <div class="modal-actions"><button type="button" class="btn btn-primary" onclick="closeModal()">Cerrar</button></div>
+  </div></div>`;
 }
 async function moverAutomatizacion(id, direccion) {
   try {
@@ -5840,6 +5882,7 @@ function renderActiveModal() {
   if (state.modal === 'reporte-mensual-servicios') return renderReporteMensualServiciosModal();
   if (state.modal === 'detalle-reserva-calendario') return renderDetalleReservaCalendarioModal();
   if (state.modal === 'reprogramar-reserva') return renderReprogramarReservaModal();
+  if (state.modal === 'historial-automatizacion') return renderHistorialAutomatizacionModal();
   if (state.modal === 'tags-entregar') return renderTagsEntregarModal();
   if (state.modal === 'tags-editar-pedido') return renderTagsEditarPedidoModal();
   return '';
@@ -6029,12 +6072,38 @@ function renderAutomatizacionModal() {
     <h2>${editing ? 'Editar automatización' : 'Nueva automatización'}</h2>
     <p class="sub">Cada paso responde solo, espera la próxima respuesta del cliente y ahí se dispara el siguiente.</p>
     <form onsubmit="return submitAutomatizacion(event)">
-      <div class="field"><label>Nombre</label><input name="nombre" value="${a ? escapeHtml(a.nombre) : ''}" required></div>
+      <div class="field"><label>Nombre</label><input name="nombre" value="${a ? escapeHtml(a.nombre) : (state.duplicarNombreBase ? escapeHtml(state.duplicarNombreBase + ' (copia)') : '')}" required></div>
       <div id="pasos-container">${renderPasosEditor()}</div>
       <button type="button" class="btn btn-ghost btn-block" style="margin-bottom:16px;" onclick="agregarPasoEditor()">+ Agregar paso a la cadena</button>
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;"><input type="checkbox" name="activo" ${!a || a.activo ? 'checked' : ''}> Automatización activa</label>
+      <div style="border-top:1px dashed var(--line-strong);padding-top:12px;margin-bottom:16px;">
+        <div class="field" style="margin-bottom:8px;"><label>Probar con este texto</label><textarea id="automatizacion-texto-prueba" rows="2" placeholder="Pegá acá un mensaje de ejemplo del cliente para ver qué paso dispararía"></textarea></div>
+        <button type="button" class="btn btn-ghost" onclick="probarAutomatizacionTexto()">🧪 Probar</button>
+        <div id="automatizacion-resultado-prueba" style="margin-top:8px;"></div>
+      </div>
       <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${editing ? 'Guardar cambios' : 'Crear automatización'}</button></div>
     </form></div></div>`;
+}
+// Simula, sin guardar nada ni mandar nada real, si el texto ingresado dispararía alguno de los
+// pasos que se están editando ahora mismo (mismo criterio de coincidencia que usa el servidor:
+// "cualquier respuesta" o que el texto contenga alguna de las palabras clave).
+function probarAutomatizacionTexto() {
+  const resultadoEl = document.getElementById('automatizacion-resultado-prueba');
+  if (!resultadoEl) return;
+  const texto = document.getElementById('automatizacion-texto-prueba').value.trim();
+  if (!texto) { resultadoEl.innerHTML = `<div class="hint-text">Escribí un texto de prueba primero.</div>`; return; }
+  const low = texto.toLowerCase();
+  const pasos = leerPasosDesdeDom();
+  const coincide = p => p.matchAny || (p.palabras || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean).some(w => low.includes(w));
+  let html;
+  if (pasos[0] && coincide(pasos[0])) {
+    html = `<div class="hint-text" style="color:var(--brand);font-weight:600;">✅ El Paso 1 se dispararía (es el que arranca la automatización con un ticket nuevo o sin cadena activa).</div>`;
+  } else {
+    html = `<div class="hint-text">❌ El Paso 1 no se dispararía con este texto como primer mensaje.</div>`;
+  }
+  const otros = pasos.slice(1).map((p, i) => coincide(p) ? `Paso ${i + 2}` : null).filter(Boolean);
+  if (otros.length) html += `<div class="hint-text" style="margin-top:4px;">Si un ticket ya estuviera esperando ese paso, este texto también coincidiría con: ${otros.join(', ')}.</div>`;
+  resultadoEl.innerHTML = html;
 }
 
 /* ---------------- Portal de cliente ---------------- */
