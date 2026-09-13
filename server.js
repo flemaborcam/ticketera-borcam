@@ -485,13 +485,18 @@ pool.query(`create table if not exists tags_pedidos (
 pool.query(`create table if not exists tags_ventas_lote (
   id serial primary key,
   cliente text not null,
-  tipo_tags text,
-  cantidad_tags integer not null,
+  cantidad_peatonal integer not null default 0,
+  cantidad_vehicular integer not null default 0,
   costo numeric,
   notas text,
   creado_por text,
   fecha timestamptz not null default now()
 )`).catch(e => console.error('No se pudo crear tags_ventas_lote:', e.message));
+// Una misma compra puede incluir los dos tipos de tag (ej: la Administración pide 50 peatonales y
+// 20 vehiculares juntos) — se guardan como cantidades separadas en la misma fila en vez de forzar
+// a registrar dos ventas por separado.
+pool.query(`alter table tags_ventas_lote add column if not exists cantidad_peatonal integer not null default 0`).catch(() => {});
+pool.query(`alter table tags_ventas_lote add column if not exists cantidad_vehicular integer not null default 0`).catch(() => {});
 // Migración automática: crea la tabla de turnos de Servicio Técnico (submenú de Calendario) si todavía no existe.
 // Migración automática: documentos del edificio (actas, manuales, contratos) que el cliente ve desde
 // el portal. Si cliente_id es null, el documento es general y lo ven todos los clientes con portal.
@@ -2310,15 +2315,16 @@ app.get('/api/tags/lotes', requireStaff, async (req, res) => {
   ok(res, lotes);
 });
 app.post('/api/tags/lotes', requireStaff, async (req, res) => {
-  const { cliente, tipoTags, cantidadTags, costo, notas } = req.body;
+  const { cliente, cantidadPeatonal, cantidadVehicular, costo, notas } = req.body;
   if (!cliente || !cliente.trim()) return bad(res, 'Falta el cliente/administración.');
-  const cantidad = Number(cantidadTags);
-  if (!cantidad || cantidad <= 0) return bad(res, 'La cantidad tiene que ser mayor a 0.');
+  const peatonal = Number(cantidadPeatonal) || 0;
+  const vehicular = Number(cantidadVehicular) || 0;
+  if (peatonal <= 0 && vehicular <= 0) return bad(res, 'Ingresá al menos una cantidad (peatonales o vehiculares).');
   const usuario = req.session && req.session.usuario;
   const r = await pool.query(
-    `insert into tags_ventas_lote (cliente, tipo_tags, cantidad_tags, costo, notas, creado_por)
+    `insert into tags_ventas_lote (cliente, cantidad_peatonal, cantidad_vehicular, costo, notas, creado_por)
      values ($1,$2,$3,$4,$5,$6) returning *`,
-    [cliente.trim(), tipoTags || null, cantidad, costo || null, (notas || '').trim() || null,
+    [cliente.trim(), peatonal, vehicular, costo || null, (notas || '').trim() || null,
       usuario ? `${usuario.nombre} ${usuario.apellido}` : null]
   );
   ok(res, r.rows[0]);
