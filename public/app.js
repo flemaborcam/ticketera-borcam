@@ -3187,9 +3187,11 @@ function renderMenuMovilModal() {
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
   );
+  const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
     <h2>Más opciones</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+      <button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="toggleTema()"><span class="ico" style="background:var(--gray-tint);">${esOscuro ? '&#9728;' : '&#127769;'}</span><span>Modo ${esOscuro ? 'claro' : 'oscuro'}</span></button>
       ${items.map(it => `<button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
       <button class="nav-btn" style="color:var(--stamp-red);justify-content:flex-start;" onclick="logout()"><span class="ico" style="background:var(--gray-tint);">&#8630;</span><span>Cerrar sesión</span></button>
     </div>
@@ -3992,17 +3994,37 @@ function renderTicket(id) {
 
 /* ---------------- Clientes ---------------- */
 
+// Estilos de la fila de cliente: se separan de ".stub" (pensado para tickets, con el motivo del
+// "número de ticket" recortado tipo boleto) porque ese diseño no funciona para clientes — en
+// celular quedaba una franja angosta con el texto "portal" cortado y el botón Eliminar gigante y
+// rojo ocupando todo el ancho, fácil de tocar sin querer. Acá el ícono es un círculo chico y
+// "Eliminar" se movió a la ficha del cliente (ya estaba ahí también), para no arriesgar un borrado
+// accidental al scrollear la lista en el celular.
+function clientesRowStyleTag() {
+  return `<style id="clientes-row-style-v1">
+    .cliente-row{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:var(--shadow);cursor:pointer;text-align:left;width:100%;transition:border-color .15s ease,transform .15s ease;}
+    .cliente-row:hover{border-color:var(--line-strong);transform:translateY(-1px);}
+    .cliente-row-icon{width:38px;height:38px;border-radius:50%;background:var(--brand-tint);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:16px;flex:none;}
+    .cliente-row-body{flex:1;min-width:0;}
+    .cliente-row-nombre{font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .cliente-row-sub{font-size:12.5px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px;}
+    .cliente-row-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+    .cliente-row-chevron{flex:none;color:var(--gray);font-size:20px;}
+  </style>`;
+}
 function renderGrupoRow(g) {
+  const icono = g.rolCliente === 'Administración' ? '🗂️' : g.rolCliente === 'Edificio' ? '🏢' : g.rolCliente === 'Apartamento' ? '🚪' : '👤';
+  const sub = [g.direccion, g.telefono].filter(Boolean).join(' · ');
   return `
-    <div class="stub" role="button" tabindex="0" style="align-items:stretch;" onclick="openGrupoDetail('${g.id}')" onkeydown="if(event.key==='Enter'){openGrupoDetail('${g.id}')}">
-      <div class="stub-num" style="width:64px;"><div class="n" style="font-size:18px;">${g.tienePortal ? '🔐' : '—'}</div><div class="y">portal</div></div>
-      <div class="stub-body"><div class="stub-top"><div class="stub-asunto">${escapeHtml(g.nombre)}</div></div>
-        <div class="stub-remitente">${[g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
-        ${g.direccion ? `<div class="stub-snippet">${escapeHtml(g.direccion)}</div>` : ''}
-        ${g.rolCliente || g.administradoPorNombre ? `<div class="stub-meta">${g.rolCliente ? `<span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span>` : ''}${g.administradoPorNombre ? `<span class="tag">Administrado por ${escapeHtml(g.administradoPorNombre)}</span>` : ''}</div>` : ''}
+    <button type="button" class="cliente-row" onclick="openGrupoDetail('${g.id}')">
+      <div class="cliente-row-icon">${icono}</div>
+      <div class="cliente-row-body">
+        <div class="cliente-row-nombre">${escapeHtml(g.nombre)}</div>
+        ${sub ? `<div class="cliente-row-sub">${escapeHtml(sub)}</div>` : ''}
+        ${g.rolCliente || g.administradoPorNombre || g.tienePortal ? `<div class="cliente-row-meta">${g.rolCliente ? `<span class="tag tag-cliente">${escapeHtml(g.rolCliente)}</span>` : ''}${g.administradoPorNombre ? `<span class="tag">Adm. por ${escapeHtml(g.administradoPorNombre)}</span>` : ''}${g.tienePortal ? `<span class="tag tag-resuelto">🔐 Portal</span>` : ''}</div>` : ''}
       </div>
-      <button type="button" class="btn btn-danger" style="flex:none;align-self:center;" onclick="event.stopPropagation();deleteGrupo('${g.id}')">Eliminar</button>
-    </div>`;
+      <span class="cliente-row-chevron">&rsaquo;</span>
+    </button>`;
 }
 // Clientes separados en Edificios / Administraciones / Otros, porque hoy conviven dos niveles de
 // agrupamiento (Administración → Edificios que gestiona, y Edificio → Apartamentos que lo integran)
@@ -4024,7 +4046,7 @@ function renderGrupos() {
   const list = grupo.length ? `<div class="stub-list">${grupo.map(renderGrupoRow).join('')}</div>` : `<div class="empty-state"><div class="big">${mensajeVacio}</div></div>`;
   const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
-  return `<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
+  return `${clientesRowStyleTag()}<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-ghost" onclick="openImportarClientesModal()">📥 Importar desde Excel</button>
         <button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button>
@@ -4043,7 +4065,7 @@ async function renderGrupoDetailAsync(id) {
   if (g.rolCliente === 'Administración') { cache.proveedores = await api('GET', '/api/proveedores'); }
   const serviciosTecnicosCliente = await api('GET', `/api/clientes/${id}/servicios-tecnicos`).catch(() => []);
   const contratoMantenimiento = g.esMantenimiento ? await api('GET', `/api/clientes/${id}/contrato-mantenimiento`).catch(() => null) : null;
-  return `${ticketStyleTag()}
+  return `${ticketStyleTag()}${clientesRowStyleTag()}
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
       <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
