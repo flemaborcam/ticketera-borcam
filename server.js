@@ -454,6 +454,11 @@ pool.query(`alter table tickets add column if not exists checklist_estado jsonb 
 pool.query('alter table citas add column if not exists caja_domotica boolean').catch(e => console.error('No se pudo migrar caja_domotica:', e.message));
 // Migración automática: foto de perfil del usuario (se guarda como archivo en el mismo storage que los adjuntos).
 pool.query('alter table usuarios add column if not exists foto_path text').catch(e => console.error('No se pudo migrar foto_path:', e.message));
+// Migración automática: orden/prioridad entre automatizaciones (cuál se evalúa primero si dos podrían
+// coincidir con el mismo texto) y a quién asignar el ticket como acción de un paso, además de cambiarle
+// el estado.
+pool.query('alter table automatizaciones add column if not exists orden integer').catch(e => console.error('No se pudo migrar orden en automatizaciones:', e.message));
+pool.query('alter table automatizacion_pasos add column if not exists asignado_a uuid').catch(e => console.error('No se pudo migrar asignado_a en automatizacion_pasos:', e.message));
 // Migración automática: vincular cada ticket a un edificio concreto (antes solo se podía inferir del asunto).
 pool.query('alter table tickets add column if not exists edificio text').catch(e => console.error('No se pudo migrar edificio:', e.message));
 // Migración automática: dato de Torre del ticket (junto con Apartamento), para precargar el Pedido de Tag.
@@ -953,6 +958,12 @@ async function dispararPaso(ticketId, automatizacion, paso, index, totalPasos) {
     if (cur && cur.estado === 'Abierto') {
       await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', ticketId]);
     }
+  }
+  // Además de (o en vez de) cambiar el estado, el paso puede derivar el ticket a una persona puntual
+  // (ej: todo lo que mencione "factura" se lo asigna directo a Administración). Reutiliza la misma
+  // rutina que "Tomar ticket" / reasignar a mano, así el cliente y el agente reciben el mismo aviso.
+  if (paso.asignado_a) {
+    try { await asignarTicket(ticketId, paso.asignado_a); } catch (e) { console.error('No se pudo asignar automáticamente el ticket:', e.message); }
   }
   const activa = index < totalPasos - 1 ? { id: automatizacion.id, paso: index } : { id: null, paso: null };
   await pool.query(
@@ -2634,23 +2645,29 @@ app.delete('/api/respuestas/:id', requireStaff, async (req, res) => {
 });
 /* ---------------- Automatizaciones ---------------- */
 app.get('/api/automatizaciones', requireStaff, async (req, res) => {
-  const autos = (await pool.query('select * from automatizaciones order by nombre')).rows;
+  // orden asc primero: es la prioridad entre automatizaciones cuando dos podrían coincidir con el
+  // mismo texto (antes no había ningún criterio y ganaba la que la base devolviera primero, sin más).
+  const autos = (await pool.query('select * from automatizaciones order by orden asc nulls last, nombre asc')).rows;
   for (const a of autos) {
     a.pasos = (await pool.query('select * from automatizacion_pasos where automatizacion_id=$1 order by orden asc', [a.id])).rows;
+    // Tickets que quedaron "a mitad de cadena" esperando el próximo paso de esta automatización — se
+    // usa para avisar antes de borrarla, ya que si se elimina esos tickets se quedan sin seguir la cadena.
+    a.en_curso = (await pool.query('select count(*)::int as c from tickets where automatizacion_activa_id=$1', [a.id])).rows[0].c;
   }
   ok(res, autos);
 });
 app.post('/api/automatizaciones', requireStaff, async (req, res) => {
   const { nombre, activo, pasos } = req.body;
   if (!nombre || !pasos || !pasos.length) return bad(res, 'Faltan datos');
-  const r = await pool.query('insert into automatizaciones (nombre, activo) values ($1,$2) returning id', [nombre, !!activo]);
+  const siguienteOrden = (await pool.query('select coalesce(max(orden),0)+1 as v from automatizaciones')).rows[0].v;
+  const r = await pool.query('insert into automatizaciones (nombre, activo, orden) values ($1,$2,$3) returning id', [nombre, !!activo, siguienteOrden]);
   const autoId = r.rows[0].id;
   for (let i = 0; i < pasos.length; i++) {
     const p = pasos[i];
     await pool.query(
-      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket)
-       values ($1,$2,$3,$4,$5,$6,$7)`,
-      [autoId, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket]
+      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket, asignado_a)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [autoId, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket, p.asignadoA || null]
     );
   }
   ok(res, { id: autoId });
@@ -2662,15 +2679,31 @@ app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   for (let i = 0; i < pasos.length; i++) {
     const p = pasos[i];
     await pool.query(
-      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket)
-       values ($1,$2,$3,$4,$5,$6,$7)`,
-      [req.params.id, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket]
+      `insert into automatizacion_pasos (automatizacion_id, orden, match_any, palabras, respuesta_id, accion_estado, solo_nuevo_ticket, asignado_a)
+       values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [req.params.id, i, !!p.matchAny, p.matchAny ? [] : p.palabras, p.respuestaId, p.accionEstado || 'Sin cambio', !!p.soloNuevoTicket, p.asignadoA || null]
     );
   }
   ok(res, { ok: true });
 });
 app.post('/api/automatizaciones/:id/toggle', requireStaff, async (req, res) => {
   await pool.query('update automatizaciones set activo = not activo where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+// Sube o baja una automatización un lugar en la prioridad: intercambia su "orden" con el de la
+// vecina inmediata (según la dirección pedida) entre las que ya tienen orden asignado.
+app.post('/api/automatizaciones/:id/mover', requireStaff, async (req, res) => {
+  const direccion = req.body.direccion === 'arriba' ? 'arriba' : 'abajo';
+  const todas = (await pool.query('select id, orden from automatizaciones order by orden asc nulls last, nombre asc')).rows;
+  const idx = todas.findIndex(a => String(a.id) === String(req.params.id));
+  if (idx === -1) return bad(res, 'Automatización no encontrada.', 404);
+  const vecinoIdx = direccion === 'arriba' ? idx - 1 : idx + 1;
+  if (vecinoIdx < 0 || vecinoIdx >= todas.length) return ok(res, { ok: true }); // ya está en la punta, no hay nada que mover
+  const actual = todas[idx], vecino = todas[vecinoIdx];
+  const ordenActual = actual.orden != null ? actual.orden : idx;
+  const ordenVecino = vecino.orden != null ? vecino.orden : vecinoIdx;
+  await pool.query('update automatizaciones set orden=$1 where id=$2', [ordenVecino, actual.id]);
+  await pool.query('update automatizaciones set orden=$1 where id=$2', [ordenActual, vecino.id]);
   ok(res, { ok: true });
 });
 app.delete('/api/automatizaciones/:id', requireStaff, async (req, res) => {
