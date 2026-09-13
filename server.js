@@ -551,6 +551,9 @@ pool.query('alter table servicios_tecnicos add column if not exists aplica_iva b
 // historial cuando se mueve la fecha de un turno.
 pool.query('alter table servicios_tecnicos add column if not exists recordatorio_enviado boolean not null default false').catch(e => console.error('No se pudo migrar recordatorio_enviado:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists iniciado_en timestamptz').catch(e => console.error('No se pudo migrar iniciado_en:', e.message));
+// Técnico asignado a la visita (quién va a ir): se elige al agendar y se puede cambiar después
+// (por ejemplo si el técnico asignado no puede ir), sin perder el resto de la carga del turno.
+pool.query('alter table servicios_tecnicos add column if not exists tecnico_asignado_id uuid').catch(e => console.error('No se pudo migrar tecnico_asignado_id:', e.message));
 pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   id serial primary key,
   servicio_id integer not null,
@@ -3102,7 +3105,7 @@ async function servicioTecnicoConCostos(servicioId) {
   return { ...s, costos };
 }
 app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
-  const { ticketId, ticketNumero, clienteId, titulo, fecha, hora, duracion, todoElDia, aplicaIva } = req.body || {};
+  const { ticketId, ticketNumero, clienteId, titulo, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId } = req.body || {};
   if (!clienteId) return bad(res, 'Falta el cliente/edificio.');
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
@@ -3112,14 +3115,14 @@ app.post('/api/servicios-tecnicos', requireStaff, async (req, res) => {
   const fechaHora = todoElDia ? `${fecha}T00:00:00-03:00` : `${fecha}T${hora}:00-03:00`;
   const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
   const r = await pool.query(
-    `insert into servicios_tecnicos (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por, aplica_iva)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`,
-    [ticketId || null, ticketNumero || null, clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null, aplicaIva !== false]
+    `insert into servicios_tecnicos (ticket_id, ticket_numero, cliente_id, titulo, fecha_hora, duracion_minutos, todo_el_dia, creado_por, aplica_iva, tecnico_asignado_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`,
+    [ticketId || null, ticketNumero || null, clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, staff ? `${staff.nombre} ${staff.apellido}` : null, aplicaIva !== false, tecnicoAsignadoId || null]
   );
   ok(res, { ...r.rows[0], costos: [] });
 });
 app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
-  const { clienteId, titulo, fecha, hora, duracion, todoElDia, motivoReprogramacion } = req.body || {};
+  const { clienteId, titulo, fecha, hora, duracion, todoElDia, motivoReprogramacion, tecnicoAsignadoId } = req.body || {};
   if (!clienteId) return bad(res, 'Falta el cliente/edificio.');
   if (!titulo || !titulo.trim()) return bad(res, 'Falta el título del evento.');
   if (!fecha) return bad(res, 'Falta la fecha.');
@@ -3140,10 +3143,10 @@ app.put('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
     );
   }
   const r = await pool.query(
-    `update servicios_tecnicos set cliente_id=$1, titulo=$2, fecha_hora=$3, duracion_minutos=$4, todo_el_dia=$5
+    `update servicios_tecnicos set cliente_id=$1, titulo=$2, fecha_hora=$3, duracion_minutos=$4, todo_el_dia=$5, tecnico_asignado_id=$6
       ${cambioFecha ? ', recordatorio_enviado=false, estado=(case when estado=\'realizado\' then estado else \'pendiente\' end)' : ''}
-      where id=$6 returning *`,
-    [clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, req.params.id]
+      where id=$7 returning *`,
+    [clienteId, titulo.trim(), fechaHora, todoElDia ? null : (Number(duracion) || 60), !!todoElDia, tecnicoAsignadoId || null, req.params.id]
   );
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, await servicioTecnicoConCostos(req.params.id));
