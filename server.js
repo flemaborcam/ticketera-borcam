@@ -479,6 +479,19 @@ pool.query(`create table if not exists tags_pedidos (
   fecha_pedido timestamptz not null default now(),
   fecha_entrega timestamptz
 )`).catch(e => console.error('No se pudo crear tags_pedidos:', e.message));
+// Ventas de tags "por lote": una Administración compra de una sola vez una cantidad de tags que
+// gestiona por su cuenta (no se entregan uno por uno ni se descuentan del stock de peatonales/
+// vehiculares del edificio, que es para pedidos individuales que Borcam entrega puerta a puerta).
+pool.query(`create table if not exists tags_ventas_lote (
+  id serial primary key,
+  cliente text not null,
+  tipo_tags text,
+  cantidad_tags integer not null,
+  costo numeric,
+  notas text,
+  creado_por text,
+  fecha timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear tags_ventas_lote:', e.message));
 // Migración automática: crea la tabla de turnos de Servicio Técnico (submenú de Calendario) si todavía no existe.
 // Migración automática: documentos del edificio (actas, manuales, contratos) que el cliente ve desde
 // el portal. Si cliente_id es null, el documento es general y lo ven todos los clientes con portal.
@@ -2290,6 +2303,28 @@ app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
 });
 app.delete('/api/tags/pedidos/:id', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('delete from tags_pedidos where id=$1', [req.params.id]);
+  ok(res, { ok: true });
+});
+app.get('/api/tags/lotes', requireStaff, async (req, res) => {
+  const lotes = (await pool.query('select * from tags_ventas_lote order by fecha desc')).rows;
+  ok(res, lotes);
+});
+app.post('/api/tags/lotes', requireStaff, async (req, res) => {
+  const { cliente, tipoTags, cantidadTags, costo, notas } = req.body;
+  if (!cliente || !cliente.trim()) return bad(res, 'Falta el cliente/administración.');
+  const cantidad = Number(cantidadTags);
+  if (!cantidad || cantidad <= 0) return bad(res, 'La cantidad tiene que ser mayor a 0.');
+  const usuario = req.session && req.session.usuario;
+  const r = await pool.query(
+    `insert into tags_ventas_lote (cliente, tipo_tags, cantidad_tags, costo, notas, creado_por)
+     values ($1,$2,$3,$4,$5,$6) returning *`,
+    [cliente.trim(), tipoTags || null, cantidad, costo || null, (notas || '').trim() || null,
+      usuario ? `${usuario.nombre} ${usuario.apellido}` : null]
+  );
+  ok(res, r.rows[0]);
+});
+app.delete('/api/tags/lotes/:id', requireStaff, requireSuperadmin, async (req, res) => {
+  await pool.query('delete from tags_ventas_lote where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
 /* ---------------- Usuarios (staff) ---------------- */
