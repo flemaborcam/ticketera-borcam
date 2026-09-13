@@ -3350,7 +3350,7 @@ function dashboardStyleTag() {
     .dash-profile-chip:hover{transform:translateY(-2px);box-shadow:0 1px 2px rgba(15,42,77,.05),0 12px 22px -8px rgba(15,42,77,.32);border-color:var(--line-strong);}
     .dash-profile-avatar{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:12px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 2px 6px rgba(30,86,199,.4);overflow:hidden;}
     .dash-profile-name{font-size:13.5px;font-weight:600;color:var(--ink);}
-    @media (max-width:600px){.dash-profile-name{display:none;}}
+    @media (max-width:600px){.dash-profile-name{display:none;} .dash-profile-chip{padding:5px;}}
 
     .carga-trabajo{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:14px;}
     .carga-trabajo-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin-right:2px;}
