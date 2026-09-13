@@ -2211,6 +2211,50 @@ app.post('/api/tags/pedidos', requireStaff, async (req, res) => {
     client.release();
   }
 });
+app.put('/api/tags/pedidos/:id', requireStaff, async (req, res) => {
+  // Corregir un pedido pendiente (cliente, edificio, torre/unidad, tipo, cantidad, costo, ticket) sin
+  // tener que borrarlo y cargarlo de nuevo. Solo se puede editar mientras no esté entregado.
+  const { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket } = req.body;
+  if (!nombreCliente || !nombreCliente.trim()) return bad(res, 'Falta el nombre del cliente.');
+  if (!edificio || !edificio.trim()) return bad(res, 'Falta el edificio.');
+  if (!ticket || !ticket.trim()) return bad(res, 'Falta el número de ticket.');
+  const cantidad = Number(cantidadTags);
+  if (!cantidad || cantidad <= 0) return bad(res, 'La cantidad tiene que ser mayor a 0.');
+  const columna = (tipoTags || '').toLowerCase().startsWith('peat') ? 'cantidad_peatonal' : 'cantidad_vehicular';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const actual = (await client.query('select * from tags_pedidos where id=$1 for update', [req.params.id])).rows[0];
+    if (!actual) { await client.query('ROLLBACK'); return bad(res, 'Pedido no encontrado.', 404); }
+    if (actual.entregado) { await client.query('ROLLBACK'); return bad(res, 'Este pedido ya fue entregado, no se puede editar.'); }
+    const edif = (await client.query(`select * from edificios_tags where edificio=$1 for update`, [edificio.trim()])).rows[0];
+    if (!edif) { await client.query('ROLLBACK'); return bad(res, 'El edificio no está registrado en el stock de Tags.'); }
+    // El stock comprometido se calcula sin contar este mismo pedido, porque se va a reemplazar por
+    // la cantidad nueva a continuación.
+    const comprometido = (await client.query(
+      `select coalesce(sum(cantidad_tags),0)::int as total from tags_pedidos
+       where entregado=false and edificio=$1 and lower(tipo_tags) like $2 and id<>$3`,
+      [edificio.trim(), columna === 'cantidad_peatonal' ? 'peat%' : 'veh%', req.params.id]
+    )).rows[0].total;
+    const disponible = edif[columna] - comprometido;
+    if (disponible < cantidad) {
+      await client.query('ROLLBACK');
+      return bad(res, `Stock insuficiente en ${edificio}: quedan ${disponible} tag(s) disponibles de ese tipo.`);
+    }
+    const r = await client.query(
+      `update tags_pedidos set nombre_cliente=$1, edificio=$2, torre=$3, unidad=$4, tipo_tags=$5, cantidad_tags=$6, costo=$7, ticket=$8
+       where id=$9 returning *`,
+      [nombreCliente.trim(), edificio.trim(), torre || null, unidad || null, tipoTags || null, cantidad, costo || null, ticket.trim(), req.params.id]
+    );
+    await client.query('COMMIT');
+    ok(res, r.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    bad(res, 'Error al actualizar el pedido: ' + e.message);
+  } finally {
+    client.release();
+  }
+});
 app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
   const { tagNum } = req.body;
   if (!tagNum || !String(tagNum).trim()) return bad(res, 'Falta el número de tag entregado.');
