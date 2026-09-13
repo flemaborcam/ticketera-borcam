@@ -1302,7 +1302,7 @@ async function cargarPlantillasMantenimiento() {
 }
 function renderPlantillasMantenimientoTab() {
   const plantillas = cache.plantillasMantenimiento;
-  if (!plantillas) return '<div class="empty-state">Cargando…</div>';
+  if (!plantillas) return '<div class="empty-state cargando">Cargando…</div>';
   return `<div class="page-head" style="margin-top:0;"><div></div><button type="button" class="btn btn-ghost" onclick="abrirNuevaPlantillaMantenimiento()">+ Nueva plantilla</button></div>
     <div class="stub-list">${plantillas.map(p => `
     <div class="user-row" style="border:1px solid var(--line);">
@@ -3029,7 +3029,7 @@ async function loadClientePerfil() {
 }
 function renderClientePerfil() {
   const p = cache.perfilCliente;
-  if (!p) return `<div class="empty-state">Cargando…</div>`;
+  if (!p) return `<div class="empty-state cargando">Cargando…</div>`;
   return `<div class="page-head"><div><h1>Mi perfil</h1><div class="sub">Tus datos de contacto y tu contraseña de acceso al portal</div></div></div>
     <div class="card" style="max-width:520px;">
       <form onsubmit="return submitClientePerfilDatos(event)">
@@ -3325,6 +3325,8 @@ function renderShell(inner) {
 // Autocontenido — se puede sacar borrando esta función y su llamada en renderDashboard().
 function dashboardStyleTag() {
   return `<style id="dash-style-v2">
+    .dash-saludo{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
+    .dash-saludo-fecha{font-family:var(--font-body);font-weight:500;}
     .filters{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);}
     .filters select,.filters input[type=date]{transition:border-color .15s ease,box-shadow .15s ease;}
     .filters select:focus,.filters input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
@@ -3368,7 +3370,7 @@ function renderStub(t, clientMode, selectable) {
   const onclick = clientMode ? `openClienteTicket('${t.id}')` : `openTicket('${t.id}')`;
   const checked = selectable && state.selectedTickets.has(t.id);
   return `
-  <div class="stub" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter'){${onclick}}">
+  <div class="stub" data-prioridad="${slug(t.prioridad)}" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter'){${onclick}}">
     ${selectable ? `<label class="stub-check" onclick="event.stopPropagation()"><input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleSeleccionTicket('${t.id}', this.checked)"></label>` : ''}
     <div class="stub-num"><div class="n">${t.numero.split('-').slice(1).join('-')}</div><div class="y">${t.numero.split('-')[0]}</div></div>
     <div class="stub-body">
@@ -3778,6 +3780,7 @@ function renderDashboard() {
   const u = currentUser();
   const vencidosCount = cache.tickets.filter(t => !esTicketDeReserva(t) && ticketVencido(t)).length;
   return `${dashboardStyleTag()}
+    <div class="dash-saludo">${saludoDelDia()}, ${escapeHtml(u.nombre)} 👋 <span class="dash-saludo-fecha">· ${fechaLargaHoy()}</span></div>
     <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}${vencidosCount ? ` · <span class="badge-vencido">⏰ ${vencidosCount} vencido${vencidosCount === 1 ? '' : 's'}</span>` : ''}</div></div>
       <div style="display:flex;align-items:center;gap:12px;">
         <button class="btn btn-primary" onclick="openNuevoCorreoModal()">+ Simular correo entrante</button>
@@ -3924,7 +3927,7 @@ function ticketStyleTag() {
 }
 function renderTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
-  if (!t) return `<button class="back-link" onclick="go('dashboard')">&larr; Volver</button><div class="empty-state">Cargando…</div>`;
+  if (!t) return `<button class="back-link" onclick="go('dashboard')">&larr; Volver</button><div class="empty-state cargando">Cargando…</div>`;
   const catOptions = CAT.CATEGORIAS.map(c => `<option value="${c}" ${t.categoria === c ? 'selected' : ''}>${c}</option>`).join('');
   const prioOptions = CAT.PRIORIDADES.map(p => `<option value="${p}" ${t.prioridad === p ? 'selected' : ''}>${p}</option>`).join('');
   const estOptions = CAT.ESTADOS.map(e => `<option value="${e}" ${t.estado === e ? 'selected' : ''}>${e}</option>`).join('');
@@ -4921,6 +4924,16 @@ function fmtHoras(h) {
   return (h / 24).toFixed(1) + ' d';
 }
 function fmtDateShort(iso) { return new Date(iso).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
+// Saludo del dashboard: cambia según la hora del día, y la fecha larga en español para que la
+// bandeja no arranque directo con la lista fría de tickets.
+function saludoDelDia() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches';
+}
+function fechaLargaHoy() {
+  const s = new Date().toLocaleDateString('es-UY', { weekday: 'long', day: 'numeric', month: 'long' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 function pctReporte(a, b) { return b ? Math.round((a / b) * 100) : 0; }
 // Ícono + color de acento según el texto del label — puramente cosmético, no cambia los datos.
 function kpiIconYColor(label) {
@@ -5097,7 +5110,7 @@ function renderEstadisticas() {
       .report-print-head { display:none; margin-bottom:18px; }
     </style>`;
   if (state.reportesCargando || !state.reportes) {
-    return `${estilos}<div class="page-head"><div><h1>Estadísticas</h1><div class="sub">Rendimiento del equipo</div></div></div>${filtros}<div class="empty-state">Cargando reporte…</div>`;
+    return `${estilos}<div class="page-head"><div><h1>Estadísticas</h1><div class="sub">Rendimiento del equipo</div></div></div>${filtros}<div class="empty-state cargando">Cargando reporte…</div>`;
   }
   const r = state.reportes;
   const rangoTexto = `${fmtDateShort(r.rango.desde)} — ${fmtDateShort(r.rango.hasta)}`;
@@ -5706,7 +5719,7 @@ function renderEstadoTimelineCliente(estado) {
 }
 function renderClienteTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
-  if (!t) return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver</button><div class="empty-state">Cargando…</div>`;
+  if (!t) return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver</button><div class="empty-state cargando">Cargando…</div>`;
   const thread = renderThreadHtml(t);
   const edificio = cache.edificiosCliente.length > 1 ? cache.edificiosCliente.find(e => e.id === t.grupoId) : null;
   return `${clienteTicketStyleTag()}<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
@@ -5921,13 +5934,13 @@ function renderInterno() {
   else if (state.view === 'reservas') { inner = renderReservas(); cargarReservasCalendario().then(() => { if (state.view === 'reservas') refrescarVistaReservas(); }); }
   else if (state.view === 'documentos') inner = renderDocumentos();
   else if (state.view === 'documentos-edificio') inner = renderDocumentosEdificio();
-  else if (state.view === 'grupo') { inner = '<div class="empty-state">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
-  else if (state.view === 'calendario') { inner = '<div class="empty-state">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
-  else if (state.view === 'servicio-tecnico') { inner = '<div class="empty-state">Cargando…</div>'; renderServicioTecnicoModuloAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'servicio-tecnico') el.innerHTML = html; }); }
+  else if (state.view === 'grupo') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
+  else if (state.view === 'calendario') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
+  else if (state.view === 'servicio-tecnico') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderServicioTecnicoModuloAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'servicio-tecnico') el.innerHTML = html; }); }
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'estadisticas') inner = renderEstadisticas();
-  else if (state.view === 'tags') { inner = '<div class="empty-state">Cargando…</div>'; renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } }); }
+  else if (state.view === 'tags') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } }); }
   else if (state.view === 'configuracion') inner = renderConfiguracion();
   else inner = renderDashboard();
   app.innerHTML = renderShell(inner);
