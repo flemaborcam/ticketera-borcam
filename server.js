@@ -481,6 +481,40 @@ pool.query(`create table if not exists tags_pedidos (
   fecha_pedido timestamptz not null default now(),
   fecha_entrega timestamptz
 )`).catch(e => console.error('No se pudo crear tags_pedidos:', e.message));
+// Recibo (no fiscal) que se genera solo al marcar un pedido de tag como entregado, con numeración
+// correlativa propia — mismo espíritu que el contador de comprobantes de Servicio Técnico. No se
+// vuelve a generar uno nuevo si ya existía (ej. al reimprimir), así el número no cambia.
+pool.query(`create table if not exists tags_recibos_contador (
+  id smallint primary key default 1,
+  valor integer not null default 0
+)`).catch(e => console.error('No se pudo crear tags_recibos_contador:', e.message));
+pool.query(`create table if not exists tags_recibos (
+  id serial primary key,
+  pedido_id integer not null,
+  numero text not null,
+  correlativo integer not null,
+  generado_por text,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo crear tags_recibos:', e.message));
+async function nextTagsReciboNumero() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query(
+      `insert into tags_recibos_contador (id, valor) values (1, 1)
+       on conflict (id) do update set valor = tags_recibos_contador.valor + 1
+       returning valor`
+    );
+    await client.query('COMMIT');
+    const correlativo = r.rows[0].valor;
+    return { correlativo, numero: `R-TAG-${String(correlativo).padStart(5, '0')}` };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 // Ventas de tags "por lote": una Administración compra de una sola vez una cantidad de tags que
 // gestiona por su cuenta (no se entregan uno por uno ni se descuentan del stock de peatonales/
 // vehiculares del edificio, que es para pedidos individuales que Borcam entrega puerta a puerta).
@@ -2307,7 +2341,29 @@ app.post('/api/tags/pedidos/:id/entregar', requireStaff, async (req, res) => {
       }
     } catch (e) { console.error('No se pudo cerrar el ticket asociado al tag entregado:', e.message); }
   }
-  ok(res, pedido);
+  // Recibo no fiscal del tag entregado, con numeración correlativa propia. No se genera uno nuevo
+  // si el pedido ya tenía recibo (por ejemplo, si se revirtió la entrega por error y se volvió a
+  // entregar): se reutiliza el mismo número.
+  let recibo = (await pool.query('select * from tags_recibos where pedido_id=$1 order by creado desc limit 1', [pedido.id])).rows[0];
+  if (!recibo) {
+    const { correlativo, numero } = await nextTagsReciboNumero();
+    const usuario = req.session && req.session.usuario;
+    recibo = (await pool.query(
+      `insert into tags_recibos (pedido_id, numero, correlativo, generado_por) values ($1,$2,$3,$4) returning *`,
+      [pedido.id, numero, correlativo, usuario ? `${usuario.nombre} ${usuario.apellido}` : null]
+    )).rows[0];
+  }
+  ok(res, { ...pedido, recibo });
+});
+// Por si se tocó "Marcar entregado" por error: vuelve el pedido a pendiente (no reabre solo el
+// ticket que se haya cerrado automáticamente al entregar; eso se revisa a mano si hace falta).
+app.post('/api/tags/pedidos/:id/revertir-entrega', requireStaff, async (req, res) => {
+  const r = await pool.query(
+    `update tags_pedidos set entregado=false, fecha_entrega=null, tag_num=null where id=$1 and entregado=true returning *`,
+    [req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Este pedido no está marcado como entregado.', 404);
+  ok(res, r.rows[0]);
 });
 app.delete('/api/tags/pedidos/:id', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('delete from tags_pedidos where id=$1', [req.params.id]);
