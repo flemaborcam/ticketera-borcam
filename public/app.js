@@ -291,6 +291,7 @@ async function logout() {
   session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
   cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [] };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
+  ultimoHistorialView = null; // el próximo render arranca el historial de nuevo, sin arrastrar la sesión anterior
   render();
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
@@ -3309,7 +3310,7 @@ function renderShell(inner) {
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
-      <div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+      <div class="topbar">${state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;padding:6px 8px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:20px;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItemsBottom(state.view)}</div>
     </div>
@@ -5603,7 +5604,7 @@ function renderClientShell(inner) {
       <nav>${navItemsCliente(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
-    <div class="main"><div class="topbar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+    <div class="main"><div class="topbar">${state.view !== 'cliente-dashboard' && state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;padding:6px 8px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:20px;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItemsCliente(state.view)}</div>
     </div></div>
@@ -5866,7 +5867,39 @@ function renderAuth() {
 
 /* ---------------- Master render ---------------- */
 
+// Integración con el botón "atrás" del navegador/celular: antes, moverse entre pantallas de la app
+// (Tickets, Clientes, Servicio Técnico, etc.) no dejaba rastro en el historial del navegador, así
+// que al tocar "atrás" en el celular no había nada propio de la app para volver y terminaba saliendo
+// de la página. Ahora, cada vez que cambia la pantalla (state.view), se guarda un paso en el
+// historial; "atrás" primero recorre esos pasos dentro de la app, y solo sale si ya no queda nada.
+let ultimoHistorialView = null;
+let suprimirPushHistorial = false;
+function actualizarHistorial() {
+  if (!session) return;
+  if (suprimirPushHistorial) return;
+  const st = { view: state.view, ticketId: state.ticketId || null };
+  try {
+    if (ultimoHistorialView === null) { history.replaceState(st, ''); }
+    else if (state.view !== ultimoHistorialView) { history.pushState(st, ''); }
+  } catch (e) { /* algunos navegadores en modo privado bloquean history.* */ }
+  ultimoHistorialView = state.view;
+}
+window.addEventListener('popstate', (e) => {
+  if (!session) return;
+  suprimirPushHistorial = true;
+  if (e.state && e.state.view) { state.view = e.state.view; state.ticketId = e.state.ticketId || null; }
+  else { state.view = 'dashboard'; state.ticketId = null; }
+  state.modal = null;
+  ultimoHistorialView = state.view;
+  render();
+  suprimirPushHistorial = false;
+});
+function volverAtras() { history.back(); }
 function render() {
+  renderInterno();
+  actualizarHistorial();
+}
+function renderInterno() {
   const app = document.getElementById('app');
   if (!session) { app.innerHTML = renderAuth(); return; }
   if (session.type === 'cliente') {
