@@ -2710,6 +2710,21 @@ app.delete('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   await pool.query('delete from automatizaciones where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
+// Últimos tickets donde se disparó esta automatización (se identifica por el autor del mensaje
+// automático, "Automatización · <nombre> (paso N/M)" — mismo criterio que usa el motor para no
+// repetir el disparo en un ticket donde ya se activó).
+app.get('/api/automatizaciones/:id/historial', requireStaff, async (req, res) => {
+  const auto = (await pool.query('select nombre from automatizaciones where id=$1', [req.params.id])).rows[0];
+  if (!auto) return bad(res, 'Automatización no encontrada.', 404);
+  const filas = (await pool.query(
+    `select t.id as ticket_id, t.numero, t.asunto, m.autor, m.fecha
+     from mensajes m join tickets t on t.id = m.ticket_id
+     where m.automatico = true and m.autor like $1
+     order by m.fecha desc limit 25`,
+    [`Automatización · ${auto.nombre} (%`]
+  )).rows;
+  ok(res, filas);
+});
 /* ---------------- Configuración ---------------- */
 app.get('/api/configuracion', requireStaff, async (req, res) => {
   const c = await getConfig();
