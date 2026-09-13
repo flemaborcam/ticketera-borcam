@@ -4997,6 +4997,8 @@ function renderTagsHistorialTabla() {
 // Una misma compra puede incluir los dos tipos a la vez (ej: 50 peatonales + 20 vehiculares juntos),
 // así que se cargan las dos cantidades en el mismo formulario en vez de tener que hacerlo dos veces.
 function actualizarCostoTagsLote() {
+  const manualEl = document.getElementById('tags-lote-precio-manual');
+  if (manualEl && manualEl.checked) return; // precio manual: no se pisa con el cálculo automático
   const peatEl = document.getElementById('tags-lote-peatonal');
   const vehEl = document.getElementById('tags-lote-vehicular');
   const costoEl = document.getElementById('tags-lote-costo');
@@ -5004,6 +5006,23 @@ function actualizarCostoTagsLote() {
   const peatonal = Number(peatEl.value) || 0;
   const vehicular = Number(vehEl.value) || 0;
   costoEl.value = (peatonal * PRECIOS_TAGS_UYU.peatonales + vehicular * PRECIOS_TAGS_UYU.vehiculares).toFixed(2);
+}
+// Las Administraciones no siempre pagan el precio de lista de los apartamentos: a veces hay un
+// descuento o se acuerda un precio manual para todo el lote. Al tildar la opción, el campo de costo
+// se habilita para escribir libremente y se deja de recalcular solo con las cantidades.
+function toggleTagsLotePrecioManual() {
+  const manualEl = document.getElementById('tags-lote-precio-manual');
+  const costoEl = document.getElementById('tags-lote-costo');
+  if (!manualEl || !costoEl) return;
+  if (manualEl.checked) {
+    costoEl.readOnly = false;
+    costoEl.style.background = '';
+    costoEl.focus();
+  } else {
+    costoEl.readOnly = true;
+    costoEl.style.background = 'var(--bg-soft,#f2f2f2)';
+    actualizarCostoTagsLote();
+  }
 }
 function renderTagsLote() {
   const lotes = cache.tagsLotes || [];
@@ -5025,6 +5044,9 @@ function renderTagsLote() {
       <div class="field"><label>Cant. vehiculares</label><input type="number" id="tags-lote-vehicular" min="0" value="0" oninput="actualizarCostoTagsLote()"></div>
     </div>
     <div class="hint-text">Podés cargar los dos tipos juntos si la Administración los compró en la misma tanda.</div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
+      <input type="checkbox" id="tags-lote-precio-manual" onchange="toggleTagsLotePrecioManual()"> Fijar precio manual para todo el lote (descuento u otro acuerdo)
+    </label>
     <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-lote-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
     <div class="field"><label>Notas (opcional)</label><input type="text" id="tags-lote-notas" placeholder="Ej: N° de factura, detalle del pedido..."></div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
