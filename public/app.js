@@ -1066,7 +1066,7 @@ function renderServicioTecnicoTab() {
   }
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
-      <div style="display:flex;gap:8px;">
+      <div class="page-head-actions">
         ${tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
     </div>
@@ -2679,7 +2679,7 @@ function renderCalendarioConfigTab(c, filasDias) {
   return `
     <div class="card card-narrow" style="max-width:640px;margin-bottom:18px;">
       <div style="font-weight:600;font-size:14.5px;margin-bottom:8px;">Enlace para compartir con clientes</div>
-      <div style="display:flex;gap:8px;">
+      <div class="page-head-actions">
         <input readonly value="${window.location.origin}/agendar" style="flex:1;padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);">
         <button type="button" class="btn btn-ghost" onclick="copiarEnlaceAgenda()">Copiar</button>
       </div>
@@ -4048,7 +4048,7 @@ function renderGrupos() {
   const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
   return `${clientesRowStyleTag()}<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
-      <div style="display:flex;gap:8px;">
+      <div class="page-head-actions">
         <button class="btn btn-ghost" onclick="openImportarClientesModal()">📥 Importar desde Excel</button>
         <button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button>
       </div></div>
@@ -4799,9 +4799,9 @@ function renderTagsPedidos() {
     <td><button class="btn btn-sm" onclick="marcarEntregadoTags(${p.id})">Marcar entregado</button>
     ${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarPedidoTags(${p.id})">Eliminar</button>` : ''}</td>
   </tr>`).join('');
-  return `<div class="card"><table class="reportes-table">
+  return `<div class="card"><div class="table-scroll"><table class="reportes-table">
     <thead><tr><th>Ticket</th><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Costo</th><th>Acción</th></tr></thead>
-    <tbody>${filas}</tbody></table></div>`;
+    <tbody>${filas}</tbody></table></div></div>`;
 }
 async function marcarEntregadoTags(id) {
   const tagNum = prompt('Número de tag entregado:');
@@ -4827,9 +4827,9 @@ function renderTagsHistorial() {
     <td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td>
     <td>${escapeHtml(p.tag_num || '')}</td><td>${p.fecha_entrega ? new Date(p.fecha_entrega).toLocaleString('es-AR') : ''}</td>
   </tr>`).join('');
-  return `<div class="card"><table class="reportes-table">
+  return `<div class="card"><div class="table-scroll"><table class="reportes-table">
     <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
-    <tbody>${filas}</tbody></table></div>`;
+    <tbody>${filas}</tbody></table></div></div>`;
 }
 function renderTagsEdificios() {
   const edificios = cache.tagsEdificios || [];
@@ -4851,9 +4851,9 @@ function renderTagsEdificios() {
       <button type="button" class="btn btn-primary btn-block" onclick="guardarEdificioTags()">Guardar edificio</button>
     </div>
   </div>
-  <div class="card" style="margin-top:16px;"><table class="reportes-table">
+  <div class="card" style="margin-top:16px;"><div class="table-scroll"><table class="reportes-table">
     <thead><tr><th>Edificio</th><th>Peatonales (disp./total)</th><th>Vehiculares (disp./total)</th><th>Acción</th></tr></thead>
-    <tbody>${filas}</tbody></table></div>`;
+    <tbody>${filas}</tbody></table></div></div>`;
 }
 async function guardarEdificioTags() {
   const edificio = document.getElementById('tags-nuevo-edificio').value.trim();
