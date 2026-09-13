@@ -1624,13 +1624,20 @@ function construirPdfReporteMensualServicios(filas, mes) {
   doc.save(`Reporte servicio tecnico ${mes}.pdf`);
 }
 function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
+function nombreUsuarioPorId(id) { const u = (cache.usuarios || []).find(x => x.id === id); return u ? `${u.nombre} ${u.apellido}` : '—'; }
+// Select de "Técnico asignado", reutilizado en Nuevo turno / Agendar / Editar servicio técnico —
+// para elegir quién va a ir a la visita, y poder cambiarlo después si ese técnico no puede ir.
+function opcionesTecnicos(selectedId) {
+  return `<option value="" ${!selectedId ? 'selected' : ''}>Sin asignar</option>` +
+    (cache.usuarios || []).map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
+}
 function renderServicioTecnicoLista(filtro, mensajeVacio) {
   const turnos = (cache.serviciosTecnicos || []).filter(filtro);
   const html = turnos.length ? turnos.map(s => `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
       <div class="avatar">🛠️</div>
       <div><div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
-      <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''}</div></div>
+      <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''} · 👤 ${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</div></div>
     </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list">${html}</div>`;
@@ -1754,6 +1761,7 @@ function renderNuevoServicioTecnicoModal() {
       <div class="field" id="nuevo-servicio-hora-wrap"><label>Hora</label><input type="time" id="nuevo-servicio-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="nuevo-servicio-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="nuevo-servicio-duracion" min="15" step="15" value="60"></div>
+    <div class="field"><label>Técnico asignado</label><select id="nuevo-servicio-tecnico">${opcionesTecnicos(null)}</select></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="nuevo-servicio-aplica-iva" checked> Aplicar IVA (22%)</label>
     ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarNuevoServicioTecnico()">📅 Agendar</button></div>
@@ -1782,6 +1790,7 @@ async function guardarNuevoServicioTecnico() {
   const duracion = document.getElementById('nuevo-servicio-duracion').value;
   const todoElDia = document.getElementById('nuevo-servicio-todo-el-dia').checked;
   const aplicaIva = document.getElementById('nuevo-servicio-aplica-iva').checked;
+  const tecnicoAsignadoId = document.getElementById('nuevo-servicio-tecnico').value || null;
   if (!clienteId) { showToast('Elegí un cliente/edificio.'); return; }
   if (!titulo || !titulo.trim()) { showToast('Escribí un título para el evento.'); return; }
   if (!fecha) { showToast('Elegí una fecha.'); return; }
@@ -1790,7 +1799,7 @@ async function guardarNuevoServicioTecnico() {
   try {
     const nuevo = await api('POST', '/api/servicios-tecnicos', {
       clienteId, ticketId: ticketElegido ? ticketElegido.id : null, ticketNumero: ticketElegido ? ticketElegido.numero : null,
-      titulo, fecha, hora, duracion, todoElDia, aplicaIva
+      titulo, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId
     });
     await aplicarCostosPendientes(nuevo.id);
     const filas = await api('GET', '/api/servicios-tecnicos');
@@ -1966,6 +1975,7 @@ function renderDetalleServicioTecnicoModal() {
     ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
     ['Duración', s.todo_el_dia ? '—' : `${s.duracion_minutos || 60} min`],
     ['Cargado por', s.creado_por ? escapeHtml(s.creado_por) : '—'],
+    ['Técnico asignado', s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : '<span style="color:var(--ink-soft);font-weight:400;">Sin asignar</span>'],
     ...(s.tecnico_realizo_nombre ? [['Técnico que la realizó', escapeHtml(s.tecnico_realizo_nombre)]] : []),
     ['Estado', s.estado === 'realizado' ? 'Realizado' : s.estado === 'en_curso' ? '🚗 En curso' : 'Pendiente']
   ];
@@ -2104,7 +2114,7 @@ async function confirmarReprogramarServicio() {
   if (!fecha || !hora) { showToast('Elegí la nueva fecha y hora.'); return; }
   try {
     const actualizado = await api('PUT', `/api/servicios-tecnicos/${s.id}`, {
-      clienteId: s.cliente_id, titulo: s.titulo, fecha, hora, duracion: s.duracion_minutos, todoElDia: s.todo_el_dia, motivoReprogramacion: motivo
+      clienteId: s.cliente_id, titulo: s.titulo, fecha, hora, duracion: s.duracion_minutos, todoElDia: s.todo_el_dia, motivoReprogramacion: motivo, tecnicoAsignadoId: s.tecnico_asignado_id
     });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(s.id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
@@ -2391,6 +2401,7 @@ function renderEditarServicioTecnicoModal(s) {
       <div class="field" id="servicio-edit-ics-hora-wrap" style="${s.todo_el_dia ? 'display:none;' : ''}"><label>Hora</label><input type="time" id="servicio-edit-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="servicio-edit-ics-duracion-wrap" style="${s.todo_el_dia ? 'display:none;' : ''}"><label>Duración (minutos)</label><input type="number" id="servicio-edit-duracion" min="15" step="15" value="${s.duracion_minutos || 60}"></div>
+    <div class="field"><label>Técnico asignado</label><select id="servicio-edit-tecnico">${opcionesTecnicos(s.tecnico_asignado_id)}</select><div class="hint-text">Si el técnico asignado no puede ir, elegí otro acá y guardá los cambios.</div></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId=null; render();">Cancelar</button>
       <button type="button" class="btn btn-primary" onclick="guardarEdicionServicioTecnico('${s.id}')">Guardar cambios</button>
@@ -2404,11 +2415,12 @@ async function guardarEdicionServicioTecnico(id) {
   const hora = document.getElementById('servicio-edit-hora').value;
   const duracion = document.getElementById('servicio-edit-duracion').value;
   const todoElDia = document.getElementById('servicio-edit-ics-todo-el-dia').checked;
+  const tecnicoAsignadoId = document.getElementById('servicio-edit-tecnico').value || null;
   if (!clienteId) { showToast('Elegí un cliente/edificio.'); return; }
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   try {
-    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { clienteId, titulo, fecha, hora, duracion, todoElDia });
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { clienteId, titulo, fecha, hora, duracion, todoElDia, tecnicoAsignadoId });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
     state.editandoServicioTecnicoId = null;
@@ -3639,6 +3651,7 @@ function renderAgendarServicioModal() {
       <div class="field" id="servicio-ics-hora-wrap"><label>Hora</label><input type="time" id="servicio-ics-hora" value="${horaDefault}"></div>
     </div>
     <div class="field" id="servicio-ics-duracion-wrap"><label>Duración (minutos)</label><input type="number" id="servicio-ics-duracion" min="15" step="15" value="60"></div>
+    <div class="field"><label>Técnico asignado</label><select id="servicio-ics-tecnico">${opcionesTecnicos(null)}</select></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-ics-aplica-iva" checked> Aplicar IVA (22%)</label>
     ${renderCostosPendientesEditor()}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="button" class="btn btn-primary" onclick="guardarServicioTecnico()">📅 Agendar</button></div>
@@ -3653,12 +3666,13 @@ async function guardarServicioTecnico() {
   const titulo = document.getElementById('servicio-ics-titulo').value;
   const todoElDia = document.getElementById('servicio-ics-todo-el-dia').checked;
   const aplicaIva = document.getElementById('servicio-ics-aplica-iva').checked;
+  const tecnicoAsignadoId = document.getElementById('servicio-ics-tecnico').value || null;
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   if (!t.grupoId) { showToast('Este ticket no está vinculado a ningún cliente/edificio. Asignalo a un cliente antes de agendar el servicio técnico.'); return; }
   // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Servicio Técnico.
   try {
-    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia, aplicaIva });
+    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId });
     await aplicarCostosPendientes(nuevo.id);
     await refreshTicket(t.id);
     showToast('Servicio técnico agendado.');
