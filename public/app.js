@@ -4700,25 +4700,34 @@ function renderNewsletter() {
 /* ---------------- Tags de acceso (edificios / pedidos) ---------------- */
 async function renderTagsAsync() {
   if (!state.tagsTab) state.tagsTab = 'nuevo';
-  const [edificios, pedidos] = await Promise.all([
+  const [edificios, pedidos, lotes] = await Promise.all([
     api('GET', '/api/tags/edificios').catch(() => []),
-    api('GET', '/api/tags/pedidos').catch(() => [])
+    api('GET', '/api/tags/pedidos').catch(() => []),
+    api('GET', '/api/tags/lotes').catch(() => [])
   ]);
-  cache.tagsEdificios = edificios; cache.tagsPedidos = pedidos;
+  cache.tagsEdificios = edificios; cache.tagsPedidos = pedidos; cache.tagsLotes = lotes;
   return renderTags();
+}
+// Clientes/edificios que pueden aparecer como "Edificio" en Tags: los cargados en el módulo Clientes
+// con rol Edificio o Administración (antes era una lista aparte tipeada a mano, y con nombres que no
+// coincidían exactamente entre un lado y otro se rompía el cálculo de stock disponible).
+function clientesParaTags() {
+  return (cache.clientes || []).filter(c => c.rolCliente === 'Edificio' || c.rolCliente === 'Administración')
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 }
 function renderTags() {
   const tab = state.tagsTab || 'nuevo';
   const esSuper = currentUser().es_superadmin;
   const tabs = [
     { v: 'nuevo', label: 'Nuevo pedido' }, { v: 'pedidos', label: 'Pedidos pendientes' },
-    { v: 'historial', label: 'Historial' },
+    { v: 'historial', label: 'Historial' }, { v: 'lote', label: 'Venta por lote' },
   ];
   if (esSuper) tabs.push({ v: 'edificios', label: 'Edificios' });
   const tabsHtml = tabs.map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarTagsTab('${t.v}')">${t.label}</button>`).join('');
   let body = '';
   if (tab === 'nuevo') body = renderTagsNuevo();
   else if (tab === 'pedidos') body = renderTagsPedidos();
+  else if (tab === 'lote') body = renderTagsLote();
   else if (tab === 'historial') body = renderTagsHistorial();
   else if (tab === 'edificios') body = renderTagsEdificios();
   return `<div class="page-head"><div><h1>Tags</h1><div class="sub">Control de stock y entrega de tags de acceso por edificio</div></div></div>
@@ -4773,18 +4782,22 @@ function actualizarCostoTags() {
   const cantidad = Number(cantEl.value) || 0;
   costoEl.value = (precioUnitario * cantidad).toFixed(2);
 }
+// Opciones para los selects de "Edificio" en Tags: se arman con los Clientes cargados con rol
+// Edificio o Administración, para que el nombre sea siempre el mismo que en el módulo Clientes.
+function opcionesEdificiosTagsHtml(selected) {
+  const clientes = clientesParaTags();
+  if (!clientes.length) return `<option value="">-- No hay clientes con rol Edificio/Administración cargados --</option>`;
+  return `<option value="">-- Seleccioná un edificio --</option>` +
+    clientes.map(c => `<option value="${escapeHtml(c.nombre)}" ${selected === c.nombre ? 'selected' : ''}>${escapeHtml(c.nombre)}${c.rolCliente === 'Administración' ? ' (Administración)' : ''}</option>`).join('');
+}
 function renderTagsNuevo() {
-  const edificios = cache.tagsEdificios || [];
   const precarga = state.tagsPrecarga || {};
   return `<div class="card card-narrow" style="max-width:560px;">
     ${configSectionHead('🏷️', 'Ingresar pedido', 'Al guardar se descuenta automáticamente del stock disponible de ese edificio.')}
     ${precarga.ticket ? `<div class="hint-text" style="margin-bottom:10px;">Datos precargados desde el ticket ${escapeHtml(precarga.ticket)}.</div>` : ''}
     <div class="field"><label>Cliente</label><input type="text" id="tags-cliente" placeholder="Nombre del cliente" value="${escapeHtml(precarga.cliente || '')}"></div>
     <div class="field"><label>Edificio</label>
-      <select id="tags-edificio">
-        <option value="">-- Seleccioná un edificio --</option>
-        ${edificios.map(e => `<option value="${escapeHtml(e.edificio)}" ${precarga.edificio === e.edificio ? 'selected' : ''}>${escapeHtml(e.edificio)}</option>`).join('')}
-      </select>
+      <select id="tags-edificio">${opcionesEdificiosTagsHtml(precarga.edificio || '')}</select>
       ${precarga.edificio ? `<div class="hint-text">Precargado del Cliente asignado al ticket; cambialo si no corresponde.</div>` : ''}
     </div>
     <div class="field-row">
@@ -4900,12 +4913,11 @@ function abrirEditarPedidoTags(id) {
 function renderTagsEditarPedidoModal() {
   const p = (cache.tagsPedidos || []).find(x => x.id === state.tagsEditarPedidoId);
   if (!p) return '';
-  const edificios = cache.tagsEdificios || [];
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>✏️ Editar pedido de tags</h2>
     <div class="field"><label>Cliente</label><input type="text" id="tags-edit-cliente" value="${escapeHtml(p.nombre_cliente)}"></div>
     <div class="field"><label>Edificio</label>
-      <select id="tags-edit-edificio">${edificios.map(e => `<option value="${escapeHtml(e.edificio)}" ${e.edificio === p.edificio ? 'selected' : ''}>${escapeHtml(e.edificio)}</option>`).join('')}</select>
+      <select id="tags-edit-edificio">${opcionesEdificiosTagsHtml(p.edificio || '')}</select>
     </div>
     <div class="field-row">
       <div class="field"><label>Torre</label><input type="text" id="tags-edit-torre" value="${escapeHtml(p.torre || '')}"></div>
@@ -4979,6 +4991,70 @@ function renderTagsHistorialTabla() {
     <thead><tr><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
     <tbody>${filas}</tbody></table></div></div>`;
 }
+// "Venta por lote": una Administración compra de una sola vez una cantidad de tags que gestiona
+// por su cuenta. No se descuenta del stock de peatonales/vehiculares (ese stock es para lo que
+// Borcam entrega puerta a puerta con pedidos individuales) — es solo un registro de la venta.
+function actualizarCostoTagsLote() {
+  const tipoEl = document.getElementById('tags-lote-tipo');
+  const cantEl = document.getElementById('tags-lote-cantidad');
+  const costoEl = document.getElementById('tags-lote-costo');
+  if (!tipoEl || !cantEl || !costoEl) return;
+  const precioUnitario = tipoEl.value.toLowerCase().startsWith('peat') ? PRECIOS_TAGS_UYU.peatonales : PRECIOS_TAGS_UYU.vehiculares;
+  const cantidad = Number(cantEl.value) || 0;
+  costoEl.value = (precioUnitario * cantidad).toFixed(2);
+}
+function renderTagsLote() {
+  const lotes = cache.tagsLotes || [];
+  const filas = lotes.map(l => `<tr>
+    <td>${escapeHtml(l.cliente)}</td><td>${escapeHtml(l.tipo_tags || '')}</td><td>${l.cantidad_tags}</td>
+    <td>${l.costo != null ? l.costo : ''}</td><td>${l.notas ? escapeHtml(l.notas) : ''}</td>
+    <td>${l.fecha ? new Date(l.fecha).toLocaleDateString('es-UY') : ''}</td>
+    <td>${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarLoteTags(${l.id})">Eliminar</button>` : ''}</td>
+  </tr>`).join('');
+  return `<div class="card card-narrow" style="max-width:560px;">
+    ${configSectionHead('📦', 'Registrar venta por lote', 'Para cuando una Administración compra una tanda de tags y los reparte ella misma. No afecta el stock de pedidos individuales.')}
+    <div class="field"><label>Cliente / Administración</label>
+      <select id="tags-lote-cliente">${opcionesEdificiosTagsHtml('')}</select>
+    </div>
+    <div class="field"><label>Tipo de tags</label>
+      <select id="tags-lote-tipo" onchange="actualizarCostoTagsLote()"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cantidad</label><input type="number" id="tags-lote-cantidad" min="1" placeholder="Cantidad" oninput="actualizarCostoTagsLote()"></div>
+      <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-lote-costo" step="0.01" placeholder="Costo" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
+    </div>
+    <div class="field"><label>Notas (opcional)</label><input type="text" id="tags-lote-notas" placeholder="Ej: N° de factura, detalle del pedido..."></div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
+      <button type="button" class="btn btn-primary btn-block" onclick="guardarLoteTags()">Registrar venta</button>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px;">
+    ${lotes.length ? `<div class="table-scroll"><table class="reportes-table">
+      <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Costo</th><th>Notas</th><th>Fecha</th><th>Acción</th></tr></thead>
+      <tbody>${filas}</tbody></table></div>` : `<div class="empty-state">Todavía no se registró ninguna venta por lote.</div>`}
+  </div>`;
+}
+async function guardarLoteTags() {
+  const cliente = document.getElementById('tags-lote-cliente').value.trim();
+  const tipoTags = document.getElementById('tags-lote-tipo').value;
+  const cantidadTags = Number(document.getElementById('tags-lote-cantidad').value);
+  const costo = document.getElementById('tags-lote-costo').value;
+  const notas = document.getElementById('tags-lote-notas').value.trim();
+  if (!cliente) { showToast('Elegí un cliente/Administración.'); return; }
+  if (!cantidadTags) { showToast('Ingresá la cantidad de tags.'); return; }
+  try {
+    await api('POST', '/api/tags/lotes', { cliente, tipoTags, cantidadTags, costo, notas });
+    showToast('Venta por lote registrada.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
+  } catch (e) { showToast(e.message); }
+}
+async function eliminarLoteTags(id) {
+  if (!confirm('¿Eliminar este registro de venta por lote?')) return;
+  try {
+    await api('DELETE', `/api/tags/lotes/${id}`);
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
+  } catch (e) { showToast(e.message); }
+}
 function renderTagsEdificios() {
   const edificios = cache.tagsEdificios || [];
   const filas = edificios.map(e => `<tr>
@@ -4989,8 +5065,8 @@ function renderTagsEdificios() {
     <button class="btn btn-sm btn-danger" onclick="eliminarEdificioTags(${e.id})">Eliminar</button></td>
   </tr>`).join('');
   return `<div class="card card-narrow" style="max-width:560px;">
-    ${configSectionHead('🏢', 'Agregar / actualizar edificio', 'Si el edificio ya existe, se actualiza su stock total.')}
-    <div class="field"><label>Edificio</label><input type="text" id="tags-nuevo-edificio" placeholder="Nombre del edificio"></div>
+    ${configSectionHead('🏢', 'Agregar / actualizar edificio', 'Si el edificio ya existe, se actualiza su stock total. La lista sale de los Clientes cargados con rol Edificio o Administración.')}
+    <div class="field"><label>Edificio</label><select id="tags-nuevo-edificio">${opcionesEdificiosTagsHtml('')}</select></div>
     <div class="field-row">
       <div class="field"><label>Peatonales (total)</label><input type="number" id="tags-nuevo-peatonal" min="0" value="0"></div>
       <div class="field"><label>Vehiculares (total)</label><input type="number" id="tags-nuevo-vehicular" min="0" value="0"></div>
