@@ -75,6 +75,12 @@ function slug(s) { return s.toLowerCase().replace(/\s+/g, '-'); }
 function initials(n, a) { return ((n?.[0] || '') + (a?.[0] || '')).toUpperCase(); }
 function showToast(msg) { state.toast = msg; render(); setTimeout(() => { state.toast = null; render(); }, 2600); }
 
+function mapAutomatizacion(a) {
+  return {
+    id: a.id, nombre: a.nombre, activo: a.activo, enCurso: a.en_curso || 0,
+    pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, asignadoA: p.asignado_a || null, soloNuevoTicket: !!p.solo_nuevo_ticket }))
+  };
+}
 function mapTicket(row) {
   return {
     id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, prioridad: row.prioridad, estado: row.estado,
@@ -205,7 +211,7 @@ async function loadStaffData() {
   cache.usuarios = usuarios;
   cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
   cache.respuestas = respuestas;
-  cache.automatizaciones = automatizaciones.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
+  cache.automatizaciones = automatizaciones.map(mapAutomatizacion);
   cache.configuracion = configuracion;
   cache.documentosLegales = documentosLegales;
   cache.documentosEdificio = documentosEdificio;
@@ -732,13 +738,13 @@ async function deleteDocumentoEdificio(id) {
 
 function openNuevaAutomatizacionModal() {
   state.modal = 'nueva-automatizacion'; state.editAutomatizacionId = null;
-  state.editandoPasos = [{ id: uid(), matchAny: false, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', soloNuevoTicket: false }];
+  state.editandoPasos = [{ id: uid(), matchAny: false, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', asignadoA: null, soloNuevoTicket: false }];
   render();
 }
 function openEditarAutomatizacionModal(id) {
   const a = cache.automatizaciones.find(x => x.id === id);
   state.modal = 'editar-automatizacion'; state.editAutomatizacionId = id;
-  state.editandoPasos = a ? a.pasos.map(p => ({ id: p.id, matchAny: !!p.matchAny, palabras: (p.palabras || []).join(', '), respuestaId: p.respuestaId, accionEstado: p.accionEstado || 'Sin cambio', soloNuevoTicket: !!p.soloNuevoTicket })) : [];
+  state.editandoPasos = a ? a.pasos.map(p => ({ id: p.id, matchAny: !!p.matchAny, palabras: (p.palabras || []).join(', '), respuestaId: p.respuestaId, accionEstado: p.accionEstado || 'Sin cambio', asignadoA: p.asignadoA || null, soloNuevoTicket: !!p.soloNuevoTicket })) : [];
   render();
 }
 function leerPasosDesdeDom() {
@@ -746,13 +752,14 @@ function leerPasosDesdeDom() {
     id: row.dataset.pasoId, matchAny: row.querySelector('[data-field="matchAny"]').checked,
     palabras: row.querySelector('[data-field="palabras"]').value, respuestaId: row.querySelector('[data-field="respuestaId"]').value,
     accionEstado: row.querySelector('[data-field="accionEstado"]').value,
+    asignadoA: row.querySelector('[data-field="asignadoA"]') ? row.querySelector('[data-field="asignadoA"]').value || null : null,
     soloNuevoTicket: row.querySelector('[data-field="soloNuevoTicket"]') ? row.querySelector('[data-field="soloNuevoTicket"]').checked : false
   }));
 }
 function refreshPasosEditor() { const el = document.getElementById('pasos-container'); if (el) el.innerHTML = renderPasosEditor(); }
 function agregarPasoEditor() {
   state.editandoPasos = leerPasosDesdeDom();
-  state.editandoPasos.push({ id: uid(), matchAny: true, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', soloNuevoTicket: false });
+  state.editandoPasos.push({ id: uid(), matchAny: true, palabras: '', respuestaId: cache.respuestas[0] ? cache.respuestas[0].id : '', accionEstado: 'Sin cambio', asignadoA: null, soloNuevoTicket: false });
   refreshPasosEditor();
 }
 function quitarPasoEditor(id) { state.editandoPasos = leerPasosDesdeDom().filter(p => p.id !== id); refreshPasosEditor(); }
@@ -771,20 +778,24 @@ async function submitAutomatizacion(ev) {
   for (const p of pasosRaw) {
     if (!p.respuestaId) { showToast('Elegí una respuesta predefinida en cada paso.'); return false; }
     if (!p.matchAny && !p.palabras.trim()) { showToast('Completá palabras clave o marcá "cualquier respuesta".'); return false; }
-    pasos.push({ matchAny: p.matchAny, palabras: p.matchAny ? [] : p.palabras.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), respuestaId: p.respuestaId, accionEstado: p.accionEstado, soloNuevoTicket: p.soloNuevoTicket });
+    pasos.push({ matchAny: p.matchAny, palabras: p.matchAny ? [] : p.palabras.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), respuestaId: p.respuestaId, accionEstado: p.accionEstado, asignadoA: p.asignadoA || null, soloNuevoTicket: p.soloNuevoTicket });
   }
   try {
     if (state.modal === 'editar-automatizacion') await api('PUT', '/api/automatizaciones/' + state.editAutomatizacionId, { nombre, activo, pasos });
     else await api('POST', '/api/automatizaciones', { nombre, activo, pasos });
     const autos = await api('GET', '/api/automatizaciones');
-    cache.automatizaciones = autos.map(a => ({ id: a.id, nombre: a.nombre, activo: a.activo, pasos: a.pasos.map(p => ({ id: p.id, matchAny: p.match_any, palabras: p.palabras || [], respuestaId: p.respuesta_id, accionEstado: p.accion_estado, soloNuevoTicket: !!p.solo_nuevo_ticket })) }));
+    cache.automatizaciones = autos.map(mapAutomatizacion);
     state.modal = null; state.editandoPasos = [];
     render();
   } catch (e) { showToast(e.message); }
   return false;
 }
 async function deleteAutomatizacion(id) {
-  if (!confirm('¿Eliminar esta automatización?')) return;
+  const a = cache.automatizaciones.find(x => x.id === id);
+  const aviso = a && a.enCurso
+    ? `Ojo: hay ${a.enCurso} ticket${a.enCurso === 1 ? '' : 's'} esperando el próximo paso de "${a.nombre}". Si la eliminás, esos tickets no van a seguir la cadena (no se borran ni se tocan, simplemente no va a pasar nada más automático ahí).\n\n¿Eliminar igual?`
+    : '¿Eliminar esta automatización?';
+  if (!confirm(aviso)) return;
   await api('DELETE', '/api/automatizaciones/' + id);
   cache.automatizaciones = cache.automatizaciones.filter(a => a.id !== id);
   render();
@@ -4292,6 +4303,7 @@ function renderRespuestas() {
 function renderPasosEditor() {
   const estadoOpts = sel => ['Sin cambio', ...CAT.ESTADOS].map(e => `<option value="${e}" ${sel === e ? 'selected' : ''}>${e}</option>`).join('');
   const respOpts = sel => cache.respuestas.map(r => `<option value="${r.id}" ${sel === r.id ? 'selected' : ''}>${escapeHtml(r.titulo)}</option>`).join('');
+  const asignadoOpts = sel => `<option value="">No asignar</option>` + (cache.usuarios || []).map(u => `<option value="${u.id}" ${sel === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
   return state.editandoPasos.map((p, idx) => `
     <div class="paso-row" data-paso-id="${p.id}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -4304,27 +4316,46 @@ function renderPasosEditor() {
         <input type="checkbox" data-field="soloNuevoTicket" ${p.soloNuevoTicket ? 'checked' : ''}> Disparar solo al crear el ticket (no en respuestas posteriores)
       </label>` : ''}
       <div class="field"><label>Respuesta a enviar</label><select data-field="respuestaId">${respOpts(p.respuestaId)}</select></div>
-      <div class="field" style="margin-bottom:0;"><label>Cambiar estado a</label><select data-field="accionEstado">${estadoOpts(p.accionEstado)}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Cambiar estado a</label><select data-field="accionEstado">${estadoOpts(p.accionEstado)}</select></div>
+        <div class="field" style="margin-bottom:0;"><label>Asignar a</label><select data-field="asignadoA">${asignadoOpts(p.asignadoA)}</select></div>
+      </div>
     </div>`).join('');
 }
 
 function renderAutomatizaciones() {
-  const rows = cache.automatizaciones.map(a => {
-    const pasosHtml = a.pasos.map((p, idx) => {
+  const rows = cache.automatizaciones.map((a, idx) => {
+    const pasosHtml = a.pasos.map((p, i) => {
       const resp = cache.respuestas.find(r => r.id === p.respuestaId);
       const disparador = p.soloNuevoTicket ? 'al crear el ticket (siempre)' : p.matchAny ? 'cualquier respuesta del cliente' : (p.palabras || []).join(', ');
-      return `<div class="hint-text" style="margin-top:4px;"><strong>Paso ${idx + 1}:</strong> ${escapeHtml(disparador)} &rarr; ${resp ? escapeHtml(resp.titulo) : 'respuesta eliminada'}${p.accionEstado !== 'Sin cambio' ? ` · estado: <strong>${escapeHtml(p.accionEstado)}</strong>` : ''}</div>`;
+      const asignado = p.asignadoA ? nombreUsuarioPorId(p.asignadoA) : null;
+      return `<div class="hint-text" style="margin-top:4px;"><strong>Paso ${i + 1}:</strong> ${escapeHtml(disparador)} &rarr; ${resp ? escapeHtml(resp.titulo) : 'respuesta eliminada'}${p.accionEstado !== 'Sin cambio' ? ` · estado: <strong>${escapeHtml(p.accionEstado)}</strong>` : ''}${asignado ? ` · asigna a: <strong>${escapeHtml(asignado)}</strong>` : ''}</div>`;
     }).join('');
     return `<div class="card" style="margin-bottom:12px;opacity:${a.activo ? '1' : '.55'};"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">
       <div style="flex:1;min-width:220px;"><div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
         <span style="font-weight:600;font-size:14.5px;">${escapeHtml(a.nombre)}</span><span class="tag ${a.activo ? 'tag-resuelto' : 'tag-cerrado'}">${a.activo ? 'Activa' : 'Pausada'}</span>
-        <span class="tag tag-cat">${a.pasos.length} paso${a.pasos.length === 1 ? '' : 's'}</span></div>${pasosHtml}</div>
-      <div style="display:flex;gap:8px;flex:none;"><button class="btn btn-ghost" onclick="toggleAutomatizacion('${a.id}')">${a.activo ? 'Pausar' : 'Activar'}</button>
-        <button class="btn btn-ghost" onclick="openEditarAutomatizacionModal('${a.id}')">Editar</button><button class="btn btn-danger" onclick="deleteAutomatizacion('${a.id}')">Eliminar</button></div>
+        <span class="tag tag-cat">${a.pasos.length} paso${a.pasos.length === 1 ? '' : 's'}</span>
+        ${a.enCurso ? `<span class="tag" title="Tickets esperando el próximo paso de esta automatización">${a.enCurso} en curso</span>` : ''}</div>${pasosHtml}</div>
+      <div style="display:flex;gap:8px;flex:none;align-items:center;">
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;" title="Subir prioridad" ${idx === 0 ? 'disabled' : ''} onclick="moverAutomatizacion('${a.id}','arriba')">▲</button>
+          <button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;" title="Bajar prioridad" ${idx === cache.automatizaciones.length - 1 ? 'disabled' : ''} onclick="moverAutomatizacion('${a.id}','abajo')">▼</button>
+        </div>
+        <button class="btn btn-ghost" onclick="toggleAutomatizacion('${a.id}')">${a.activo ? 'Pausar' : 'Activar'}</button>
+        <button class="btn btn-ghost" onclick="openEditarAutomatizacionModal('${a.id}')">Editar</button><button class="btn btn-danger" onclick="deleteAutomatizacion('${a.id}')">Eliminar</button>
+      </div>
     </div></div>`;
   }).join('');
   const list = cache.automatizaciones.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay automatizaciones</div></div>`;
-  return `<div class="page-head"><div><h1>Automatizaciones</h1><div class="sub">Cadenas de pasos que responden solas ante ciertas palabras</div></div><button class="btn btn-primary" onclick="openNuevaAutomatizacionModal()">+ Nueva automatización</button></div>${list}`;
+  return `<div class="page-head"><div><h1>Automatizaciones</h1><div class="sub">Cadenas de pasos que responden solas ante ciertas palabras. El orden de la lista es la prioridad: si dos podrían coincidir con el mismo texto, gana la de más arriba.</div></div><button class="btn btn-primary" onclick="openNuevaAutomatizacionModal()">+ Nueva automatización</button></div>${list}`;
+}
+async function moverAutomatizacion(id, direccion) {
+  try {
+    await api('POST', `/api/automatizaciones/${id}/mover`, { direccion });
+    const autos = await api('GET', '/api/automatizaciones');
+    cache.automatizaciones = autos.map(mapAutomatizacion);
+    render();
+  } catch (e) { showToast(e.message); }
 }
 
 function openNuevoUsuarioModal() {
