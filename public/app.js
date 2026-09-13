@@ -4745,7 +4745,10 @@ function renderTagsResumenKpis() {
   const esEsteMes = (fecha) => { const d = new Date(fecha); return d.getFullYear() === ahora.getFullYear() && d.getMonth() === ahora.getMonth(); };
   const entregadosMes = pedidos.filter(p => p.entregado && p.fecha_entrega && esEsteMes(p.fecha_entrega));
   const pendientes = pedidos.filter(p => !p.entregado);
-  const ingresoMes = entregadosMes.reduce((acc, p) => acc + (Number(p.costo) || 0), 0);
+  const lotesMes = (cache.tagsLotes || []).filter(l => l.fecha && esEsteMes(l.fecha));
+  const ingresoPedidosMes = entregadosMes.reduce((acc, p) => acc + (Number(p.costo) || 0), 0);
+  const ingresoLotesMes = lotesMes.reduce((acc, l) => acc + (Number(l.costo) || 0), 0);
+  const ingresoMes = ingresoPedidosMes + ingresoLotesMes;
   const kpi = (label, valor, extra) => `<div style="flex:1;min-width:140px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;">
     <div style="font-size:12px;color:var(--ink-soft);margin-bottom:2px;">${label}</div>
     <div style="font-size:20px;font-weight:700;">${valor}</div>
@@ -4754,7 +4757,7 @@ function renderTagsResumenKpis() {
   return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
     ${kpi('Entregados este mes', entregadosMes.length)}
     ${kpi('Pedidos pendientes', pendientes.length)}
-    ${kpi('Ingreso del mes', `$${ingresoMes.toLocaleString('es-UY')}`, 'Suma de costos de lo entregado este mes')}
+    ${kpi('Ingreso del mes', `$${ingresoMes.toLocaleString('es-UY')}`, 'Pedidos entregados + ventas por lote, este mes')}
   </div>`;
 }
 const TAGS_STOCK_MINIMO = 10;
@@ -4854,12 +4857,51 @@ function buscadorTagsHtml(id, valor, onInputFn) {
   </div>`;
 }
 function filtrarTagsPedidos(v) { state.tagsFiltroPedidos = v; renderTagsListaSoloTabla('pedidos'); }
-function filtrarTagsHistorial(v) { state.tagsFiltroHistorial = v; renderTagsListaSoloTabla('historial'); }
+// Filtro avanzado (texto + edificio + rango de fechas) usado en Historial y Venta por lote.
+// campoFecha indica qué campo de la fila se compara contra desde/hasta.
+function filtroTagsAvanzado(row, filtros, campoFecha) {
+  filtros = filtros || {};
+  if (filtros.texto) {
+    const q = filtros.texto.toLowerCase();
+    const campos = [row.nombre_cliente, row.cliente, row.edificio, row.ticket, row.tag_num, row.notas];
+    if (!campos.some(v => (v || '').toLowerCase().includes(q))) return false;
+  }
+  if (filtros.edificio) {
+    const campoEdif = row.edificio !== undefined && row.edificio !== null ? row.edificio : row.cliente;
+    if (campoEdif !== filtros.edificio) return false;
+  }
+  if (filtros.desde || filtros.hasta) {
+    const fechaRaw = row[campoFecha];
+    const fecha = fechaRaw ? new Date(fechaRaw) : null;
+    if (filtros.desde && (!fecha || fecha < new Date(filtros.desde + 'T00:00:00'))) return false;
+    if (filtros.hasta && (!fecha || fecha > new Date(filtros.hasta + 'T23:59:59'))) return false;
+  }
+  return true;
+}
+// Barra de filtros con buscador de texto (opcional), edificio y rango de fechas. Cada campo llama a
+// su propia función on-change para no perder el foco de lo que se está escribiendo en los demás.
+function filtrosTagsAvanzadosHtml(opts) {
+  return `<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;align-items:flex-end;">
+    ${opts.mostrarTexto ? `<div class="field" style="max-width:240px;min-width:180px;margin-bottom:0;"><label>Buscar</label><input type="text" id="${opts.textoId}" placeholder="Cliente, edificio, ticket..." value="${escapeHtml(opts.textoValor || '')}" oninput="${opts.onTexto}(this.value)"></div>` : ''}
+    <div class="field" style="max-width:220px;min-width:160px;margin-bottom:0;"><label>Edificio</label>
+      <select id="${opts.edificioId}" onchange="${opts.onEdificio}(this.value)"><option value="">Todos</option>${clientesParaTags().map(c => `<option value="${escapeHtml(c.nombre)}" ${opts.edificioValor === c.nombre ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}</select>
+    </div>
+    <div class="field" style="max-width:150px;margin-bottom:0;"><label>Desde</label><input type="date" id="${opts.desdeId}" value="${opts.desdeValor || ''}" onchange="${opts.onDesde}(this.value)"></div>
+    <div class="field" style="max-width:150px;margin-bottom:0;"><label>Hasta</label><input type="date" id="${opts.hastaId}" value="${opts.hastaValor || ''}" onchange="${opts.onHasta}(this.value)"></div>
+  </div>`;
+}
+function filtrarTagsHistorialTexto(v) { state.tagsFiltroHistorial.texto = v; renderTagsListaSoloTabla('historial'); }
+function filtrarTagsHistorialEdificio(v) { state.tagsFiltroHistorial.edificio = v; renderTagsListaSoloTabla('historial'); }
+function filtrarTagsHistorialDesde(v) { state.tagsFiltroHistorial.desde = v; renderTagsListaSoloTabla('historial'); }
+function filtrarTagsHistorialHasta(v) { state.tagsFiltroHistorial.hasta = v; renderTagsListaSoloTabla('historial'); }
+function filtrarTagsLoteEdificio(v) { state.tagsFiltroLote.edificio = v; renderTagsListaSoloTabla('lote'); }
+function filtrarTagsLoteDesde(v) { state.tagsFiltroLote.desde = v; renderTagsListaSoloTabla('lote'); }
+function filtrarTagsLoteHasta(v) { state.tagsFiltroLote.hasta = v; renderTagsListaSoloTabla('lote'); }
 // Vuelve a pintar solo la tabla (no todo el formulario) para no perder el foco del buscador mientras se escribe.
 function renderTagsListaSoloTabla(tab) {
   const el = document.getElementById('tags-tabla-wrap');
   if (!el) return;
-  el.innerHTML = tab === 'pedidos' ? renderTagsPedidosTabla() : renderTagsHistorialTabla();
+  el.innerHTML = tab === 'pedidos' ? renderTagsPedidosTabla() : tab === 'lote' ? renderTagsLoteTabla() : renderTagsHistorialTabla();
 }
 function renderTagsPedidos() {
   return `${buscadorTagsHtml('tags-buscar-pedidos', state.tagsFiltroPedidos, 'filtrarTagsPedidos')}
@@ -4902,12 +4944,97 @@ function renderTagsEntregarModal() {
 async function confirmarEntregarTags(id) {
   const tagNum = document.getElementById('tags-entregar-num').value.trim();
   if (!tagNum) { showToast('Ingresá un número de tag válido.'); return; }
+  // La pestaña del recibo se abre ANTES de llamar al servidor: así el navegador la asocia al clic
+  // del usuario y no la bloquea como pop-up (si se abriera recién después del await, varios
+  // navegadores la bloquean por no venir "directo" de una acción del usuario).
+  const reciboWin = window.open('', '_blank');
   try {
-    await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum });
+    const pedido = await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum });
     closeModal();
     showToast('Marcado como entregado.');
+    if (reciboWin && pedido.recibo) {
+      reciboWin.document.write(construirReciboTagHtml(pedido, pedido.recibo));
+      reciboWin.document.close();
+      // El contenido (incluido el logo, ya embebido como data URI) queda listo al instante con
+      // document.write, así que no hace falta esperar ningún evento de carga: alcanza un pequeño
+      // margen para que el navegador termine de pintar la pestaña antes de abrir el diálogo.
+      setTimeout(() => { try { reciboWin.focus(); reciboWin.print(); } catch (e) {} }, 250);
+    } else if (reciboWin) {
+      reciboWin.close();
+    }
     renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
-  } catch (e) { showToast(e.message); }
+  } catch (e) {
+    if (reciboWin) reciboWin.close();
+    showToast(e.message);
+  }
+}
+// Recibo no fiscal de entrega de tag: se arma como HTML (no PDF) y se imprime con el diálogo nativo
+// del navegador, que ya incluye la opción "Guardar como PDF" — más confiable entre navegadores que
+// generar un PDF con una librería y esperar que se abra solo el diálogo de impresión.
+function construirReciboTagHtml(pedido, recibo) {
+  const fecha = pedido.fecha_entrega ? new Date(pedido.fecha_entrega) : new Date();
+  const filaOpc = (label, val) => val ? `<div class="fila"><span>${escapeHtml(label)}</span><span>${escapeHtml(val)}</span></div>` : '';
+  const torreUnidad = [pedido.torre, pedido.unidad].filter(Boolean).join(' · ');
+  const importe = pedido.costo != null ? Math.round(Number(pedido.costo)) : null;
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Recibo ${escapeHtml(recibo.numero)}</title>
+<style>
+  @page { size: A4; margin: 18mm 15mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; margin: 0; padding: 24px; }
+  .membrete { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0F2A4D; padding-bottom: 14px; margin-bottom: 14px; }
+  .membrete img { width: 110px; }
+  .membrete .titulo { text-align: right; }
+  .membrete .titulo h1 { font-size: 16px; margin: 0 0 4px; color: #0F2A4D; }
+  .membrete .titulo div { font-size: 12px; color: #555; }
+  .aviso { font-size: 9.5px; color: #888; margin-bottom: 16px; }
+  .bloque { margin-bottom: 14px; }
+  .bloque h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: #0F2A4D; margin: 0 0 6px; border-bottom: 1px dashed #ccc; padding-bottom: 4px; }
+  .fila { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; }
+  .fila span:first-child { color: #666; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  th { text-align: left; font-size: 10.5px; color: #666; text-transform: uppercase; border-bottom: 1px solid #ccc; padding: 6px 4px; }
+  td { padding: 7px 4px; border-bottom: 1px solid #eee; }
+  td.num, th.num { text-align: right; }
+  .totales { margin-top: 10px; display: flex; justify-content: flex-end; }
+  .totales table { width: 220px; }
+  .totales td { border: none; padding: 3px 4px; }
+  .totales tr.total td { font-weight: bold; font-size: 13.5px; border-top: 1px solid #0F2A4D; padding-top: 6px; }
+  .footer { margin-top: 30px; text-align: center; font-size: 9.5px; color: #999; border-top: 1px solid #eee; padding-top: 10px; }
+</style>
+</head>
+<body>
+  <div class="membrete">
+    <img src="${BORCAM_LOGO_DATAURI}" alt="Borcam">
+    <div class="titulo">
+      <h1>Recibo de entrega de Tag</h1>
+      <div>N.° ${escapeHtml(recibo.numero)}</div>
+      <div>Fecha: ${fecha.toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}</div>
+    </div>
+  </div>
+  <div class="aviso">Este documento es un comprobante interno de Borcam por la entrega del tag de acceso y no tiene valor de Comprobante Fiscal Electrónico (CFE) ante DGI.</div>
+
+  <div class="bloque">
+    <h2>Cliente / Edificio</h2>
+    ${filaOpc('Cliente', pedido.nombre_cliente)}
+    ${filaOpc('Edificio', pedido.edificio)}
+    ${torreUnidad ? `<div class="fila"><span>Torre / Unidad</span><span>${escapeHtml(torreUnidad)}</span></div>` : ''}
+    ${filaOpc('Ticket', pedido.ticket)}
+  </div>
+
+  <div class="bloque">
+    <h2>Detalle</h2>
+    <table>
+      <thead><tr><th>Descripción</th><th class="num">Cant.</th><th class="num">Importe</th></tr></thead>
+      <tbody>
+        <tr><td>Tag ${escapeHtml((pedido.tipo_tags || '').toLowerCase())} — N.° entregado: ${escapeHtml(pedido.tag_num || '—')}</td><td class="num">${pedido.cantidad_tags}</td><td class="num">${importe != null ? 'UYU ' + importe : '—'}</td></tr>
+      </tbody>
+    </table>
+    ${importe != null ? `<div class="totales"><table><tr class="total"><td>Total</td><td class="num">UYU ${importe}</td></tr></table></div>` : ''}
+  </div>
+
+  <div class="footer">BORCAM EQUIPAMIENTOS S.R.L — Av 8 de Octubre 2956, Montevideo — Tel.: 598+ 24878281 — administracion@borcam.com.uy</div>
+</body>
+</html>`;
 }
 function abrirEditarPedidoTags(id) {
   state.modal = 'tags-editar-pedido';
@@ -4979,21 +5106,38 @@ async function eliminarPedidoTags(id) {
   } catch (e) { showToast(e.message); }
 }
 function renderTagsHistorial() {
-  return `${buscadorTagsHtml('tags-buscar-historial', state.tagsFiltroHistorial, 'filtrarTagsHistorial')}
+  if (!state.tagsFiltroHistorial) state.tagsFiltroHistorial = { texto: '', edificio: '', desde: '', hasta: '' };
+  const f = state.tagsFiltroHistorial;
+  return `${filtrosTagsAvanzadosHtml({
+    mostrarTexto: true, textoId: 'tags-buscar-historial', textoValor: f.texto, onTexto: 'filtrarTagsHistorialTexto',
+    edificioId: 'tags-historial-edificio', edificioValor: f.edificio, onEdificio: 'filtrarTagsHistorialEdificio',
+    desdeId: 'tags-historial-desde', desdeValor: f.desde, onDesde: 'filtrarTagsHistorialDesde',
+    hastaId: 'tags-historial-hasta', hastaValor: f.hasta, onHasta: 'filtrarTagsHistorialHasta'
+  })}
     <div id="tags-tabla-wrap">${renderTagsHistorialTabla()}</div>`;
 }
 function renderTagsHistorialTabla() {
   const todos = (cache.tagsPedidos || []).filter(p => p.entregado);
-  const entregados = todos.filter(p => filtroTagsCoincide(p, state.tagsFiltroHistorial));
+  const f = state.tagsFiltroHistorial || {};
+  const entregados = todos.filter(p => filtroTagsAvanzado(p, f, 'fecha_entrega'));
   if (!todos.length) return `<div class="empty-state">Todavía no hay tags entregados.</div>`;
-  if (!entregados.length) return `<div class="empty-state">Ningún tag entregado coincide con la búsqueda.</div>`;
+  if (!entregados.length) return `<div class="empty-state">Ningún tag entregado coincide con el filtro.</div>`;
   const filas = entregados.map(p => `<tr>
     <td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.edificio || '')}</td><td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td>
     <td>${escapeHtml(p.tag_num || '')}</td><td>${p.fecha_entrega ? new Date(p.fecha_entrega).toLocaleString('es-AR') : ''}</td>
+    <td><button class="btn btn-sm btn-ghost" onclick="revertirEntregaTags(${p.id})" title="Vuelve el pedido a Pendiente, por si se marcó entregado por error">↩️ Revertir</button></td>
   </tr>`).join('');
   return `<div class="card"><div class="table-scroll"><table class="reportes-table">
-    <thead><tr><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th><th>Acción</th></tr></thead>
     <tbody>${filas}</tbody></table></div></div>`;
+}
+async function revertirEntregaTags(id) {
+  if (!confirm('¿Marcar este tag como no entregado y devolverlo a Pedidos pendientes? Usalo solo si se marcó "Entregado" por error.')) return;
+  try {
+    await api('POST', `/api/tags/pedidos/${id}/revertir-entrega`);
+    showToast('Pedido devuelto a pendientes.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
+  } catch (e) { showToast(e.message); }
 }
 // "Venta por lote": una Administración compra de una sola vez una cantidad de tags que gestiona
 // por su cuenta. No se descuenta del stock de peatonales/vehiculares (ese stock es para lo que
@@ -5028,8 +5172,12 @@ function toggleTagsLotePrecioManual() {
     actualizarCostoTagsLote();
   }
 }
-function renderTagsLote() {
-  const lotes = cache.tagsLotes || [];
+function renderTagsLoteTabla() {
+  const todos = cache.tagsLotes || [];
+  const f = state.tagsFiltroLote || {};
+  const lotes = todos.filter(l => filtroTagsAvanzado(l, f, 'fecha'));
+  if (!todos.length) return `<div class="empty-state">Todavía no se registró ninguna venta por lote.</div>`;
+  if (!lotes.length) return `<div class="empty-state">Ninguna venta por lote coincide con el filtro.</div>`;
   const filas = lotes.map(l => `<tr>
     <td>${escapeHtml(l.cliente)}</td>
     <td>${l.cantidad_peatonal ? l.cantidad_peatonal : '—'}</td>
@@ -5038,6 +5186,12 @@ function renderTagsLote() {
     <td>${l.fecha ? new Date(l.fecha).toLocaleDateString('es-UY') : ''}</td>
     <td>${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarLoteTags(${l.id})">Eliminar</button>` : ''}</td>
   </tr>`).join('');
+  return `<div class="table-scroll"><table class="reportes-table">
+    <thead><tr><th>Cliente</th><th>Peat.</th><th>Veh.</th><th>Costo</th><th>Notas</th><th>Fecha</th><th>Acción</th></tr></thead>
+    <tbody>${filas}</tbody></table></div>`;
+}
+function renderTagsLote() {
+  if (!state.tagsFiltroLote) state.tagsFiltroLote = { edificio: '', desde: '', hasta: '' };
   return `<div class="card card-narrow" style="max-width:560px;">
     ${configSectionHead('📦', 'Registrar venta por lote', 'Para cuando una Administración compra una tanda de tags y los reparte ella misma. No afecta el stock de pedidos individuales.')}
     <div class="field"><label>Cliente / Administración</label>
@@ -5057,10 +5211,14 @@ function renderTagsLote() {
       <button type="button" class="btn btn-primary btn-block" onclick="guardarLoteTags()">Registrar venta</button>
     </div>
   </div>
-  <div class="card" style="margin-top:16px;">
-    ${lotes.length ? `<div class="table-scroll"><table class="reportes-table">
-      <thead><tr><th>Cliente</th><th>Peat.</th><th>Veh.</th><th>Costo</th><th>Notas</th><th>Fecha</th><th>Acción</th></tr></thead>
-      <tbody>${filas}</tbody></table></div>` : `<div class="empty-state">Todavía no se registró ninguna venta por lote.</div>`}
+  <div style="margin-top:16px;">
+    ${filtrosTagsAvanzadosHtml({
+      mostrarTexto: false,
+      edificioId: 'tags-lote-filtro-edificio', edificioValor: state.tagsFiltroLote.edificio, onEdificio: 'filtrarTagsLoteEdificio',
+      desdeId: 'tags-lote-filtro-desde', desdeValor: state.tagsFiltroLote.desde, onDesde: 'filtrarTagsLoteDesde',
+      hastaId: 'tags-lote-filtro-hasta', hastaValor: state.tagsFiltroLote.hasta, onHasta: 'filtrarTagsLoteHasta'
+    })}
+    <div class="card" id="tags-tabla-wrap">${renderTagsLoteTabla()}</div>
   </div>`;
 }
 async function guardarLoteTags() {
