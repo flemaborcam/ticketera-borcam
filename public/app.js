@@ -78,7 +78,7 @@ function showToast(msg) { state.toast = msg; render(); setTimeout(() => { state.
 function mapTicket(row) {
   return {
     id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, prioridad: row.prioridad, estado: row.estado,
-    edificio: row.edificio || '',
+    edificio: row.edificio || '', torre: row.torre || '',
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
     asignadoA: row.asignado_a, grupoId: row.cliente_id, edificioNombre: row.edificio_nombre || null, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
@@ -3619,7 +3619,9 @@ function irAPedidoDeTagDesdeTicket(ticketId) {
   // normalmente ES el edificio).
   const clienteDelTicket = t.grupoId ? cache.clientes.find(c => c.id === t.grupoId) : null;
   const edificioPrecarga = clienteDelTicket && clienteDelTicket.rolCliente === 'Edificio' ? clienteDelTicket.nombre : '';
-  state.tagsPrecarga = { ticket: t.numero, cliente: t.remitenteNombre || '', edificio: edificioPrecarga };
+  // Torre y Apartamento del ticket (si están cargados) precargan Torre/Unidad del pedido; si el
+  // ticket no los tiene cargados, quedan vacíos y se pueden completar a mano en el pedido.
+  state.tagsPrecarga = { ticket: t.numero, cliente: t.remitenteNombre || '', edificio: edificioPrecarga, torre: t.torre || '', unidad: t.edificio || '' };
   state.tagsTab = 'nuevo';
   state.view = 'tags';
   render();
@@ -3979,7 +3981,8 @@ function renderTicket(id) {
         <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
         <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
         <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
-        <div class="field"><label>Apartamento</label><input value="${escapeHtml(t.edificio || '')}" placeholder="Ej: 01 SyNC" onchange="updateTicketField('${t.id}','edificio', this.value)"><div class="hint-text">Dato descriptivo (unidad/apto), no reemplaza al Cliente asignado arriba.</div></div>
+        <div class="field"><label>Torre</label><input value="${escapeHtml(t.torre || '')}" placeholder="Ej: Torre 1" onchange="updateTicketField('${t.id}','torre', this.value)"><div class="hint-text">Dato descriptivo, se usa para precargar el Pedido de Tag.</div></div>
+        <div class="field"><label>Apartamento</label><input value="${escapeHtml(t.edificio || '')}" placeholder="Ej: 804" onchange="updateTicketField('${t.id}','edificio', this.value)"><div class="hint-text">Dato descriptivo (unidad/apto), no reemplaza al Cliente asignado arriba.</div></div>
       </div>
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
@@ -4801,9 +4804,10 @@ function renderTagsNuevo() {
       ${precarga.edificio ? `<div class="hint-text">Precargado del Cliente asignado al ticket; cambialo si no corresponde.</div>` : ''}
     </div>
     <div class="field-row">
-      <div class="field"><label>Torre</label><input type="text" id="tags-torre" placeholder="Torre"></div>
-      <div class="field"><label>Unidad</label><input type="text" id="tags-unidad" placeholder="Unidad"></div>
+      <div class="field"><label>Torre</label><input type="text" id="tags-torre" placeholder="Torre" value="${escapeHtml(precarga.torre || '')}"></div>
+      <div class="field"><label>Unidad</label><input type="text" id="tags-unidad" placeholder="Unidad" value="${escapeHtml(precarga.unidad || '')}"></div>
     </div>
+    ${precarga.ticket && (!precarga.torre || !precarga.unidad) ? `<div class="hint-text" style="margin-top:-6px;margin-bottom:10px;">El ticket no tenía cargado${!precarga.torre && !precarga.unidad ? ' Torre ni Apartamento' : !precarga.torre ? ' Torre' : ' Apartamento'}; completalo a mano si corresponde.</div>` : ''}
     <div class="field"><label>Tipo de tags</label>
       <select id="tags-tipo" onchange="actualizarCostoTags()"><option value="Peatonales">Peatonales</option><option value="Vehiculares">Vehiculares</option></select>
     </div>
