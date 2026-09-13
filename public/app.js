@@ -3310,7 +3310,7 @@ function renderShell(inner) {
       <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
-      <div class="topbar">${state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;padding:6px 8px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:20px;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+      <div class="topbar">${state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;width:34px;height:34px;padding:0;flex:none;justify-content:center;border-radius:50%;background:rgba(255,255,255,.14);margin-right:10px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:19px;line-height:1;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItemsBottom(state.view)}</div>
     </div>
@@ -5604,7 +5604,7 @@ function renderClientShell(inner) {
       <nav>${navItemsCliente(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
-    <div class="main"><div class="topbar">${state.view !== 'cliente-dashboard' && state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;padding:6px 8px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:20px;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
+    <div class="main"><div class="topbar">${state.view !== 'cliente-dashboard' && state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;width:34px;height:34px;padding:0;flex:none;justify-content:center;border-radius:50%;background:rgba(255,255,255,.14);margin-right:10px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:19px;line-height:1;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
       <div class="bottomnav">${navItemsCliente(state.view)}</div>
     </div></div>
