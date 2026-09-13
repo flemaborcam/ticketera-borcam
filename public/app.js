@@ -4723,8 +4723,27 @@ function renderTags() {
   else if (tab === 'edificios') body = renderTagsEdificios();
   return `<div class="page-head"><div><h1>Tags</h1><div class="sub">Control de stock y entrega de tags de acceso por edificio</div></div></div>
     ${renderTagsAvisoStockBajo()}
+    ${renderTagsResumenKpis()}
     <div class="reply-tabs">${tabsHtml}</div>
     ${body}`;
+}
+function renderTagsResumenKpis() {
+  const pedidos = cache.tagsPedidos || [];
+  const ahora = new Date();
+  const esEsteMes = (fecha) => { const d = new Date(fecha); return d.getFullYear() === ahora.getFullYear() && d.getMonth() === ahora.getMonth(); };
+  const entregadosMes = pedidos.filter(p => p.entregado && p.fecha_entrega && esEsteMes(p.fecha_entrega));
+  const pendientes = pedidos.filter(p => !p.entregado);
+  const ingresoMes = entregadosMes.reduce((acc, p) => acc + (Number(p.costo) || 0), 0);
+  const kpi = (label, valor, extra) => `<div style="flex:1;min-width:140px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;">
+    <div style="font-size:12px;color:var(--ink-soft);margin-bottom:2px;">${label}</div>
+    <div style="font-size:20px;font-weight:700;">${valor}</div>
+    ${extra ? `<div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${extra}</div>` : ''}
+  </div>`;
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+    ${kpi('Entregados este mes', entregadosMes.length)}
+    ${kpi('Pedidos pendientes', pendientes.length)}
+    ${kpi('Ingreso del mes', `$${ingresoMes.toLocaleString('es-UY')}`, 'Suma de costos de lo entregado este mes')}
+  </div>`;
 }
 const TAGS_STOCK_MINIMO = 10;
 function renderTagsAvisoStockBajo() {
@@ -4807,26 +4826,132 @@ async function guardarPedidoTags() {
     renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
+function filtroTagsCoincide(p, texto) {
+  if (!texto) return true;
+  const q = texto.toLowerCase();
+  return [p.nombre_cliente, p.edificio, p.ticket, p.tag_num].some(v => (v || '').toLowerCase().includes(q));
+}
+function buscadorTagsHtml(id, valor, onInputFn) {
+  return `<div class="field" style="max-width:320px;margin-bottom:10px;">
+    <input type="text" id="${id}" placeholder="Buscar por cliente, edificio o ticket..." value="${escapeHtml(valor || '')}" oninput="${onInputFn}(this.value)">
+  </div>`;
+}
+function filtrarTagsPedidos(v) { state.tagsFiltroPedidos = v; renderTagsListaSoloTabla('pedidos'); }
+function filtrarTagsHistorial(v) { state.tagsFiltroHistorial = v; renderTagsListaSoloTabla('historial'); }
+// Vuelve a pintar solo la tabla (no todo el formulario) para no perder el foco del buscador mientras se escribe.
+function renderTagsListaSoloTabla(tab) {
+  const el = document.getElementById('tags-tabla-wrap');
+  if (!el) return;
+  el.innerHTML = tab === 'pedidos' ? renderTagsPedidosTabla() : renderTagsHistorialTabla();
+}
 function renderTagsPedidos() {
-  const pendientes = (cache.tagsPedidos || []).filter(p => !p.entregado);
-  if (!pendientes.length) return `<div class="empty-state">No hay pedidos pendientes.</div>`;
+  return `${buscadorTagsHtml('tags-buscar-pedidos', state.tagsFiltroPedidos, 'filtrarTagsPedidos')}
+    <div id="tags-tabla-wrap">${renderTagsPedidosTabla()}</div>`;
+}
+function renderTagsPedidosTabla() {
+  const todos = (cache.tagsPedidos || []).filter(p => !p.entregado);
+  const pendientes = todos.filter(p => filtroTagsCoincide(p, state.tagsFiltroPedidos));
+  if (!todos.length) return `<div class="empty-state">No hay pedidos pendientes.</div>`;
+  if (!pendientes.length) return `<div class="empty-state">Ningún pedido pendiente coincide con la búsqueda.</div>`;
   const filas = pendientes.map(p => `<tr>
     <td>${escapeHtml(p.ticket || '')}</td><td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.edificio || '')}</td>
     <td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td><td>${p.costo != null ? p.costo : ''}</td>
-    <td><button class="btn btn-sm" onclick="marcarEntregadoTags(${p.id})">Marcar entregado</button>
+    <td style="white-space:nowrap;"><button class="btn btn-sm" onclick="marcarEntregadoTags(${p.id})">Marcar entregado</button>
+    <button class="btn btn-sm btn-ghost" onclick="abrirEditarPedidoTags(${p.id})">Editar</button>
     ${currentUser().es_superadmin ? `<button class="btn btn-sm btn-danger" onclick="eliminarPedidoTags(${p.id})">Eliminar</button>` : ''}</td>
   </tr>`).join('');
   return `<div class="card"><div class="table-scroll"><table class="reportes-table">
     <thead><tr><th>Ticket</th><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Costo</th><th>Acción</th></tr></thead>
     <tbody>${filas}</tbody></table></div></div>`;
 }
-async function marcarEntregadoTags(id) {
-  const tagNum = prompt('Número de tag entregado:');
-  if (tagNum === null) return;
-  if (!tagNum.trim()) { showToast('Ingresá un número de tag válido.'); return; }
+function marcarEntregadoTags(id) {
+  state.modal = 'tags-entregar';
+  state.tagsEntregarId = id;
+  render();
+}
+function renderTagsEntregarModal() {
+  const p = (cache.tagsPedidos || []).find(x => x.id === state.tagsEntregarId);
+  if (!p) return '';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🏷️ Marcar tag entregado</h2>
+    <p class="sub">${escapeHtml(p.nombre_cliente)} — ${escapeHtml(p.edificio || '')} · ${escapeHtml(p.tipo_tags || '')} x${p.cantidad_tags}</p>
+    <div class="field"><label>Número de tag entregado</label><input type="text" id="tags-entregar-num" placeholder="Ej: 0452" autofocus></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarEntregarTags(${p.id})">Confirmar entrega</button>
+    </div>
+  </div></div>`;
+}
+async function confirmarEntregarTags(id) {
+  const tagNum = document.getElementById('tags-entregar-num').value.trim();
+  if (!tagNum) { showToast('Ingresá un número de tag válido.'); return; }
   try {
-    await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum: tagNum.trim() });
+    await api('POST', `/api/tags/pedidos/${id}/entregar`, { tagNum });
+    closeModal();
     showToast('Marcado como entregado.');
+    renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
+  } catch (e) { showToast(e.message); }
+}
+function abrirEditarPedidoTags(id) {
+  state.modal = 'tags-editar-pedido';
+  state.tagsEditarPedidoId = id;
+  render();
+}
+function renderTagsEditarPedidoModal() {
+  const p = (cache.tagsPedidos || []).find(x => x.id === state.tagsEditarPedidoId);
+  if (!p) return '';
+  const edificios = cache.tagsEdificios || [];
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>✏️ Editar pedido de tags</h2>
+    <div class="field"><label>Cliente</label><input type="text" id="tags-edit-cliente" value="${escapeHtml(p.nombre_cliente)}"></div>
+    <div class="field"><label>Edificio</label>
+      <select id="tags-edit-edificio">${edificios.map(e => `<option value="${escapeHtml(e.edificio)}" ${e.edificio === p.edificio ? 'selected' : ''}>${escapeHtml(e.edificio)}</option>`).join('')}</select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Torre</label><input type="text" id="tags-edit-torre" value="${escapeHtml(p.torre || '')}"></div>
+      <div class="field"><label>Unidad</label><input type="text" id="tags-edit-unidad" value="${escapeHtml(p.unidad || '')}"></div>
+    </div>
+    <div class="field"><label>Tipo de tags</label>
+      <select id="tags-edit-tipo" onchange="actualizarCostoTagsEdit()">
+        <option value="Peatonales" ${(p.tipo_tags || '').toLowerCase().startsWith('peat') ? 'selected' : ''}>Peatonales</option>
+        <option value="Vehiculares" ${(p.tipo_tags || '').toLowerCase().startsWith('veh') ? 'selected' : ''}>Vehiculares</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Cantidad</label><input type="number" id="tags-edit-cantidad" min="1" value="${p.cantidad_tags}" oninput="actualizarCostoTagsEdit()"></div>
+      <div class="field"><label>Costo total (UYU)</label><input type="number" id="tags-edit-costo" step="0.01" value="${p.costo != null ? p.costo : ''}" readonly style="background:var(--bg-soft,#f2f2f2);"></div>
+    </div>
+    <div class="field"><label>Ticket</label><input type="text" id="tags-edit-ticket" value="${escapeHtml(p.ticket || '')}"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="guardarEdicionPedidoTags(${p.id})">Guardar cambios</button>
+    </div>
+  </div></div>`;
+}
+function actualizarCostoTagsEdit() {
+  const tipoEl = document.getElementById('tags-edit-tipo');
+  const cantEl = document.getElementById('tags-edit-cantidad');
+  const costoEl = document.getElementById('tags-edit-costo');
+  if (!tipoEl || !cantEl || !costoEl) return;
+  const precioUnitario = tipoEl.value.toLowerCase().startsWith('peat') ? PRECIOS_TAGS_UYU.peatonales : PRECIOS_TAGS_UYU.vehiculares;
+  const cantidad = Number(cantEl.value) || 0;
+  costoEl.value = (precioUnitario * cantidad).toFixed(2);
+}
+async function guardarEdicionPedidoTags(id) {
+  const nombreCliente = document.getElementById('tags-edit-cliente').value.trim();
+  const edificio = document.getElementById('tags-edit-edificio').value.trim();
+  const torre = document.getElementById('tags-edit-torre').value.trim();
+  const unidad = document.getElementById('tags-edit-unidad').value.trim();
+  const tipoTags = document.getElementById('tags-edit-tipo').value;
+  const cantidadTags = Number(document.getElementById('tags-edit-cantidad').value);
+  const costo = document.getElementById('tags-edit-costo').value;
+  const ticket = document.getElementById('tags-edit-ticket').value.trim();
+  if (!nombreCliente || !edificio || !cantidadTags) { showToast('Completá cliente, edificio y cantidad.'); return; }
+  if (!ticket) { showToast('Falta el número de ticket.'); return; }
+  try {
+    await api('PUT', `/api/tags/pedidos/${id}`, { nombreCliente, edificio, torre, unidad, tipoTags, cantidadTags, costo, ticket });
+    closeModal();
+    showToast('Pedido actualizado.');
     renderTagsAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'tags') { el.innerHTML = html; actualizarCostoTags(); } });
   } catch (e) { showToast(e.message); }
 }
@@ -4838,14 +4963,20 @@ async function eliminarPedidoTags(id) {
   } catch (e) { showToast(e.message); }
 }
 function renderTagsHistorial() {
-  const entregados = (cache.tagsPedidos || []).filter(p => p.entregado);
-  if (!entregados.length) return `<div class="empty-state">Todavía no hay tags entregados.</div>`;
+  return `${buscadorTagsHtml('tags-buscar-historial', state.tagsFiltroHistorial, 'filtrarTagsHistorial')}
+    <div id="tags-tabla-wrap">${renderTagsHistorialTabla()}</div>`;
+}
+function renderTagsHistorialTabla() {
+  const todos = (cache.tagsPedidos || []).filter(p => p.entregado);
+  const entregados = todos.filter(p => filtroTagsCoincide(p, state.tagsFiltroHistorial));
+  if (!todos.length) return `<div class="empty-state">Todavía no hay tags entregados.</div>`;
+  if (!entregados.length) return `<div class="empty-state">Ningún tag entregado coincide con la búsqueda.</div>`;
   const filas = entregados.map(p => `<tr>
-    <td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td>
+    <td>${escapeHtml(p.nombre_cliente)}</td><td>${escapeHtml(p.edificio || '')}</td><td>${escapeHtml(p.tipo_tags || '')}</td><td>${p.cantidad_tags}</td>
     <td>${escapeHtml(p.tag_num || '')}</td><td>${p.fecha_entrega ? new Date(p.fecha_entrega).toLocaleString('es-AR') : ''}</td>
   </tr>`).join('');
   return `<div class="card"><div class="table-scroll"><table class="reportes-table">
-    <thead><tr><th>Cliente</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Edificio</th><th>Tipo</th><th>Cant.</th><th>Tag N°</th><th>Fecha entrega</th></tr></thead>
     <tbody>${filas}</tbody></table></div></div>`;
 }
 function renderTagsEdificios() {
@@ -5415,6 +5546,8 @@ function renderActiveModal() {
   if (state.modal === 'reporte-mensual-servicios') return renderReporteMensualServiciosModal();
   if (state.modal === 'detalle-reserva-calendario') return renderDetalleReservaCalendarioModal();
   if (state.modal === 'reprogramar-reserva') return renderReprogramarReservaModal();
+  if (state.modal === 'tags-entregar') return renderTagsEntregarModal();
+  if (state.modal === 'tags-editar-pedido') return renderTagsEditarPedidoModal();
   return '';
 }
 function renderDocumentoModal() {
