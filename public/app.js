@@ -400,10 +400,16 @@ const TICKETS_POR_PAGINA = 20;
 function irAPagina(n) { state.paginaTickets = n; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
 async function openTicket(id) {
+  // Recuerda desde qué sección se abrió (Reservas, bandeja general, etc.) para que "Volver" regrese
+  // ahí y no siempre a la bandeja general — antes te sacaba de Reservas aunque hubieras entrado desde ahí.
+  if (state.view !== 'ticket') state.ticketVolverA = state.view;
   state.ticketId = id; state.view = 'ticket'; state.replyTab = 'saliente'; state.pendingAttachments = [];
   render();
   await refreshTicket(id);
   render();
+}
+function volverDesdeTicket() {
+  go(state.ticketVolverA || 'dashboard');
 }
 function setReplyTab(tab) { state.replyTab = tab; state.pendingAttachments = []; render(); }
 
@@ -4180,7 +4186,7 @@ function renderTicket(id) {
   const uid_ = currentUser().id;
   const u = currentUser();
   return `${ticketStyleTag()}
-    <button class="back-link" onclick="go('dashboard')">&larr; Volver a la bandeja general</button>
+    <button class="back-link" onclick="volverDesdeTicket()">&larr; ${state.ticketVolverA === 'reservas' ? 'Volver a Reservas' : 'Volver a la bandeja general'}</button>
     <div class="ticket-head">
       <div class="ticket-head-top">
         <div><div class="ticket-num-big">${t.numero}</div><h1>${escapeHtml(t.asunto)}</h1>
