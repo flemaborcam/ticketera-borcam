@@ -2040,6 +2040,61 @@ function renderEnvioOrdenMantenimiento(s) {
     <div class="hint-text" style="margin-top:6px;">Si no la mandás a mano, se manda sola a las 2 horas.</div>
   </div>`;
 }
+// Barra de progreso + botón de "siguiente paso": antes había muchos botones al mismo nivel (editar,
+// reprogramar, marcar en curso, enviar presupuesto, marcar realizado, marcar pagado...) sin que quedara
+// claro cuál correspondía en cada momento. Ahora se calcula la etapa actual y se muestra un único botón
+// grande con la acción que sigue; lo administrativo (editar/reprogramar/eliminar/ver ticket/comprobante)
+// se movió aparte, abajo del todo, como "utilidades".
+function renderEtapaServicioTecnico(s, tieneCosto) {
+  const usaPresupuesto = !!(s.presupuesto_enviado || s.presupuesto_aprobado);
+  const etapas = ['Pendiente'];
+  if (usaPresupuesto) etapas.push('Presupuesto');
+  etapas.push('En curso', 'Realizado');
+  if (tieneCosto) etapas.push('Pagado');
+
+  let actual;
+  if (s.estado === 'realizado') {
+    actual = (tieneCosto && !s.pagado) ? 'Realizado' : (tieneCosto ? 'Pagado' : 'Realizado');
+  } else if (s.estado === 'en_curso') {
+    actual = 'En curso';
+  } else {
+    actual = (usaPresupuesto && s.presupuesto_enviado && !s.presupuesto_aprobado) ? 'Presupuesto' : 'Pendiente';
+  }
+  const idxActual = etapas.indexOf(actual);
+  const completo = (actual === 'Pagado') || (actual === 'Realizado' && !tieneCosto);
+
+  const stepperHtml = `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-soft);margin-bottom:12px;">
+    ${etapas.map((e, i) => {
+      const done = i < idxActual || (completo && i <= idxActual);
+      const esActual = i === idxActual && !completo;
+      return `${i > 0 ? '<span style="color:var(--line);">→</span>' : ''}
+        <span style="display:flex;align-items:center;gap:4px;${esActual ? 'color:#3355ee;font-weight:700;' : ''}">
+          <span style="width:8px;height:8px;border-radius:50%;background:${done ? '#1b8a4a' : esActual ? '#3355ee' : 'var(--line)'};display:inline-block;"></span>
+          ${e}
+        </span>`;
+    }).join('')}
+  </div>`;
+
+  let ctaHtml;
+  if (actual === 'Presupuesto') {
+    ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Reenviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
+      <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
+    </div>`;
+  } else if (actual === 'Pendiente') {
+    ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
+      <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
+    </div>`;
+  } else if (actual === 'En curso') {
+    ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button></div>`;
+  } else if (actual === 'Realizado' && tieneCosto) {
+    ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="abrirMarcarPagoServicio('${s.id}')">💰 Marcar como pagado</button></div>`;
+  } else {
+    ctaHtml = `<div style="margin-bottom:14px;font-size:13px;color:#1b8a4a;font-weight:600;">✅ Completado</div>`;
+  }
+  return `<div style="border-top:1px solid var(--line);padding-top:14px;">${stepperHtml}${ctaHtml}</div>`;
+}
 function renderDetalleServicioTecnicoModal() {
   const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.servicioTecnicoDetalleId));
   if (!s) return '';
@@ -2124,6 +2179,7 @@ function renderDetalleServicioTecnicoModal() {
       : s.firma_path
         ? `✍️ Firmado por ${escapeHtml(`${s.firma_nombre || ''} ${s.firma_apellido || ''}`.trim())} (C.I. ${escapeHtml(s.firma_cedula || '—')})${s.firma_fecha ? ' · ' + fmtDateTime(s.firma_fecha) : ''}`
         : ''}</div>` : ''}
+    ${renderEtapaServicioTecnico(s, costos.length > 0)}
     <div style="border-top:1px solid var(--line);padding-top:10px;margin-bottom:10px;">
       ${reprogramaciones === null
         ? `<button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="verReprogramacionesServicio('${s.id}')">🔁 Ver historial de reprogramaciones</button>`
@@ -2132,17 +2188,13 @@ function renderDetalleServicioTecnicoModal() {
               ${reprogramaciones.map(r => `<div style="margin-bottom:2px;">${fmtDateTime(r.fecha_hora_anterior)} → ${fmtDateTime(r.fecha_hora_nueva)}${r.motivo ? ' — ' + escapeHtml(r.motivo) : ''}${r.reprogramado_por ? ' (' + escapeHtml(r.reprogramado_por) + ')' : ''}</div>`).join('')}</div>`
           : `<div class="hint-text">Este turno nunca se reprogramó.</div>`}
     </div>
-    <div class="modal-actions">
+    <div class="modal-actions" style="flex-wrap:wrap;">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
       ${puedeMarcar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarServicio('${s.id}')">🔁 Reprogramar</button>` : ''}
-      <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
       ${costos.length ? `<button type="button" class="btn btn-ghost" onclick="generarComprobanteServicioTecnico('${s.id}')">🧾 Generar comprobante</button>` : ''}
-      ${costos.length && !s.pagado ? `<button type="button" class="btn btn-primary" onclick="abrirMarcarPagoServicio('${s.id}')">💰 Marcar como pagado</button>` : ''}
-      ${!s.presupuesto_aprobado ? `<button type="button" class="btn ${s.presupuesto_enviado ? 'btn-ghost' : 'btn-primary'}" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 ${s.presupuesto_enviado ? 'Reenviar presupuesto al cliente' : 'Enviar presupuesto al cliente'}${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
-      ${puedeIniciar ? `<button type="button" class="btn btn-ghost" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>` : ''}
-      ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
+      <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
     </div>
   </div></div>`;
 }
