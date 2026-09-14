@@ -623,6 +623,9 @@ pool.query('alter table servicios_tecnicos add column if not exists pagado boole
 pool.query('alter table servicios_tecnicos add column if not exists pagado_fecha timestamptz').catch(e => console.error('No se pudo migrar pagado_fecha:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists pagado_medio text').catch(e => console.error('No se pudo migrar pagado_medio:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists pagado_nota text').catch(e => console.error('No se pudo migrar pagado_nota:', e.message));
+// Migración automática: marca services que nunca van a tener costo (visitas de diagnóstico/relevamiento),
+// para que la barra de progreso salte directo a "En curso" sin pasar por la etapa de presupuesto.
+pool.query('alter table servicios_tecnicos add column if not exists sin_costo boolean not null default false').catch(e => console.error('No se pudo migrar sin_costo:', e.message));
 pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   id serial primary key,
   servicio_id integer not null,
@@ -3455,6 +3458,16 @@ app.put('/api/servicios-tecnicos/:id/pagado', requireStaff, async (req, res) => 
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, r.rows[0]);
 });
+// Marca (o desmarca) el service como "sin costo" — visita de diagnóstico/relevamiento que nunca se
+// factura. Solo tiene sentido mientras no tenga costos cargados (si ya tiene, esta marca no aplica).
+app.put('/api/servicios-tecnicos/:id/sin-costo', requireStaff, async (req, res) => {
+  const sinCosto = !!req.body.sinCosto;
+  const tieneCostos = (await pool.query('select 1 from costos_servicio_tecnico where servicio_id=$1 limit 1', [req.params.id])).rows.length > 0;
+  if (sinCosto && tieneCostos) return bad(res, 'Este service ya tiene costos cargados, no se puede marcar como "sin costo".');
+  const r = await pool.query('update servicios_tecnicos set sin_costo=$1 where id=$2 returning *', [sinCosto, req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
 // Revierte la marca de pagado, por si se registró por error.
 app.put('/api/servicios-tecnicos/:id/revertir-pago', requireStaff, async (req, res) => {
   const r = await pool.query(
@@ -3533,6 +3546,9 @@ app.post('/api/servicios-tecnicos/:id/costos', requireStaff, async (req, res) =>
      values ($1,$2,$3,$4,$5,$6) returning *`,
     [servicioId, desc.trim(), Number(cantidad) || 1, Number(precio), (mon === 'USD') ? 'USD' : 'UYU', catalogoItemId || null]
   );
+  // Si el service estaba marcado "sin costo" y ahora se le carga un costo, deja de aplicar esa marca
+  // (ya no es una visita sin cobro).
+  await pool.query('update servicios_tecnicos set sin_costo=false where id=$1', [servicioId]);
   ok(res, r.rows[0]);
 });
 app.delete('/api/costos-servicio/:id', requireStaff, async (req, res) => {
