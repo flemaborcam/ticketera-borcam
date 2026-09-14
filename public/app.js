@@ -1893,6 +1893,17 @@ async function toggleAplicaIvaServicio(id, aplicaIva) {
     render();
   } catch (e) { showToast(e.message); }
 }
+// Marca un service como "sin costo" (visita de diagnóstico/relevamiento) para que la barra de progreso
+// no espere un presupuesto que nunca va a existir. Solo se puede tildar si todavía no tiene costos
+// cargados — el servidor también lo valida por las dudas.
+async function toggleSinCostoServicio(id, sinCosto) {
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}/sin-costo`, { sinCosto });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    render();
+  } catch (e) { showToast(e.message); render(); }
+}
 const ESTADOS_CHECKLIST_MANTENIMIENTO = [
   { v: 'satisfactorio', label: '✅ Satisfactorio' },
   { v: 'atencion', label: '⚠️ Necesita atención' },
@@ -2046,7 +2057,7 @@ function renderEnvioOrdenMantenimiento(s) {
 // grande con la acción que sigue; lo administrativo (editar/reprogramar/eliminar/ver ticket/comprobante)
 // se movió aparte, abajo del todo, como "utilidades".
 function renderEtapaServicioTecnico(s, tieneCosto) {
-  const usaPresupuesto = !!(s.presupuesto_enviado || s.presupuesto_aprobado);
+  const usaPresupuesto = !s.sin_costo && !!(s.presupuesto_enviado || s.presupuesto_aprobado);
   const etapas = ['Pendiente'];
   if (usaPresupuesto) etapas.push('Presupuesto');
   etapas.push('En curso', 'Realizado');
@@ -2081,6 +2092,8 @@ function renderEtapaServicioTecnico(s, tieneCosto) {
       <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Reenviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
       <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
     </div>`;
+  } else if (actual === 'Pendiente' && s.sin_costo) {
+    ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
   } else if (actual === 'Pendiente') {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
       <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
@@ -2132,6 +2145,10 @@ function renderDetalleServicioTecnicoModal() {
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
+        <input type="checkbox" ${s.sin_costo ? 'checked' : ''} ${costos.length ? 'disabled' : ''} onchange="toggleSinCostoServicio('${s.id}', this.checked)"> Sin costo (visita de diagnóstico / relevamiento — no se va a facturar)
+      </label>
+      ${s.sin_costo ? `<div class="hint-text">Marcado como sin costo. Para cargar costos, destildá esta opción.</div>` : `
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
         <input type="checkbox" ${s.aplica_iva !== false ? 'checked' : ''} onchange="toggleAplicaIvaServicio('${s.id}', this.checked)"> Aplicar IVA (22%)
       </label>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
@@ -2156,7 +2173,7 @@ function renderDetalleServicioTecnicoModal() {
         <div class="field" style="flex:1;min-width:120px;"><label style="display:block;min-height:28px;">Precio (sin IVA)</label><input type="number" id="costo-precio" min="0" step="0.01"></div>
         <div class="field" style="flex:0.6;min-width:100px;"><label style="display:block;min-height:28px;">Moneda</label><select id="costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
       </div>
-      <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>
+      <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>`}
     </div>
 
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
