@@ -626,6 +626,11 @@ pool.query('alter table servicios_tecnicos add column if not exists pagado_nota 
 // Migración automática: marca services que nunca van a tener costo (visitas de diagnóstico/relevamiento),
 // para que la barra de progreso salte directo a "En curso" sin pasar por la etapa de presupuesto.
 pool.query('alter table servicios_tecnicos add column if not exists sin_costo boolean not null default false').catch(e => console.error('No se pudo migrar sin_costo:', e.message));
+// Migración automática: fecha de la reserva, leída automáticamente del cuerpo del correo cuando el
+// remitente es uno de los que mandan la fecha en un formato reconocible (Reservate, Bilu Biarritz).
+// Solo sirve para avisar en la sección Reservas que un ticket sin agendar está por vencer — no agenda
+// nada solo ni dispara ningún cierre automático.
+pool.query('alter table tickets add column if not exists fecha_reserva_detectada date').catch(e => console.error('No se pudo migrar fecha_reserva_detectada:', e.message));
 pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   id serial primary key,
   servicio_id integer not null,
@@ -1125,10 +1130,15 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   const { remitenteNombre, remitenteEmail, asunto, cuerpo } = req.body;
   if (!remitenteNombre || !remitenteEmail || !asunto || !cuerpo) return bad(res, 'Faltan datos');
   const numero = await nextTicketNumero();
+  // Mismo detector automático que en el correo real, para poder probar la alerta de reservas sin
+  // agendar usando "Simular correo entrante".
+  const fechaReservaDetectada = asunto.toLowerCase().includes('reserva')
+    ? extraerFechaReservaDeCorreo(remitenteEmail, cuerpo, null)
+    : null;
   const r = await pool.query(
-    `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email)
-     values ($1,$2,'Otro','Media','Abierto',$3,$4) returning id`,
-    [numero, asunto, remitenteNombre, remitenteEmail]
+    `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, fecha_reserva_detectada)
+     values ($1,$2,'Otro','Media','Abierto',$3,$4,$5) returning id`,
+    [numero, asunto, remitenteNombre, remitenteEmail, fechaReservaDetectada]
   );
   const ticketId = r.rows[0].id;
   await pool.query(
@@ -4450,6 +4460,26 @@ function recortarCitas(texto) {
   while (resultado.length && /^[-_]{3,}$/.test(resultado[resultado.length - 1].trim())) resultado.pop();
   return resultado.join('\n').trim();
 }
+// Lee automáticamente del cuerpo del correo la fecha de la reserva, según el formato que usa cada
+// remitente conocido. Si el remitente no está en la lista, o no encuentra el patrón esperado, devuelve
+// null sin romper nada — esos tickets simplemente no entran en la alerta de "por vencer sin agendar".
+function extraerFechaReservaDeCorreo(remitenteEmail, textoPlano, htmlCrudo) {
+  const email = (remitenteEmail || '').toLowerCase().trim();
+  const htmlComoTexto = htmlCrudo ? htmlCrudo.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ') : '';
+  const texto = `${textoPlano || ''}\n${htmlComoTexto}`;
+  try {
+    if (email === 'info@borcam.com.uy') {
+      // Reservate: "* Fecha / hora Inicial: 2026-09-03 12:00:00"
+      const m = texto.match(/Fecha\s*\/\s*hora\s*Inicial:\s*(\d{4})-(\d{2})-(\d{2})/i);
+      if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    } else if (email === 'notificacion@simplesolutions.com.ar') {
+      // Bilu Biarritz: tabla con fila "Fecha" → "02/09/2026" (sin hora exacta, viene aparte en "Horario")
+      const m = texto.match(/Fecha\s*[:\s]*\n?\s*(\d{2})\/(\d{2})\/(\d{4})/i);
+      if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    }
+  } catch (e) { console.error('Error extrayendo fecha de reserva del correo:', e.message); }
+  return null;
+}
 async function procesarCorreoEntrante(parsed) {
   const fromAddr = parsed.from && parsed.from.value && parsed.from.value[0] ? parsed.from.value[0] : null;
   if (!fromAddr) return;
@@ -4555,10 +4585,15 @@ async function procesarCorreoEntrante(parsed) {
     await pool.query('update tickets set actualizado=now() where id=$1', [ticket.id]);
   } else {
     const numero = await nextTicketNumero();
+    // Si el asunto tiene "reserva" y el remitente es uno reconocido, se intenta leer la fecha de la
+    // reserva del cuerpo del correo — solo para poder avisar después si queda por vencer sin agendar.
+    const fechaReservaDetectada = asunto.toLowerCase().includes('reserva')
+      ? extraerFechaReservaDeCorreo(remitenteEmail, textoLimpio, cuerpoHtml)
+      : null;
     const r = await pool.query(
-      `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email)
-       values ($1,$2,'Otro','Media','Abierto',$3,$4) returning id`,
-      [numero, asunto, remitenteNombre, remitenteEmail]
+      `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, fecha_reserva_detectada)
+       values ($1,$2,'Otro','Media','Abierto',$3,$4,$5) returning id`,
+      [numero, asunto, remitenteNombre, remitenteEmail, fechaReservaDetectada]
     );
     const ticketId = r.rows[0].id;
     const adjuntos = await subirAdjuntosCrudos(ticketId);
