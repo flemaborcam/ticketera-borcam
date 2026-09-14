@@ -1073,7 +1073,7 @@ function renderServicioTecnicoTab() {
       ? (s => s.estado === 'realizado' && !s.contrato_mantenimiento_id)
       : (s => s.estado !== 'realizado' && !s.contrato_mantenimiento_id);
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
-    contenido = renderServicioTecnicoLista(filtro, mensajeVacio);
+    contenido = renderServicioTecnicoLista(filtro, mensajeVacio, tab === 'realizados');
   }
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
@@ -1642,17 +1642,47 @@ function opcionesTecnicos(selectedId) {
   return `<option value="" ${!selectedId ? 'selected' : ''}>Sin asignar</option>` +
     (cache.usuarios || []).map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
 }
-function renderServicioTecnicoLista(filtro, mensajeVacio) {
-  const turnos = (cache.serviciosTecnicos || []).filter(filtro);
-  const html = turnos.length ? turnos.map(s => `
+// Un service "tiene costo" cuando lleva al menos un ítem cargado — solo esos entran en la lógica de
+// pago; una visita sin costo no tiene nada que cobrar, así que no muestra badge de pago.
+function servicioTieneCosto(s) { return (s.costos || []).length > 0; }
+function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago) {
+  let turnos = (cache.serviciosTecnicos || []).filter(filtro);
+  let subTabsHtml = '';
+  if (mostrarSubTabsPago) {
+    const subTab = state.serviciosRealizadosSubTab || 'todos';
+    const conCosto = turnos.filter(servicioTieneCosto);
+    const pendientes = conCosto.filter(s => !s.pagado).length;
+    const pagados = conCosto.filter(s => s.pagado).length;
+    if (subTab === 'pendientes') turnos = conCosto.filter(s => !s.pagado);
+    else if (subTab === 'pagados') turnos = conCosto.filter(s => s.pagado);
+    subTabsHtml = `<div class="reply-tabs" style="margin-bottom:10px;">
+      ${[
+        { v: 'todos', label: `Todos (${(cache.serviciosTecnicos || []).filter(filtro).length})` },
+        { v: 'pendientes', label: `🟠 Pendientes de pago (${pendientes})` },
+        { v: 'pagados', label: `🟢 Pagados (${pagados})` }
+      ].map(t => `<button class="reply-tab ${subTab === t.v ? 'active' : ''}" type="button" onclick="cambiarServiciosRealizadosSubTab('${t.v}')">${t.label}</button>`).join('')}
+    </div>`;
+  }
+  const html = turnos.length ? turnos.map(s => {
+    const tieneCosto = servicioTieneCosto(s);
+    let badgePago = '';
+    if (tieneCosto) {
+      badgePago = s.pagado
+        ? ` <span class="tag tag-resuelto" style="margin-left:6px;">🟢 Pagado${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}</span>`
+        : ` <span class="tag tag-cat" style="margin-left:6px;">🟠 Pendiente de pago</span>`;
+    }
+    return `
     <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
       <div class="avatar">🛠️</div>
-      <div><div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}</div>
+      <div><div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}${badgePago}</div>
       <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''} · 👤 ${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</div></div>
-    </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
+    </button>`;
+  }).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
+    ${subTabsHtml}
     <div class="user-list">${html}</div>`;
 }
+function cambiarServiciosRealizadosSubTab(t) { state.serviciosRealizadosSubTab = t; render(); }
 /* ---- Nuevo turno sin partir de un ticket (siempre pide cliente/edificio) ---- */
 // Editor de costos reutilizado en los modales de "Nuevo turno" (con o sin ticket): permite dejar
 // cargado desde el arranque el costo de la visita (del catálogo o puntual), sin tener que entrar
@@ -2057,6 +2087,11 @@ function renderDetalleServicioTecnicoModal() {
           </div>`).join('') : `<div class="hint-text">Sin costos cargados todavía.</div>`}
       </div>
       ${costos.length ? `<div style="margin-bottom:10px;">${renderTotalesPorMoneda(costos, s.aplica_iva !== false)}</div>` : ''}
+      ${costos.length ? `<div style="margin-bottom:10px;font-size:13px;">
+        ${s.pagado
+          ? `🟢 <strong>Pagado</strong>${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}${s.pagado_fecha ? ' · ' + fmtDateTime(s.pagado_fecha) : ''}${s.pagado_nota ? ` <span style="color:var(--ink-soft);">(${escapeHtml(s.pagado_nota)})</span>` : ''} <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11.5px;" onclick="revertirPagoServicio('${s.id}')">Revertir</button>`
+          : `🟠 <strong>Pendiente de pago</strong>`}
+      </div>` : ''}
       <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
         <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select" onchange="autocompletarCostoDesdeCatalogo('costo')"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
         <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
@@ -2104,6 +2139,7 @@ function renderDetalleServicioTecnicoModal() {
       ${puedeMarcar ? `<button type="button" class="btn btn-ghost" onclick="abrirReprogramarServicio('${s.id}')">🔁 Reprogramar</button>` : ''}
       <button type="button" class="btn btn-danger" onclick="eliminarServicioTecnico('${s.id}')">🗑️ Eliminar</button>
       ${costos.length ? `<button type="button" class="btn btn-ghost" onclick="generarComprobanteServicioTecnico('${s.id}')">🧾 Generar comprobante</button>` : ''}
+      ${costos.length && !s.pagado ? `<button type="button" class="btn btn-primary" onclick="abrirMarcarPagoServicio('${s.id}')">💰 Marcar como pagado</button>` : ''}
       ${!s.presupuesto_aprobado ? `<button type="button" class="btn ${s.presupuesto_enviado ? 'btn-ghost' : 'btn-primary'}" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 ${s.presupuesto_enviado ? 'Reenviar presupuesto al cliente' : 'Enviar presupuesto al cliente'}${s.ticket_id ? '' : ' (crea ticket)'}</button>` : ''}
       ${puedeIniciar ? `<button type="button" class="btn btn-ghost" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>` : ''}
       ${puedeMarcar ? `<button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button>` : ''}
@@ -2168,6 +2204,58 @@ async function confirmarReprogramarServicio() {
     state.servicioReprogramaciones = null;
     showToast('Servicio técnico reprogramado.');
     state.modal = 'detalle-servicio-tecnico';
+    render();
+  } catch (e) { showToast(e.message); }
+}
+// Marcar un service como pagado: siempre por el total (visita + equipos), no se manejan pagos
+// parciales. Medio y nota son opcionales.
+function abrirMarcarPagoServicio(id) {
+  state.modal = 'marcar-pago-servicio';
+  state.marcarPagoServicioId = id;
+  render();
+}
+function renderMarcarPagoServicioModal() {
+  const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.marcarPagoServicioId));
+  if (!s) return '';
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>💰 Marcar servicio como pagado</h2>
+    <p class="sub">${escapeHtml(s.titulo)} — ${escapeHtml(nombreClientePorId(s.cliente_id))}</p>
+    <div class="field"><label>Medio de pago (opcional)</label>
+      <select id="pago-medio">
+        <option value="">Sin especificar</option>
+        <option value="Efectivo">Efectivo</option>
+        <option value="Transferencia">Transferencia</option>
+        <option value="Otro">Otro</option>
+      </select>
+    </div>
+    <div class="field"><label>Nota (opcional)</label><textarea id="pago-nota" rows="2" placeholder="Ej: pagó junto con la cuota de mantenimiento"></textarea></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="state.modal='detalle-servicio-tecnico'; render();">Cancelar</button>
+      <button type="button" class="btn btn-primary" onclick="confirmarMarcarPagoServicio()">Confirmar pago</button>
+    </div>
+  </div></div>`;
+}
+async function confirmarMarcarPagoServicio() {
+  const s = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(state.marcarPagoServicioId));
+  if (!s) return;
+  const medioPago = document.getElementById('pago-medio').value;
+  const nota = document.getElementById('pago-nota').value;
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${s.id}/pagado`, { medioPago, nota });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(s.id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    showToast('Pago registrado.');
+    state.modal = 'detalle-servicio-tecnico';
+    render();
+  } catch (e) { showToast(e.message); }
+}
+async function revertirPagoServicio(id) {
+  if (!confirm('¿Revertir la marca de pagado de este servicio?')) return;
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}/revertir-pago`);
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    showToast('Pago revertido.');
     render();
   } catch (e) { showToast(e.message); }
 }
@@ -5932,6 +6020,7 @@ function renderActiveModal() {
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
   if (state.modal === 'firma-servicio') return renderModalFirmaServicio();
   if (state.modal === 'reprogramar-servicio') return renderReprogramarServicioModal();
+  if (state.modal === 'marcar-pago-servicio') return renderMarcarPagoServicioModal();
   if (state.modal === 'reporte-mensual-servicios') return renderReporteMensualServiciosModal();
   if (state.modal === 'detalle-reserva-calendario') return renderDetalleReservaCalendarioModal();
   if (state.modal === 'reprogramar-reserva') return renderReprogramarReservaModal();
