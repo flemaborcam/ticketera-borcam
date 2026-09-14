@@ -98,7 +98,8 @@ function mapTicket(row) {
     reservasTotal: row.reservas_total !== undefined ? Number(row.reservas_total) || 0 : (row.reservasCalendario || []).length,
     satisfaccion: row.satisfaccion || null,
     historialCliente: row.historialCliente || [],
-    checklistEstado: row.checklist_estado || {}
+    checklistEstado: row.checklist_estado || {},
+    fechaReservaDetectada: row.fecha_reserva_detectada || null
   };
 }
 function mapMensaje(m) {
@@ -3964,6 +3965,41 @@ function renderTicketsReservaTab(soloAgendados) {
     ${list}
     ${paginacion}`;
 }
+// Tickets de reserva SIN agendar todavía (no tienen ninguna reserva pendiente cargada en el calendario)
+// cuya fecha se pudo leer automáticamente del correo (ver extraerFechaReservaDeCorreo en el servidor) y
+// vencen en 1 día o menos — son los urgentes, porque nadie los cargó y el sistema no avisa de otro modo.
+function reservasSinAgendarPorVencer() {
+  const hoyStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Montevideo' }); // YYYY-MM-DD
+  return (cache.tickets || [])
+    .filter(esTicketDeReserva)
+    .filter(t => !(t.reservasPendientes > 0))
+    .filter(t => t.estado !== 'Cerrado' && t.estado !== 'Resuelto')
+    .filter(t => t.fechaReservaDetectada)
+    .map(t => ({ t, diffDias: Math.round((new Date(t.fechaReservaDetectada + 'T00:00:00') - new Date(hoyStr + 'T00:00:00')) / 86400000) }))
+    .filter(x => x.diffDias <= 1)
+    .sort((a, b) => a.diffDias - b.diffDias);
+}
+function renderAlertaReservasSinAgendar() {
+  const items = reservasSinAgendarPorVencer();
+  if (!items.length) return '';
+  return `<div style="background:#fff0eb;border:1px solid #f0b0a0;border-radius:12px;padding:14px 16px;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;color:#b5450f;margin-bottom:8px;">⚠️ ${items.length} reserva${items.length === 1 ? '' : 's'} por vencer sin agendar todavía</div>
+    ${items.map(({ t, diffDias }) => {
+      const label = diffDias < 0 ? 'Venció' : diffDias === 0 ? 'Vence hoy' : 'Vence mañana';
+      const fechaFmt = new Date(t.fechaReservaDetectada + 'T00:00:00').toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' });
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #f0d9cd;border-radius:8px;padding:8px 12px;margin-bottom:6px;">
+        <div>
+          <div style="font-weight:600;font-size:13.5px;">${escapeHtml(t.asunto)}</div>
+          <div style="font-size:12px;color:var(--ink-soft);">Ticket ${escapeHtml(t.numero)} · fecha detectada en el correo: ${fechaFmt}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="background:#ffe2d3;color:#c0392b;font-weight:700;font-size:11px;padding:3px 9px;border-radius:20px;white-space:nowrap;">⚠️ ${label} · sin agendar</span>
+          <button type="button" class="btn btn-ghost" style="white-space:nowrap;" onclick="openTicket('${t.id}')">Ver ticket</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
 function renderReservas() {
   const tab = state.reservasTab || 'calendario';
   const tabsHtml = [
@@ -3975,6 +4011,7 @@ function renderReservas() {
   const contenido = tab === 'tickets' ? renderTicketsReservaTab(false) : tab === 'agendados' ? renderTicketsReservaTab(true) : tab === 'cerradas' ? renderReservasCerradasTab() : renderCalendarioReservasTab();
   return `
     <div class="page-head"><div><h1>Reservas</h1><div class="sub">Reservas agendadas desde tickets, y los tickets de reserva que las originan.</div></div></div>
+    ${renderAlertaReservasSinAgendar()}
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
     ${contenido}`;
 }
