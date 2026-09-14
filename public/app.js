@@ -1884,6 +1884,41 @@ async function guardarMotivoItemChecklistServicio(id, sistema, itemId, estadoAct
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
   } catch (e) { showToast(e.message); }
 }
+// Detalle de lo realizado en la visita: se carga al marcar el service como realizado (firma) y se puede
+// corregir después desde el detalle del ticket, sin necesidad de reabrir el service.
+function renderDetalleRealizadoServicio(s) {
+  return `<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <div style="font-weight:600;font-size:14px;">📝 Detalle de lo realizado</div>
+      <button class="btn-sm" onclick="editarDetalleRealizadoServicio('${s.id}')">Editar</button>
+    </div>
+    <div id="detalle-realizado-view-${s.id}" style="font-size:13.5px;white-space:pre-wrap;background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;">${s.detalle_realizado ? escapeHtml(s.detalle_realizado) : '<span style="color:var(--ink-soft);">Sin detalle cargado.</span>'}</div>
+  </div>`;
+}
+function editarDetalleRealizadoServicio(id) {
+  const cont = document.getElementById(`detalle-realizado-view-${id}`);
+  if (!cont) return;
+  const actual = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(id));
+  const valorActual = (actual && actual.detalle_realizado) || '';
+  cont.outerHTML = `<div id="detalle-realizado-view-${id}">
+    <textarea id="detalle-realizado-edit-${id}" rows="4" style="width:100%;font-size:13.5px;" placeholder="¿Qué se hizo en la visita? (ej: se cambió cámara del pasillo, se revisó cableado del portón, etc.)">${escapeHtml(valorActual)}</textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;">
+      <button class="btn-sm btn-secondary" onclick="render()">Cancelar</button>
+      <button class="btn-sm btn-primary" onclick="guardarDetalleRealizadoServicio('${id}')">Guardar</button>
+    </div>
+  </div>`;
+}
+async function guardarDetalleRealizadoServicio(id) {
+  const input = document.getElementById(`detalle-realizado-edit-${id}`);
+  const detalleRealizado = (input?.value || '').trim();
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}/detalle-realizado`, { detalleRealizado });
+    const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    render();
+    showToast('Detalle guardado');
+  } catch (e) { showToast(e.message); }
+}
 // Checklist detallado (secciones + ítems) para turnos generados desde un contrato de mantenimiento,
 // copiado de la plantilla del sistema en el momento en que se generó la visita. Cada ítem se responde
 // con Satisfactorio / Necesita atención / Atención inmediata / No aplica (con motivo si aplica).
@@ -2004,6 +2039,7 @@ function renderDetalleServicioTecnicoModal() {
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
+    ${s.estado === 'realizado' ? renderDetalleRealizadoServicio(s) : ''}
     ${s.checklist_sistemas ? renderChecklistSistemasServicio(s) : ''}
     ${s.checklist_sistemas ? renderNotasMantenimientoServicio(s) : ''}
     ${s.checklist_sistemas ? renderEnvioOrdenMantenimiento(s) : ''}
@@ -2613,6 +2649,9 @@ function renderModalFirmaServicio() {
     <div class="field"><label>Técnico que realizó la visita</label>
       <select id="firma-tecnico">${(cache.usuarios || []).map(u => `<option value="${escapeHtml(u.nombre + ' ' + u.apellido)}" ${currentUser() && currentUser().id === u.id ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('')}</select>
     </div>
+    <div class="field"><label>Detalle de lo realizado</label><textarea id="firma-detalle-realizado" rows="4" placeholder="Ej: se reemplazó la cámara del hall por falla en el sensor, se probó grabación y se dejó funcionando."></textarea>
+      <div class="hint-text">Queda guardado en el registro del service — se puede corregir después desde el detalle.</div>
+    </div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;color:var(--ink-soft);">
       <input type="checkbox" id="firma-sin-firma-check" ${sinFirma ? 'checked' : ''} onchange="toggleFirmaSinFirma(this.checked)"> No hay nadie presente para firmar
     </label>
@@ -2676,10 +2715,11 @@ async function confirmarMarcarServicioRealizado() {
   const ticketId = state.firmaServicioTicketId;
   try {
     const tecnicoNombre = (document.getElementById('firma-tecnico') || {}).value || '';
+    const detalleRealizado = (document.getElementById('firma-detalle-realizado') || {}).value || '';
     let payload;
     if (state.firmaSinFirma) {
       const motivo = document.getElementById('firma-motivo').value;
-      payload = { conFirma: false, motivoSinFirma: motivo, tecnicoNombre };
+      payload = { conFirma: false, motivoSinFirma: motivo, tecnicoNombre, detalleRealizado };
     } else {
       const nombre = document.getElementById('firma-nombre').value.trim();
       const apellido = document.getElementById('firma-apellido').value.trim();
@@ -2687,7 +2727,7 @@ async function confirmarMarcarServicioRealizado() {
       if (!nombre || !apellido || !cedula) { showToast('Completá nombre, apellido y cédula.'); return; }
       if (!firmaTieneTrazo) { showToast('Falta la firma — dibujala en el recuadro.'); return; }
       const canvas = document.getElementById('firma-canvas');
-      payload = { conFirma: true, nombre, apellido, cedula, firmaDataUrl: canvas.toDataURL('image/png'), tecnicoNombre };
+      payload = { conFirma: true, nombre, apellido, cedula, firmaDataUrl: canvas.toDataURL('image/png'), tecnicoNombre, detalleRealizado };
     }
     const actualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/marcar-realizado`, payload);
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(servicioId));
