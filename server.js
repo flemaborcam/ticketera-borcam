@@ -613,6 +613,10 @@ pool.query('alter table servicios_tecnicos add column if not exists iniciado_en 
 // Técnico asignado a la visita (quién va a ir): se elige al agendar y se puede cambiar después
 // (por ejemplo si el técnico asignado no puede ir), sin perder el resto de la carga del turno.
 pool.query('alter table servicios_tecnicos add column if not exists tecnico_asignado_id uuid').catch(e => console.error('No se pudo migrar tecnico_asignado_id:', e.message));
+// Migración automática: qué se hizo realmente en la visita (hoy solo quedaba registro de que se
+// visitó y quién firmó, pero no un detalle del trabajo — lo carga el técnico al cerrar el service,
+// y se puede corregir después desde el detalle.
+pool.query('alter table servicios_tecnicos add column if not exists detalle_realizado text').catch(e => console.error('No se pudo migrar detalle_realizado:', e.message));
 pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   id serial primary key,
   servicio_id integer not null,
@@ -3397,11 +3401,12 @@ app.delete('/api/servicios-tecnicos/:id', requireStaff, async (req, res) => {
   ok(res, { ok: true });
 });
 app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (req, res) => {
-  const { conFirma, nombre, apellido, cedula, firmaDataUrl, motivoSinFirma, tecnicoNombre } = req.body || {};
+  const { conFirma, nombre, apellido, cedula, firmaDataUrl, motivoSinFirma, tecnicoNombre, detalleRealizado } = req.body || {};
   const id = req.params.id;
   const existente = (await pool.query('select id from servicios_tecnicos where id=$1', [id])).rows[0];
   if (!existente) return bad(res, 'Turno no encontrado.', 404);
   const tecnico = (tecnicoNombre || '').trim() || null;
+  const detalle = (detalleRealizado || '').trim() || null;
   if (conFirma) {
     if (!nombre || !apellido || !cedula || !firmaDataUrl) return bad(res, 'Faltan datos de la firma (nombre, apellido, cédula o el dibujo de la firma).');
     const base64 = (firmaDataUrl || '').split(',')[1] || '';
@@ -3411,17 +3416,25 @@ app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (re
     } catch (e) { return bad(res, 'No se pudo guardar la firma: ' + e.message); }
     await pool.query(
       `update servicios_tecnicos set estado='realizado', firma_nombre=$1, firma_apellido=$2, firma_cedula=$3,
-        firma_path=$4, firma_sin_firma=false, firma_motivo_sin_firma=null, firma_fecha=now(), tecnico_realizo_nombre=$5 where id=$6`,
-      [nombre.trim(), apellido.trim(), cedula.trim(), path, tecnico, id]
+        firma_path=$4, firma_sin_firma=false, firma_motivo_sin_firma=null, firma_fecha=now(), tecnico_realizo_nombre=$5, detalle_realizado=$6 where id=$7`,
+      [nombre.trim(), apellido.trim(), cedula.trim(), path, tecnico, detalle, id]
     );
   } else {
     await pool.query(
       `update servicios_tecnicos set estado='realizado', firma_nombre=null, firma_apellido=null, firma_cedula=null,
-        firma_path=null, firma_sin_firma=true, firma_motivo_sin_firma=$1, firma_fecha=now(), tecnico_realizo_nombre=$2 where id=$3`,
-      [(motivoSinFirma || '').trim() || 'No había nadie presente para firmar.', tecnico, id]
+        firma_path=null, firma_sin_firma=true, firma_motivo_sin_firma=$1, firma_fecha=now(), tecnico_realizo_nombre=$2, detalle_realizado=$3 where id=$4`,
+      [(motivoSinFirma || '').trim() || 'No había nadie presente para firmar.', tecnico, detalle, id]
     );
   }
   const r = await pool.query('select * from servicios_tecnicos where id=$1', [id]);
+  ok(res, r.rows[0]);
+});
+// Permite corregir o completar después el detalle de lo realizado (ej. si el técnico lo cargó
+// incompleto al cerrar, o hace falta agregar algo que se recordó más tarde).
+app.put('/api/servicios-tecnicos/:id/detalle-realizado', requireStaff, async (req, res) => {
+  const detalle = (req.body.detalleRealizado || '').trim() || null;
+  const r = await pool.query('update servicios_tecnicos set detalle_realizado=$1 where id=$2 returning *', [detalle, req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, r.rows[0]);
 });
 app.get('/api/servicios-tecnicos/:id/firma', requireStaff, async (req, res) => {
