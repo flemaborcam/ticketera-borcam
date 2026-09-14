@@ -617,6 +617,12 @@ pool.query('alter table servicios_tecnicos add column if not exists tecnico_asig
 // visitó y quién firmó, pero no un detalle del trabajo — lo carga el técnico al cerrar el service,
 // y se puede corregir después desde el detalle.
 pool.query('alter table servicios_tecnicos add column if not exists detalle_realizado text').catch(e => console.error('No se pudo migrar detalle_realizado:', e.message));
+// Migración automática: registro de pago del service. Solo aplica a services con costos cargados;
+// el pago es siempre por el total (visita + equipos), no se manejan pagos parciales.
+pool.query('alter table servicios_tecnicos add column if not exists pagado boolean not null default false').catch(e => console.error('No se pudo migrar pagado:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists pagado_fecha timestamptz').catch(e => console.error('No se pudo migrar pagado_fecha:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists pagado_medio text').catch(e => console.error('No se pudo migrar pagado_medio:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists pagado_nota text').catch(e => console.error('No se pudo migrar pagado_nota:', e.message));
 pool.query(`create table if not exists servicios_tecnicos_reprogramaciones (
   id serial primary key,
   servicio_id integer not null,
@@ -3434,6 +3440,27 @@ app.post('/api/servicios-tecnicos/:id/marcar-realizado', requireStaff, async (re
 app.put('/api/servicios-tecnicos/:id/detalle-realizado', requireStaff, async (req, res) => {
   const detalle = (req.body.detalleRealizado || '').trim() || null;
   const r = await pool.query('update servicios_tecnicos set detalle_realizado=$1 where id=$2 returning *', [detalle, req.params.id]);
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+// Marca el service como pagado (siempre por el total — no se manejan pagos parciales). Medio y nota
+// son opcionales. Se puede volver a llamar para corregir el medio/nota de un pago ya registrado.
+app.put('/api/servicios-tecnicos/:id/pagado', requireStaff, async (req, res) => {
+  const medio = (req.body.medioPago || '').trim() || null;
+  const nota = (req.body.nota || '').trim() || null;
+  const r = await pool.query(
+    `update servicios_tecnicos set pagado=true, pagado_fecha=coalesce(pagado_fecha, now()), pagado_medio=$1, pagado_nota=$2 where id=$3 returning *`,
+    [medio, nota, req.params.id]
+  );
+  if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
+  ok(res, r.rows[0]);
+});
+// Revierte la marca de pagado, por si se registró por error.
+app.put('/api/servicios-tecnicos/:id/revertir-pago', requireStaff, async (req, res) => {
+  const r = await pool.query(
+    `update servicios_tecnicos set pagado=false, pagado_fecha=null, pagado_medio=null, pagado_nota=null where id=$1 returning *`,
+    [req.params.id]
+  );
   if (!r.rows[0]) return bad(res, 'Turno no encontrado.', 404);
   ok(res, r.rows[0]);
 });
