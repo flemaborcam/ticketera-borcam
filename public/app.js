@@ -6539,10 +6539,12 @@ async function aprobarPresupuestoCliente(servicioId) {
 
 /* ---------------- Auth screens ---------------- */
 
-// Estilos + fondo animado de las pantallas de auth: se inyectan una sola vez, sin tocar index.html,
-// así este rediseño se puede sacar borrando este bloque y authStyleTag()/authBgHtml() de abajo.
+// Estilos + fondo animado de las pantallas de auth, sin tocar index.html — se incluyen en cada render
+// de renderAuth() (dentro del mismo string que se asigna a innerHTML). Ojo: NO chequear si ya existe
+// en el DOM y devolver '' en ese caso — cada render() reemplaza TODO el contenido de #app (incluido
+// este <style>), así que al fallar el login el viejo se destruye igual, y si acá no se lo vuelve a
+// incluir la pantalla queda sin ningún estilo aplicado (íconos gigantes, todo desalineado).
 function authStyleTag() {
-  if (document.getElementById('auth-style-v2')) return '';
   return `<style id="auth-style-v2">
     .auth-wrap{position:relative;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;overflow:hidden;background:linear-gradient(160deg,#0A1830 0%,#0F2A4D 45%,#132F5C 100%);}
     .auth-bg-anim{position:absolute;inset:0;overflow:hidden;z-index:0;}
@@ -6593,7 +6595,6 @@ function renderAuth() {
         ${state.authError ? `<div class="error-text">${escapeHtml(state.authError)}</div>` : ''}
         <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
       </form>
-      <div class="auth-toggle">¿No tenés cuenta? <button onclick="goAuth('register-choice')">Registrate</button></div>
       </div>
     </div></div>`;
   }
