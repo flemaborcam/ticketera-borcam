@@ -2337,6 +2337,19 @@ function construirPdfComprobante(comprobante, servicio, cliente, firmaDataUrl) {
   doc.text(`Fecha de la visita: ${new Date(servicio.fecha_hora).toLocaleDateString('es-UY', { timeZone: 'America/Montevideo' })}`, marginX, y);
   y += 9;
 
+  // Trabajo realizado: detalle cargado por el técnico al cerrar el service (qué se hizo en la visita).
+  if (servicio.detalle_realizado) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.text('Trabajo realizado', marginX, y);
+    y += 5.5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const detalleLineas = doc.splitTextToSize(servicio.detalle_realizado, pageWidth - marginX * 2);
+    doc.text(detalleLineas, marginX, y);
+    y += detalleLineas.length * 5 + 4;
+  }
+
   // Tabla de costos.
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
