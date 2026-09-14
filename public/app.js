@@ -2672,7 +2672,12 @@ function renderServiciosTecnicosDelTicket(t) {
 }
 async function verDetalleServicioTecnicoDesdeTicket(servicioId) {
   try {
-    if (!cache.serviciosTecnicos.length || !cache.catalogoCostos) {
+    // Ojo: no alcanza con mirar si cache.serviciosTecnicos está vacío — puede tener otros turnos
+    // cargados de antes (de haber visitado la sección Servicio Técnico) pero no este en particular
+    // (ej: se creó después, o directamente nunca se cargó desde acá). Si falta, el modal se abre
+    // sin contenido y no pasa nada visible. Por eso se chequea que ESTE service esté en la lista.
+    const yaLoTengo = (cache.serviciosTecnicos || []).some(s => String(s.id) === String(servicioId));
+    if (!yaLoTengo || !cache.catalogoCostos) {
       const [servicios, catalogo] = await Promise.all([api('GET', '/api/servicios-tecnicos'), api('GET', '/api/catalogo-costos')]);
       cache.serviciosTecnicos = servicios;
       cache.catalogoCostos = catalogo;
