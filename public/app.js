@@ -2138,6 +2138,7 @@ function renderDetalleServicioTecnicoModal() {
   const filas = [
     ['Cliente / edificio', escapeHtml(nombreClientePorId(s.cliente_id))],
     ['Título', escapeHtml(s.titulo)],
+    ...(s.descripcion ? [['Descripción', escapeHtml(s.descripcion)]] : []),
     ['Ticket', s.ticket_numero ? escapeHtml(s.ticket_numero) : '—'],
     ['Fecha y hora', s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' }) + ' (todo el día)' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' })],
     ['Duración', s.todo_el_dia ? '—' : `${s.duracion_minutos || 60} min`],
@@ -2635,6 +2636,7 @@ function renderEditarServicioTecnicoModal(s) {
       <select id="servicio-edit-cliente">${cache.clientes.map(c => `<option value="${c.id}" ${c.id === s.cliente_id ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}</select>
     </div>
     <div class="field"><label>Título del evento</label><input type="text" id="servicio-edit-titulo" value="${escapeHtml(s.titulo)}"></div>
+    <div class="field"><label>Descripción (opcional)</label><textarea id="servicio-edit-descripcion" rows="3" placeholder="Breve descripción del problema o del trabajo a realizar">${s.descripcion ? escapeHtml(s.descripcion) : ''}</textarea></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-edit-ics-todo-el-dia" ${s.todo_el_dia ? 'checked' : ''} onchange="toggleTodoElDiaIcs('servicio-edit')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="servicio-edit-fecha" value="${fechaDefault}"></div>
@@ -2651,6 +2653,7 @@ function renderEditarServicioTecnicoModal(s) {
 async function guardarEdicionServicioTecnico(id) {
   const clienteId = document.getElementById('servicio-edit-cliente').value;
   const titulo = document.getElementById('servicio-edit-titulo').value;
+  const descripcion = document.getElementById('servicio-edit-descripcion').value;
   const fecha = document.getElementById('servicio-edit-fecha').value;
   const hora = document.getElementById('servicio-edit-hora').value;
   const duracion = document.getElementById('servicio-edit-duracion').value;
@@ -2660,7 +2663,7 @@ async function guardarEdicionServicioTecnico(id) {
   if (!fecha) { showToast('Elegí una fecha.'); return; }
   if (!todoElDia && !hora) { showToast('Elegí una hora, o tildá "Todo el día".'); return; }
   try {
-    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { clienteId, titulo, fecha, hora, duracion, todoElDia, tecnicoAsignadoId });
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${id}`, { clienteId, titulo, descripcion, fecha, hora, duracion, todoElDia, tecnicoAsignadoId });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
     state.editandoServicioTecnicoId = null;
@@ -3896,6 +3899,7 @@ function renderAgendarServicioModal() {
     <h2>📅 Agendar servicio técnico</h2>
     <p class="sub">Ticket ${escapeHtml(t.numero)} — ${escapeHtml(t.asunto)}</p>
     <div class="field"><label>Título del evento</label><input type="text" id="servicio-ics-titulo" value="${escapeHtml(`Servicio técnico — ${t.asunto}`)}"></div>
+    <div class="field"><label>Descripción (opcional)</label><textarea id="servicio-ics-descripcion" rows="3" placeholder="Breve descripción del problema o del trabajo a realizar"></textarea></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="servicio-ics-todo-el-dia" onchange="toggleTodoElDiaIcs('servicio')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="servicio-ics-fecha" value="${fechaDefault}"></div>
@@ -3915,6 +3919,7 @@ async function guardarServicioTecnico() {
   const hora = document.getElementById('servicio-ics-hora').value;
   const duracion = document.getElementById('servicio-ics-duracion').value;
   const titulo = document.getElementById('servicio-ics-titulo').value;
+  const descripcion = document.getElementById('servicio-ics-descripcion').value;
   const todoElDia = document.getElementById('servicio-ics-todo-el-dia').checked;
   const aplicaIva = document.getElementById('servicio-ics-aplica-iva').checked;
   const tecnicoAsignadoId = document.getElementById('servicio-ics-tecnico').value || null;
@@ -3923,7 +3928,7 @@ async function guardarServicioTecnico() {
   if (!t.grupoId) { showToast('Este ticket no está vinculado a ningún cliente/edificio. Asignalo a un cliente antes de agendar el servicio técnico.'); return; }
   // Ya no se descarga ningún .ics: el turno queda guardado en el sistema, visible en Servicio Técnico.
   try {
-    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId });
+    const nuevo = await api('POST', '/api/servicios-tecnicos', { ticketId: t.id, ticketNumero: t.numero, clienteId: t.grupoId, titulo, descripcion, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId });
     await aplicarCostosPendientes(nuevo.id);
     await refreshTicket(t.id);
     showToast('Servicio técnico agendado.');
