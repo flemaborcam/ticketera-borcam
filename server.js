@@ -1,7 +1,13 @@
 const express = require('express');
 const cookieSession = require('cookie-session');
 const bcrypt = require('bcryptjs');
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+// Por defecto, "pg" convierte las columnas de tipo "date" (por ejemplo la próxima visita de un
+// contrato de mantenimiento) en un objeto Date de JavaScript en vez de dejarlas como texto
+// "AAAA-MM-DD". Al mandarlas al navegador terminan serializadas como fecha+hora completa, y
+// cualquier código que espere solo "AAAA-MM-DD" (como el que arma "Próxima visita: ...") se rompe
+// y muestra "Invalid Date". Acá le pedimos que las devuelva tal cual vienen de la base, como texto.
+types.setTypeParser(1082, val => val);
 const path = require('path');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
