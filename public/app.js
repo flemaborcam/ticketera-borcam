@@ -4284,7 +4284,7 @@ function renderTicket(id) {
       </div>
       <div class="ticket-actions-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;">
         ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
-        ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
+        ${(!esTicketDeReserva(t) && !(t.serviciosTecnicos || []).some(s => s.estado !== 'realizado')) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
         <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
