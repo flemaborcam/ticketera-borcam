@@ -2062,6 +2062,27 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
     } catch (e) { reject(e); }
   });
 }
+// Vista previa de una plantilla: arma el mismo PDF de "Orden de mantenimiento" pero con datos de
+// ejemplo (no hace falta que exista ningún turno real), para ver de entrada cómo va a quedar el
+// checklist de esa plantilla antes de asignarla a un contrato. Se abre directo en el navegador.
+app.get('/api/plantillas-mantenimiento/:sistema/vista-previa-pdf', requireStaff, async (req, res) => {
+  const plantilla = (await pool.query('select * from plantillas_mantenimiento where sistema=$1', [req.params.sistema])).rows[0];
+  if (!plantilla) return bad(res, 'Plantilla no encontrada.', 404);
+  const servicioEjemplo = {
+    id: '—',
+    creado: new Date(),
+    checklist_sistemas: { [plantilla.sistema]: checklistDesdePlantilla(plantilla) },
+    frecuencia_mantenimiento_meses: null,
+    titulo: `Mantenimiento: ${plantilla.sistema}`
+  };
+  const clienteEjemplo = { nombre: 'Cliente de ejemplo', direccion: 'Dirección de ejemplo 1234' };
+  try {
+    const pdfBuffer = await generarPdfOrdenMantenimiento(servicioEjemplo, clienteEjemplo);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="Vista previa - ${plantilla.sistema}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (e) { bad(res, 'No se pudo generar la vista previa: ' + e.message); }
+});
 // Genera el PDF y lo manda por la casilla aparte de mantenimiento (nunca la de tickets). Se puede
 // llamar a mano desde el botón, o solo desde el proceso automático de las 2 horas.
 async function enviarOrdenMantenimientoPorCorreo(servicioId) {
