@@ -1327,6 +1327,7 @@ function renderPlantillasMantenimientoTab() {
       <div class="avatar" style="cursor:pointer;" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">🔧</div>
       <div style="flex:1;cursor:pointer;" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')"><div class="u-name">${escapeHtml(p.sistema)}</div>
         <div class="u-sub">${(p.secciones || []).length} sección${(p.secciones || []).length === 1 ? '' : 'es'} · ${(p.secciones || []).reduce((n, s) => n + (s.items || []).length, 0)} ítems</div></div>
+      <button type="button" class="btn btn-ghost" onclick="event.stopPropagation(); window.open('/api/plantillas-mantenimiento/' + encodeURIComponent('${escapeHtml(p.sistema)}') + '/vista-previa-pdf', '_blank')">👁️ Vista previa</button>
       <button type="button" class="btn btn-ghost" onclick="event.stopPropagation(); duplicarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">Duplicar</button>
       <button type="button" class="btn btn-ghost" onclick="abrirEditarPlantillaMantenimiento('${escapeHtml(p.sistema)}')">Editar</button>
     </div>`).join('')}</div>`;
