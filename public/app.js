@@ -4384,9 +4384,6 @@ function renderGrupos() {
     { v: 'administraciones', label: `🗂️ Administraciones (${administraciones.length})` },
     { v: 'otros', label: `Otros clientes (${otros.length})` }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="state.clientesTab='${t.v}'; render();">${t.label}</button>`).join('');
-  const grupo = tab === 'edificios' ? edificios : tab === 'administraciones' ? administraciones : otros;
-  const mensajeVacio = tab === 'edificios' ? 'Todavía no diste de alta ningún edificio.' : tab === 'administraciones' ? 'Todavía no diste de alta ninguna administración.' : 'No hay otros clientes cargados.';
-  const list = grupo.length ? `<div class="stub-list">${grupo.map(renderGrupoRow).join('')}</div>` : `<div class="empty-state"><div class="big">${mensajeVacio}</div></div>`;
   const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
   return `${clientesRowStyleTag()}<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
@@ -4395,7 +4392,31 @@ function renderGrupos() {
         <button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button>
       </div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
-    ${avisoApartamentosSueltos}${list}`;
+    <div class="field" style="max-width:340px;margin-bottom:14px;">
+      <input type="search" placeholder="🔎 Buscar por nombre, dirección o teléfono..." value="${escapeHtml(state.clientesBusqueda || '')}" oninput="refrescarBusquedaClientes(this.value)">
+    </div>
+    ${avisoApartamentosSueltos}<div id="clientes-lista">${renderListaGrupos(grupoCompleto, tab)}</div>`;
+}
+// Recalcula solo la lista de clientes filtrada (no toda la página), para que el input de búsqueda
+// no pierda el foco ni el cursor con cada letra que se escribe — a diferencia de un render() completo.
+function refrescarBusquedaClientes(valor) {
+  state.clientesBusqueda = valor;
+  const el = document.getElementById('clientes-lista');
+  if (!el) return;
+  const tab = state.clientesTab || 'edificios';
+  const edificios = cache.clientes.filter(c => c.rolCliente === 'Edificio');
+  const administraciones = cache.clientes.filter(c => c.rolCliente === 'Administración');
+  const otros = cache.clientes.filter(c => !['Edificio', 'Administración'].includes(c.rolCliente) && !(c.rolCliente === 'Apartamento' && c.administradoPorId));
+  const grupoCompleto = tab === 'edificios' ? edificios : tab === 'administraciones' ? administraciones : otros;
+  el.innerHTML = renderListaGrupos(grupoCompleto, tab);
+}
+function renderListaGrupos(grupoCompleto, tab) {
+  const busqueda = (state.clientesBusqueda || '').trim().toLowerCase();
+  const grupo = busqueda
+    ? grupoCompleto.filter(g => [g.nombre, g.direccion, g.telefono, g.correo, g.administradoPorNombre].filter(Boolean).some(v => v.toLowerCase().includes(busqueda)))
+    : grupoCompleto;
+  const mensajeVacio = busqueda ? `No hay ningún cliente que coincida con "${escapeHtml(state.clientesBusqueda.trim())}".` : tab === 'edificios' ? 'Todavía no diste de alta ningún edificio.' : tab === 'administraciones' ? 'Todavía no diste de alta ninguna administración.' : 'No hay otros clientes cargados.';
+  return grupo.length ? `<div class="stub-list">${grupo.map(renderGrupoRow).join('')}</div>` : `<div class="empty-state"><div class="big">${mensajeVacio}</div></div>`;
 }
 
 async function renderGrupoDetailAsync(id) {
