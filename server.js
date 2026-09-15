@@ -739,7 +739,7 @@ const ESTADOS = ['Abierto', 'En progreso', 'Esperando al Cliente', 'Resuelto', '
 const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'Recursos Humanos', 'Otro'];
 // Subcategorías: solo tienen sentido cuando la Categoría elegida es "Soporte Técnico". Para agregar
 // una nueva, alcanza con sumarla a esta lista (no hace falta migración de base de datos).
-const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso', 'Redes', 'Incendio', 'Portería', 'Otro'];
+const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso', 'Redes', 'Incendio', 'Portería', 'Alarma', 'Otro'];
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
 const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento'];
