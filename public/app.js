@@ -4384,6 +4384,7 @@ function renderGrupos() {
     { v: 'administraciones', label: `🗂️ Administraciones (${administraciones.length})` },
     { v: 'otros', label: `Otros clientes (${otros.length})` }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="state.clientesTab='${t.v}'; render();">${t.label}</button>`).join('');
+  const grupoCompleto = tab === 'edificios' ? edificios : tab === 'administraciones' ? administraciones : otros;
   const avisoApartamentosSueltos = tab === 'otros' && apartamentosSueltos.length
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
   return `${clientesRowStyleTag()}<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
