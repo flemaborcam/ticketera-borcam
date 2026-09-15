@@ -12,7 +12,7 @@ async function api(method, url, body) {
 
 let session = null;
 let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [], proveedores: [] };
-let CAT = { ESTADOS: [], CATEGORIAS: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
+let CAT = { ESTADOS: [], CATEGORIAS: [], SUBCATEGORIAS_SOPORTE_TECNICO: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
   view: 'login', authView: 'login', ticketId: null,
   filters: { estado: 'todos', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos', fecha: '', search: '' },
@@ -83,7 +83,7 @@ function mapAutomatizacion(a) {
 }
 function mapTicket(row) {
   return {
-    id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, prioridad: row.prioridad, estado: row.estado,
+    id: row.id, numero: row.numero, asunto: row.asunto, categoria: row.categoria, subcategoria: row.subcategoria || '', prioridad: row.prioridad, estado: row.estado,
     edificio: row.edificio || '', torre: row.torre || '',
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
     asignadoA: row.asignado_a, grupoId: row.cliente_id, edificioNombre: row.edificio_nombre || null, creado: row.creado, actualizado: row.actualizado,
@@ -1669,6 +1669,13 @@ function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id
 function nombreUsuarioPorId(id) { const u = (cache.usuarios || []).find(x => x.id === id); return u ? `${u.nombre} ${u.apellido}` : '—'; }
 // Select de "Técnico asignado", reutilizado en Nuevo turno / Agendar / Editar servicio técnico —
 // para elegir quién va a ir a la visita, y poder cambiarlo después si ese técnico no puede ir.
+// Subcategoría: lista de valores válida solo cuando el ticket es de Categoría "Soporte Técnico".
+// Para agregar una nueva (ej. "Cerrajería"), alcanza con sumarla a SUBCATEGORIAS_SOPORTE_TECNICO
+// en server.js — se refleja acá solo con recargar la página, sin tocar app.js.
+function subcatOptions(selected) {
+  return `<option value="">Sin especificar</option>` +
+    (CAT.SUBCATEGORIAS_SOPORTE_TECNICO || []).map(v => `<option value="${escapeHtml(v)}" ${v === selected ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
+}
 function opcionesTecnicos(selectedId) {
   return `<option value="" ${!selectedId ? 'selected' : ''}>Sin asignar</option>` +
     (cache.usuarios || []).map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</option>`).join('');
@@ -3669,7 +3676,7 @@ function renderStub(t, clientMode, selectable) {
         ${!clientMode && t.necesitaAtencion ? `<span class="badge-atencion">🔔 Respondió el cliente</span>` : ''}
         ${!clientMode && ticketVencido(t) ? `<span class="badge-vencido">⏰ Vencido</span>` : ''}
         ${!clientMode && t.reservasPendientes > 0 ? `<span class="tag tag-resuelto">📅 ${t.reservasPendientes > 1 ? t.reservasPendientes + ' reservas agendadas' : 'Reserva agendada'}</span>` : ''}
-        <span class="tag tag-${slug(t.estado)}">${t.estado}</span><span class="tag tag-${slug(t.prioridad)}">${t.prioridad}</span><span class="tag tag-cat">${escapeHtml(t.categoria)}</span>
+        <span class="tag tag-${slug(t.estado)}">${t.estado}</span><span class="tag tag-${slug(t.prioridad)}">${t.prioridad}</span><span class="tag tag-cat">${escapeHtml(t.categoria)}</span>${t.subcategoria ? `<span class="tag tag-cat">${escapeHtml(t.subcategoria)}</span>` : ''}
         ${!clientMode && grupo ? `<span class="tag tag-cliente">${escapeHtml(grupo.nombre)}</span>` : ''}
         ${clientMode && cache.edificiosCliente.length > 1 && t.edificioNombre ? `<span class="tag tag-cliente">${escapeHtml(t.edificioNombre)}</span>` : ''}
         ${!clientMode ? `<span class="tag tag-agente">${agente ? '👤 ' + escapeHtml(agente.nombre) + ' ' + escapeHtml(agente.apellido) : 'Sin asignar'}</span>` : ''}
@@ -4291,6 +4298,7 @@ function renderTicket(id) {
       </div>
       <div class="meta-grid">
         <div class="field"><label>Categoría</label><select onchange="updateTicketField('${t.id}','categoria', this.value)">${catOptions}</select></div>
+        ${t.categoria === 'Soporte Técnico' ? `<div class="field" id="subcategoria-field-${t.id}"><label>Subcategoría</label><select onchange="updateTicketField('${t.id}','subcategoria', this.value)">${subcatOptions(t.subcategoria)}</select></div>` : ''}
         <div class="field"><label>Prioridad</label><select onchange="updateTicketField('${t.id}','prioridad', this.value)">${prioOptions}</select></div>
         <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
         <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
