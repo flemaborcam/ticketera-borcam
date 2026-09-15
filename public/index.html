@@ -76,11 +76,11 @@
   .input-mes,.input-fecha{border:none;background:transparent;color:var(--brand);font-size:13.5px;font-weight:600;cursor:pointer;padding:0;}
   /* Dentro de una barra de filtros (junto a selects y al botón "Tickets de hoy"), el picker de
      fecha se ve como uno más del grupo: blanco, borde fino, mismo alto — no como un botón aparte. */
-  .filters .fecha-picker{padding:8px 10px;border:1px solid var(--line-strong);border-radius:var(--radius);background:#fff;box-shadow:none;}
-  .filters .fecha-picker:hover{background:var(--brand-tint);}
+  .filters .fecha-picker{padding:0;border:none;border-radius:0;background:transparent;box-shadow:none;gap:6px;}
+  .filters .fecha-picker:hover{background:transparent;}
   .filters .fecha-picker:active{transform:none;box-shadow:none;}
-  .filters .fecha-picker .mes-icon{font-size:13px;opacity:.65;}
-  .filters .input-fecha{color:var(--ink);font-weight:400;}
+  .filters .fecha-picker .mes-icon{font-size:15px;opacity:.65;}
+  .filters .input-fecha{color:var(--ink);font-weight:400;padding:8px 10px;border:1px solid var(--line-strong);border-radius:var(--radius);background:#fff;}
   .input-mes:focus,.input-fecha:focus{outline:none;}
   .input-mes::-webkit-calendar-picker-indicator,.input-fecha::-webkit-calendar-picker-indicator{filter:invert(28%) sepia(84%) saturate(1400%) hue-rotate(203deg);opacity:.85;cursor:pointer;}
   .stub-list{display:flex;flex-direction:column;gap:12px;}
