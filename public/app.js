@@ -4498,7 +4498,6 @@ function renderProveedoresGrupo(g) {
    acceso, Sistema de Incendio, u otro que se agregue a mano). El cobro es mensual y aparte — acá solo
    se agenda: cuando falten 7 días para la "próxima visita", el sistema genera solo el turno de
    Servicio Técnico correspondiente (sin ticket ni costos) y calcula la siguiente fecha. */
-const SISTEMAS_MANTENIMIENTO_BASE = ['CCTV', 'Portería', 'Redes', 'Control de acceso', 'Sistema de Incendio'];
 const FRECUENCIAS_MANTENIMIENTO = [{ v: 1, label: 'Mensual' }, { v: 2, label: 'Bimestral' }, { v: 3, label: 'Trimestral' }, { v: 4, label: 'Cuatrimestral' }];
 function frecuenciaMantenimientoLabel(meses) {
   const f = FRECUENCIAS_MANTENIMIENTO.find(x => x.v === Number(meses));
@@ -4525,6 +4524,12 @@ function renderContratoMantenimientoGrupo(g, contrato) {
 async function openContratoMantenimientoModal(clienteId) {
   state.contratoMantenimientoClienteId = clienteId;
   cache.contratoMantenimientoEdit = await api('GET', `/api/clientes/${clienteId}/contrato-mantenimiento`).catch(() => null);
+  // Los checkboxes de "Sistemas que cubre" salen de las plantillas de mantenimiento ya cargadas
+  // (mismas que se ven en Servicio Técnico → Plantillas), no de una lista fija — así, el día que se
+  // agregue una plantilla nueva, ya aparece acá para tildar, sin tocar código.
+  if (!cache.plantillasMantenimiento) {
+    cache.plantillasMantenimiento = await api('GET', '/api/plantillas-mantenimiento').catch(() => []);
+  }
   state.modal = 'contrato-mantenimiento';
   render();
 }
@@ -4556,14 +4561,19 @@ async function eliminarContratoMantenimiento(id) {
 function renderContratoMantenimientoModal() {
   const contrato = cache.contratoMantenimientoEdit;
   const sistemasActuales = contrato ? (contrato.sistemas || []) : [];
-  const sistemasExtra = sistemasActuales.filter(s => !SISTEMAS_MANTENIMIENTO_BASE.includes(s));
+  // Lista de opciones: todas las plantillas de mantenimiento cargadas hoy (ordenadas alfabéticamente
+  // por el propio endpoint). Si un contrato viejo tiene guardado un sistema que no tiene plantilla
+  // (por ejemplo uno cargado a mano antes de este cambio), no aparece como checkbox — sigue
+  // mostrándose en "Otro sistema", igual que antes, para no perder lo ya guardado.
+  const opcionesSistemas = (cache.plantillasMantenimiento || []).map(p => p.sistema);
+  const sistemasExtra = sistemasActuales.filter(s => !opcionesSistemas.includes(s));
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>${contrato ? 'Editar contrato de mantenimiento' : 'Configurar contrato de mantenimiento'}</h2>
     <form onsubmit="return submitContratoMantenimiento(event)">
       <div class="field"><label>Sistemas que cubre</label>
-        ${SISTEMAS_MANTENIMIENTO_BASE.map((s, i) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <input type="checkbox" id="contrato-sistema-${i}" name="sistemas" value="${s}" style="width:16px !important;min-width:16px !important;flex:0 0 auto !important;padding:0 !important;" ${sistemasActuales.includes(s) ? 'checked' : ''}>
-          <label for="contrato-sistema-${i}" style="display:inline !important;text-transform:none !important;font-weight:400 !important;font-size:13.5px !important;color:inherit !important;letter-spacing:normal !important;text-align:left !important;margin:0 !important;">${s}</label>
+        ${opcionesSistemas.map((s, i) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <input type="checkbox" id="contrato-sistema-${i}" name="sistemas" value="${escapeHtml(s)}" style="width:16px !important;min-width:16px !important;flex:0 0 auto !important;padding:0 !important;" ${sistemasActuales.includes(s) ? 'checked' : ''}>
+          <label for="contrato-sistema-${i}" style="display:inline !important;text-transform:none !important;font-weight:400 !important;font-size:13.5px !important;color:inherit !important;letter-spacing:normal !important;text-align:left !important;margin:0 !important;">${escapeHtml(s)}</label>
         </div>`).join('')}
         <input name="sistemaOtro" placeholder="Otro sistema (opcional)" value="${escapeHtml(sistemasExtra.join(', '))}">
         <div class="hint-text">Si hay más de uno, separalos con coma.</div></div>
