@@ -1497,7 +1497,7 @@ function renderReporteMensualDashboardTab() {
         <div class="sub">Servicios marcados como realizados en el mes elegido, agrupados por cliente/edificio.</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
-        <input type="month" value="${mes}" onchange="cambiarMesReporteMensualDashboard(this.value)">
+        <label class="mes-picker"><span class="mes-icon">📅</span><input type="month" class="input-mes" value="${mes}" onchange="cambiarMesReporteMensualDashboard(this.value)"></label>
         <button type="button" class="btn btn-ghost" onclick="descargarPdfReporteMensualDashboard()">📄 Bajar PDF</button>
       </div>
     </div>`;
@@ -1521,22 +1521,46 @@ function renderReporteMensualDashboardTab() {
       <div class="stat-card-value">${escapeHtml(m)} ${total}</div>
     </div>`).join('');
 
-  const filasClientes = clientesOrdenados.map(([nombre, d]) => `
-    <div class="user-row" style="border:1px solid var(--line);align-items:flex-start;">
-      <div class="avatar">🏢</div>
-      <div style="flex:1;">
-        <div class="u-name">${escapeHtml(nombre)}</div>
-        <div class="u-sub">${d.servicios.length} servicio${d.servicios.length === 1 ? '' : 's'} realizado${d.servicios.length === 1 ? '' : 's'}</div>
+  const clienteExpandido = state.reporteMensualClienteExpandido;
+  const filasClientes = clientesOrdenados.map(([nombre, d]) => {
+    const expandido = clienteExpandido === nombre;
+    const detalleServicios = expandido ? `
+      <div style="display:flex;flex-direction:column;gap:6px;padding:10px 14px 4px 54px;">
+        ${d.servicios.map(s => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px dashed var(--line);padding-top:8px;font-size:13px;">
+            <div>
+              <div style="font-weight:600;">${escapeHtml(s.titulo || 'Servicio técnico')}</div>
+              <div class="u-sub">${s.fecha_hora ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Montevideo' }) : '—'}${s.ticket_numero ? ' · ' + escapeHtml(s.ticket_numero) : ''}</div>
+            </div>
+            <div style="text-align:right;color:var(--ink-soft);">
+              ${(() => { const sub = {}; (s.costos || []).forEach(c => { sub[c.moneda] = (sub[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); }); const entradas = Object.entries(sub); return entradas.length ? entradas.map(([m, v]) => `<div>${escapeHtml(m)} ${Math.round(s.aplica_iva !== false ? v * (1 + IVA_RATE) : v)}</div>`).join('') : '<div>Sin costo</div>'; })()}
+            </div>
+          </div>`).join('')}
+      </div>` : '';
+    return `
+    <div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;">
+      <div class="user-row" style="border:none;align-items:flex-start;cursor:pointer;" onclick="toggleClienteReporteMensual('${nombre.replace(/'/g, "\\'")}')">
+        <div class="avatar">🏢</div>
+        <div style="flex:1;">
+          <div class="u-name">${escapeHtml(nombre)}</div>
+          <div class="u-sub">${d.servicios.length} servicio${d.servicios.length === 1 ? '' : 's'} realizado${d.servicios.length === 1 ? '' : 's'} · ${expandido ? 'Ocultar ▲' : 'Ver detalle ▼'}</div>
+        </div>
+        <div style="text-align:right;font-weight:600;">
+          ${Object.entries(d.totales).map(([m, total]) => `<div>${escapeHtml(m)} ${total}</div>`).join('')}
+        </div>
       </div>
-      <div style="text-align:right;font-weight:600;">
-        ${Object.entries(d.totales).map(([m, total]) => `<div>${escapeHtml(m)} ${total}</div>`).join('')}
-      </div>
-    </div>`).join('');
+      ${detalleServicios}
+    </div>`;
+  }).join('');
 
   return `${cabecera}
     <div class="stat-cards" style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 18px;">${tarjetasTotales}</div>
     <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:15px;">${filas.length} servicio${filas.length === 1 ? '' : 's'} realizado${filas.length === 1 ? '' : 's'} en ${clientesOrdenados.length} cliente${clientesOrdenados.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list" style="display:flex;flex-direction:column;gap:8px;">${filasClientes}</div>`;
+}
+function toggleClienteReporteMensual(nombre) {
+  state.reporteMensualClienteExpandido = state.reporteMensualClienteExpandido === nombre ? null : nombre;
+  refrescarVistaServicioTecnico();
 }
 function abrirReporteMensualServicios() {
   state.modal = 'reporte-mensual-servicios';
@@ -4098,7 +4122,7 @@ function renderDashboard() {
     ${renderCargaTrabajo()}
     <div class="filters">
       <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>
-      <input type="date" value="${state.filters.fecha}" onchange="setFilter('fecha', this.value)" title="Buscar tickets de un día específico">
+      <label class="fecha-picker" title="Buscar tickets de un día específico"><span class="mes-icon">📅</span><input type="date" class="input-fecha" value="${state.filters.fecha}" onchange="setFilter('fecha', this.value)"></label>
       ${state.filters.fecha ? `<button class="btn btn-ghost" onclick="setFilter('fecha','')">Ver todos los días</button>` : ''}
       <select onchange="setFilter('estado', this.value)">${estOptions}</select>
       <select onchange="setFilter('categoria', this.value)">${catOptions}</select>
@@ -5840,8 +5864,8 @@ function renderEstadisticas() {
   const filtros = `<div class="filters no-print">
       <select onchange="setReportesRango(this.value)">${rangoOpts}</select>
       ${state.reportesRango === 'personalizado' ? `
-        <input type="date" value="${escapeHtml(state.reportesDesde)}" onchange="setReportesFechaPersonalizada('reportesDesde', this.value)">
-        <input type="date" value="${escapeHtml(state.reportesHasta)}" onchange="setReportesFechaPersonalizada('reportesHasta', this.value)">
+        <label class="fecha-picker"><span class="mes-icon">📅</span><input type="date" class="input-fecha" value="${escapeHtml(state.reportesDesde)}" onchange="setReportesFechaPersonalizada('reportesDesde', this.value)"></label>
+        <label class="fecha-picker"><span class="mes-icon">📅</span><input type="date" class="input-fecha" value="${escapeHtml(state.reportesHasta)}" onchange="setReportesFechaPersonalizada('reportesHasta', this.value)"></label>
         <button class="btn btn-ghost" onclick="cargarReportes()">Aplicar</button>` : ''}
       <select onchange="setReportesUsuario(this.value)">${usuarioOpts}</select>
       <button class="btn btn-ghost" onclick="descargarReporteExcel()">📊 Exportar Excel</button>

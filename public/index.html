@@ -68,6 +68,14 @@
   .filters select,.filters input[type=search],.filters input[type=date]{padding:8px 10px;border:1px solid var(--line-strong);border-radius:var(--radius);background:#fff;font-size:13.5px;color:var(--ink);}
   .filters .btn{padding:8px 14px;font-size:13.5px;}
   .filters input[type=search]{flex:1;min-width:160px;}
+  .mes-picker,.fecha-picker{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border:1px solid #bcd0f5;border-radius:20px;background:linear-gradient(180deg,#ffffff 0%,var(--brand-tint) 100%);box-shadow:0 2px 0 #bcd0f5,0 4px 8px rgba(30,86,199,.15),inset 0 1px 0 rgba(255,255,255,.8);transition:transform .1s,box-shadow .1s,background .15s;cursor:pointer;}
+  .mes-picker:hover,.fecha-picker:hover{background:linear-gradient(180deg,#ffffff 0%,#dbe8fd 100%);}
+  .mes-picker:active,.fecha-picker:active{transform:translateY(2px);box-shadow:0 0 0 #bcd0f5,0 1px 2px rgba(30,86,199,.15),inset 0 1px 0 rgba(255,255,255,.8);}
+  .mes-picker:focus-within,.fecha-picker:focus-within{border-color:var(--brand);}
+  .mes-picker .mes-icon,.fecha-picker .mes-icon{font-size:14px;line-height:1;}
+  .input-mes,.input-fecha{border:none;background:transparent;color:var(--brand);font-size:13.5px;font-weight:600;cursor:pointer;padding:0;}
+  .input-mes:focus,.input-fecha:focus{outline:none;}
+  .input-mes::-webkit-calendar-picker-indicator,.input-fecha::-webkit-calendar-picker-indicator{filter:invert(28%) sepia(84%) saturate(1400%) hue-rotate(203deg);opacity:.85;cursor:pointer;}
   .stub-list{display:flex;flex-direction:column;gap:12px;}
   .stub{position:relative;display:flex;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line-strong);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);text-align:left;width:100%;padding:0;cursor:pointer;}
   /* Franja de color a la izquierda de cada ticket según su prioridad, para poder escanear la
