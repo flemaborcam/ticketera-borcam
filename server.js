@@ -463,6 +463,13 @@ pool.query('alter table automatizacion_pasos add column if not exists asignado_a
 pool.query('alter table tickets add column if not exists edificio text').catch(e => console.error('No se pudo migrar edificio:', e.message));
 // Migración automática: dato de Torre del ticket (junto con Apartamento), para precargar el Pedido de Tag.
 pool.query('alter table tickets add column if not exists torre text').catch(e => console.error('No se pudo migrar torre:', e.message));
+// Migración automática: Subcategoría, solo aplica cuando Categoría es "Soporte Técnico" (CCTV, Domótica, etc.).
+// Los tickets viejos que ya tenían cargada una de estas categorías técnicas se migran una sola vez:
+// pasan su valor actual a subcategoria y quedan con categoria="Soporte Técnico".
+pool.query('alter table tickets add column if not exists subcategoria text').catch(e => console.error('No se pudo migrar subcategoria:', e.message));
+pool.query(`update tickets set subcategoria=categoria, categoria='Soporte Técnico'
+  where subcategoria is null and categoria in ('CCTV','Domótica','Control de acceso','Redes')`)
+  .catch(e => console.error('No se pudo migrar categorías técnicas viejas a subcategoria:', e.message));
 // Migración automática: crea las tablas del módulo Tags (control de acceso) si todavía no existen.
 pool.query(`create table if not exists edificios_tags (
   id serial primary key,
@@ -730,6 +737,9 @@ app.use(cookieSession({
 app.use(express.static(path.join(__dirname, 'public')));
 const ESTADOS = ['Abierto', 'En progreso', 'Esperando al Cliente', 'Resuelto', 'Cerrado'];
 const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'Recursos Humanos', 'Otro'];
+// Subcategorías: solo tienen sentido cuando la Categoría elegida es "Soporte Técnico". Para agregar
+// una nueva, alcanza con sumarla a esta lista (no hace falta migración de base de datos).
+const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso', 'Redes', 'Incendio', 'Portería', 'Otro'];
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
 const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento'];
@@ -1103,7 +1113,7 @@ app.get('/api/catalogos', requireStaff, async (req, res) => {
   // (unidad/apartamento), así que ya no se mezcla acá — el edificio real de un ticket es el Cliente
   // que se le asigna.
   const EDIFICIOS = (await pool.query('select edificio from edificios_tags order by edificio')).rows.map(r => r.edificio);
-  ok(res, { ESTADOS, CATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
+  ok(res, { ESTADOS, CATEGORIAS, SUBCATEGORIAS_SOPORTE_TECNICO, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
 });
 app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
   const checklists = req.body.checklists || {};
@@ -1158,9 +1168,15 @@ app.post('/api/tickets', requireStaff, async (req, res) => {
   ok(res, { ticket, automatizado });
 });
 app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
-  const { categoria, prioridad, estado, asignadoA, clienteId, edificio, torre } = req.body;
+  const { categoria, subcategoria, prioridad, estado, asignadoA, clienteId, edificio, torre } = req.body;
   const id = req.params.id;
-  if (categoria !== undefined) await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, id]);
+  if (categoria !== undefined) {
+    // La subcategoría solo tiene sentido para "Soporte Técnico" — si se cambia a otra categoría,
+    // se limpia sola para no dejar un dato que ya no corresponde.
+    if (categoria === 'Soporte Técnico') await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, id]);
+    else await pool.query('update tickets set categoria=$1, subcategoria=null, actualizado=now() where id=$2', [categoria, id]);
+  }
+  if (subcategoria !== undefined) await pool.query('update tickets set subcategoria=$1, actualizado=now() where id=$2', [subcategoria || null, id]);
   if (prioridad !== undefined) await pool.query('update tickets set prioridad=$1, actualizado=now() where id=$2', [prioridad, id]);
   if (edificio !== undefined) await pool.query('update tickets set edificio=$1, actualizado=now() where id=$2', [(edificio || '').trim() || null, id]);
   if (torre !== undefined) await pool.query('update tickets set torre=$1, actualizado=now() where id=$2', [(torre || '').trim() || null, id]);
