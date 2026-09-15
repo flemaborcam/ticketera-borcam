@@ -4566,12 +4566,15 @@ async function procesarCorreoEntrante(parsed) {
   }
   const textoPlanoCompleto = (parsed.text || '').trim();
   // "recortarCitas" corta todo lo que venga después de una marca de cita (">", "-----Mensaje
-  // original-----", "De: / Enviado: / Para: / Asunto:", etc.). Eso tiene sentido cuando es una
-  // RESPUESTA a un ticket que ya existe: ahí lo citado ya lo tenemos guardado en mensajes
-  // anteriores y solo agregaría ruido repetido. Pero cuando el correo crea un ticket NUEVO (por
-  // ejemplo alguien que reenvía el mail de un cliente), no hay nada "ya visto" — lo que viene
-  // después de esas marcas es el único contenido real del reclamo, y no hay que perderlo.
-  const sinCitas = ticketExistente ? recortarCitas(textoPlanoCompleto) : textoPlanoCompleto;
+  // original-----", "De: / Enviado: / Para: / Asunto:", etc.). La idea era no repetir citas viejas
+  // en respuestas a un ticket ya existente, pero con cadenas de varias respuestas anidadas (una
+  // respuesta adentro de otra respuesta, adentro del mensaje original) el algoritmo que decide
+  // "hasta dónde cortar" se confunde y puede llegar a mezclar o perder contenido real (caso visto
+  // con un correo de Administración Galán reenviado con 3 niveles de respuestas). Por eso, por
+  // ahora, se DEJA DE USAR: se guarda siempre el texto completo tal cual llega, aunque eso
+  // signifique ver más texto citado repetido en tickets con muchas idas y vueltas. La función
+  // sigue estando más abajo por si en algún momento conviene volver a activarla.
+  const sinCitas = textoPlanoCompleto;
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   let cuerpo = textoLimpio;
   let cuerpoHtml = null;
