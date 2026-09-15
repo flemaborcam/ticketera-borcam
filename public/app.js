@@ -2065,50 +2065,66 @@ function renderEnvioOrdenMantenimiento(s) {
 // se movió aparte, abajo del todo, como "utilidades".
 function renderEtapaServicioTecnico(s, tieneCosto) {
   const usaPresupuesto = !s.sin_costo && !!(s.presupuesto_enviado || s.presupuesto_aprobado);
+  const presupuestoAprobado = usaPresupuesto && s.presupuesto_aprobado;
+  const presupuestoEsperando = usaPresupuesto && s.presupuesto_enviado && !s.presupuesto_aprobado;
   const etapas = ['Pendiente'];
   if (usaPresupuesto) etapas.push('Presupuesto');
   etapas.push('En curso', 'Realizado');
   if (tieneCosto) etapas.push('Pagado');
 
-  let actual;
+  // Estado de cada etapa calculado por nombre (no por índice): el caso "presupuesto ya aprobado pero
+  // el service sigue Pendiente" no encajaba en una sola "etapa actual" prolija — acá se marca
+  // "Presupuesto" como cumplida y "En curso" como destacada (el siguiente botón a tocar), aunque
+  // técnicamente el estado en la base siga siendo "pendiente" hasta que se togue "Marcar en curso".
+  const estadoEtapa = {};
   if (s.estado === 'realizado') {
-    actual = (tieneCosto && !s.pagado) ? 'Realizado' : (tieneCosto ? 'Pagado' : 'Realizado');
+    estadoEtapa['Pendiente'] = 'done';
+    if (usaPresupuesto) estadoEtapa['Presupuesto'] = 'done';
+    estadoEtapa['En curso'] = 'done';
+    if (tieneCosto && s.pagado) { estadoEtapa['Realizado'] = 'done'; estadoEtapa['Pagado'] = 'done'; }
+    else if (tieneCosto) { estadoEtapa['Realizado'] = 'done'; estadoEtapa['Pagado'] = 'actual'; }
+    else { estadoEtapa['Realizado'] = 'done'; }
   } else if (s.estado === 'en_curso') {
-    actual = 'En curso';
+    estadoEtapa['Pendiente'] = 'done';
+    if (usaPresupuesto) estadoEtapa['Presupuesto'] = 'done';
+    estadoEtapa['En curso'] = 'actual';
   } else {
-    actual = (usaPresupuesto && s.presupuesto_enviado && !s.presupuesto_aprobado) ? 'Presupuesto' : 'Pendiente';
+    // estado === 'pendiente'
+    if (!usaPresupuesto) estadoEtapa['Pendiente'] = 'actual';
+    else if (presupuestoEsperando) { estadoEtapa['Pendiente'] = 'done'; estadoEtapa['Presupuesto'] = 'actual'; }
+    else if (presupuestoAprobado) { estadoEtapa['Pendiente'] = 'done'; estadoEtapa['Presupuesto'] = 'done'; estadoEtapa['En curso'] = 'actual'; }
   }
-  const idxActual = etapas.indexOf(actual);
-  const completo = (actual === 'Pagado') || (actual === 'Realizado' && !tieneCosto);
+  const completo = etapas[etapas.length - 1] && estadoEtapa[etapas[etapas.length - 1]] === 'done';
 
   const stepperHtml = `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-soft);margin-bottom:12px;">
     ${etapas.map((e, i) => {
-      const done = i < idxActual || (completo && i <= idxActual);
-      const esActual = i === idxActual && !completo;
+      const est = estadoEtapa[e] || 'pendiente';
       return `${i > 0 ? '<span style="color:var(--line);">→</span>' : ''}
-        <span style="display:flex;align-items:center;gap:4px;${esActual ? 'color:#3355ee;font-weight:700;' : ''}">
-          <span style="width:8px;height:8px;border-radius:50%;background:${done ? '#1b8a4a' : esActual ? '#3355ee' : 'var(--line)'};display:inline-block;"></span>
+        <span style="display:flex;align-items:center;gap:4px;${est === 'actual' ? 'color:#3355ee;font-weight:700;' : ''}">
+          <span style="width:8px;height:8px;border-radius:50%;background:${est === 'done' ? '#1b8a4a' : est === 'actual' ? '#3355ee' : 'var(--line)'};display:inline-block;"></span>
           ${e}
         </span>`;
     }).join('')}
   </div>`;
 
   let ctaHtml;
-  if (actual === 'Presupuesto') {
+  if (s.estado === 'pendiente' && s.sin_costo) {
+    ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
+  } else if (s.estado === 'pendiente' && presupuestoEsperando) {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
       <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Reenviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
       <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
     </div>`;
-  } else if (actual === 'Pendiente' && s.sin_costo) {
+  } else if (s.estado === 'pendiente' && presupuestoAprobado) {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
-  } else if (actual === 'Pendiente') {
+  } else if (s.estado === 'pendiente') {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
       <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
       <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
     </div>`;
-  } else if (actual === 'En curso') {
+  } else if (s.estado === 'en_curso') {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="marcarServicioTecnicoRealizado('${s.id}')">✅ Marcar como realizado</button></div>`;
-  } else if (actual === 'Realizado' && tieneCosto) {
+  } else if (s.estado === 'realizado' && tieneCosto && !s.pagado) {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="abrirMarcarPagoServicio('${s.id}')">💰 Marcar como pagado</button></div>`;
   } else {
     ctaHtml = `<div style="margin-bottom:14px;font-size:13px;color:#1b8a4a;font-weight:600;">✅ Completado</div>`;
