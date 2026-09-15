@@ -4525,7 +4525,26 @@ async function procesarCorreoEntrante(parsed) {
     .map(x => x.address).filter(Boolean)
     .filter(a => a.toLowerCase() !== remitenteEmail.toLowerCase() && !direccionesPropias.includes(a.toLowerCase()));
   const asunto = parsed.subject || '(sin asunto)';
-  const sinCitas = recortarCitas((parsed.text || '').trim());
+  // Antes de armar el cuerpo, buscamos si este correo pertenece a un ticket ya existente (por
+  // encabezados o por número en el asunto). Esto lo necesitamos ahora, no más abajo, porque de
+  // eso depende si tiene sentido "recortar citas" o no (ver más abajo).
+  const numeroDetectado = extraerNumeroTicket(asunto);
+  const ticketIdDeEncabezados = extraerTicketIdDeEncabezados(parsed);
+  let ticketExistente = null;
+  if (ticketIdDeEncabezados) {
+    ticketExistente = (await pool.query('select * from tickets where id=$1', [ticketIdDeEncabezados])).rows[0];
+  }
+  if (!ticketExistente && numeroDetectado) {
+    ticketExistente = (await pool.query('select * from tickets where numero=$1', [numeroDetectado])).rows[0];
+  }
+  const textoPlanoCompleto = (parsed.text || '').trim();
+  // "recortarCitas" corta todo lo que venga después de una marca de cita (">", "-----Mensaje
+  // original-----", "De: / Enviado: / Para: / Asunto:", etc.). Eso tiene sentido cuando es una
+  // RESPUESTA a un ticket que ya existe: ahí lo citado ya lo tenemos guardado en mensajes
+  // anteriores y solo agregaría ruido repetido. Pero cuando el correo crea un ticket NUEVO (por
+  // ejemplo alguien que reenvía el mail de un cliente), no hay nada "ya visto" — lo que viene
+  // después de esas marcas es el único contenido real del reclamo, y no hay que perderlo.
+  const sinCitas = ticketExistente ? recortarCitas(textoPlanoCompleto) : textoPlanoCompleto;
   const textoLimpio = sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   let cuerpo = textoLimpio;
   let cuerpoHtml = null;
@@ -4545,8 +4564,6 @@ async function procesarCorreoEntrante(parsed) {
     cuerpoHtml = parsed.html;
     cuerpo = '(Este correo llegó con formato HTML — ver el contenido completo abajo)';
   }
-  const numeroDetectado = extraerNumeroTicket(asunto);
-  const ticketIdDeEncabezados = extraerTicketIdDeEncabezados(parsed);
   const adjuntosCrudos = [];
   for (const a of (parsed.attachments || [])) {
     if (a.size > 20 * 1024 * 1024) continue; // se omiten adjuntos muy pesados
@@ -4577,13 +4594,7 @@ async function procesarCorreoEntrante(parsed) {
     }
     if (cambio) await pool.query('update mensajes set cuerpo_html=$1 where id=$2', [htmlCorregido, mensajeId]);
   }
-  let ticket = null;
-  if (ticketIdDeEncabezados) {
-    ticket = (await pool.query('select * from tickets where id=$1', [ticketIdDeEncabezados])).rows[0];
-  }
-  if (!ticket && numeroDetectado) {
-    ticket = (await pool.query('select * from tickets where numero=$1', [numeroDetectado])).rows[0];
-  }
+  const ticket = ticketExistente;
   if (ticket) {
     const adjuntos = await subirAdjuntosCrudos(ticket.id);
     const rm = await pool.query(
