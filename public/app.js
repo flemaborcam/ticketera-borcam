@@ -3050,10 +3050,22 @@ function renderDetalleCitaModal() {
     ['Estado', ci.estado === 'realizada' ? 'Realizada' : ci.estado === 'cancelada' ? 'Cancelada' : 'Confirmada']
   ];
   const puedeMarcar = ci.estado === 'confirmada';
+  const notas = ci.notas_internas || [];
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>📅 Detalle del turno</h2>
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:${puedeMarcar ? '18px' : '4px'};">
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
+    </div>
+    <div style="border:1px solid #e3d9a8;background:#fffbea;border-radius:10px;padding:14px;margin-bottom:${puedeMarcar ? '18px' : '4px'};">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#8a6d00;text-transform:uppercase;letter-spacing:.03em;margin-bottom:2px;">🔒 Notas internas</div>
+      <div style="font-size:11.5px;color:#9a8646;margin-bottom:10px;">Solo las ve el equipo — el cliente nunca las ve.</div>
+      ${notas.map(n => `<div style="background:#fff;border:1px solid #eee0b0;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px;">
+        <div style="font-size:11px;color:#9a8646;margin-bottom:3px;">${escapeHtml(n.autor || 'Equipo')} · ${new Date(n.fecha).toLocaleString('es-UY', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Montevideo' })}</div>
+        ${escapeHtml(n.texto)}</div>`).join('')}
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+        <textarea id="nueva-nota-cita" placeholder="Agregar una nota nueva..." style="width:100%;border:1px solid #e3d9a8;border-radius:8px;padding:8px 10px;font-family:inherit;font-size:13px;resize:vertical;min-height:52px;box-sizing:border-box;"></textarea>
+        <button type="button" class="btn btn-ghost" style="align-self:flex-end;" onclick="agregarNotaCita('${ci.id}')">Agregar nota</button>
+      </div>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
@@ -3068,6 +3080,17 @@ async function marcarCitaRealizada(id) {
     if (ci) ci.estado = 'realizada';
     showToast('Turno marcado como realizado.');
     closeModal();
+  } catch (e) { showToast(e.message); }
+}
+async function agregarNotaCita(id) {
+  const textarea = document.getElementById('nueva-nota-cita');
+  const texto = (textarea.value || '').trim();
+  if (!texto) return;
+  try {
+    const actualizada = await api('POST', `/api/citas/${id}/notas`, { texto });
+    const idx = cache.citas.findIndex(x => String(x.id) === String(id));
+    if (idx >= 0) cache.citas[idx] = actualizada;
+    render();
   } catch (e) { showToast(e.message); }
 }
 
