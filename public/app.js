@@ -1013,10 +1013,10 @@ function renderCalendarioHtml() {
     </div>`;
   }).join('');
 
-  const subTab = state.calendarioSubTab || 'config';
+  const subTab = state.calendarioSubTab || 'domotica';
   const subTabsHtml = [
-    { v: 'config', label: 'Configuración' },
-    { v: 'domotica', label: '🏠 Domótica' }
+    { v: 'domotica', label: '🏠 Domótica' },
+    { v: 'config', label: 'Configuración' }
   ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
 
   const tab = state.calendarioTab || 'turnos';
@@ -1025,6 +1025,14 @@ function renderCalendarioHtml() {
     { v: 'realizados', label: 'Agenda realizada' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioTab('${t.v}')">${t.label}</button>`).join('');
 
+  // Filtro por edificio en "Agenda realizada": la lista de edificios sale de la misma configuración
+  // de Calendario → Configuración (el textarea "Edificios"), para no mantener una lista aparte.
+  const edificioFiltro = state.calendarioRealizadosEdificio || '';
+  const filtroEdificioHtml = `<select style="max-width:260px;margin-bottom:14px;" onchange="state.calendarioRealizadosEdificio=this.value; render();">
+    <option value="">Todos los edificios</option>
+    ${(cache.calendarioEdificios || []).map(e => `<option value="${escapeHtml(e)}" ${e === edificioFiltro ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
+  </select>`;
+
   let contenido;
   if (subTab === 'config') {
     contenido = renderCalendarioConfigTab(c, filasDias);
@@ -1032,7 +1040,7 @@ function renderCalendarioHtml() {
     contenido = `
       <div class="reply-tabs">${tabsHtml}</div>
       ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
-      ${tab === 'realizados' ? renderCalendarioListaCitas(ci => ci.estado === 'realizada', 'Todavía no hay ninguna instalación marcada como realizada.') : ''}`;
+      ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.')}` : ''}`;
   }
 
   return `
