@@ -458,6 +458,9 @@ pool.query(`alter table configuracion add column if not exists checklist_categor
 pool.query(`alter table tickets add column if not exists checklist_estado jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_estado:', e.message));
 // Migración automática: pregunta "¿te entregaron la caja de domótica?" en el formulario de agendar turno.
 pool.query('alter table citas add column if not exists caja_domotica boolean').catch(e => console.error('No se pudo migrar caja_domotica:', e.message));
+// Migración automática: notas internas del turno (ayuda-memoria del técnico, nunca visibles para el
+// cliente) — un array de {texto, autor, fecha}, más nueva al final.
+pool.query(`alter table citas add column if not exists notas_internas jsonb not null default '[]'::jsonb`).catch(e => console.error('No se pudo migrar notas_internas:', e.message));
 // Migración automática: foto de perfil del usuario (se guarda como archivo en el mismo storage que los adjuntos).
 pool.query('alter table usuarios add column if not exists foto_path text').catch(e => console.error('No se pudo migrar foto_path:', e.message));
 // Migración automática: orden/prioridad entre automatizaciones (cuál se evalúa primero si dos podrían
@@ -3345,6 +3348,18 @@ app.get('/api/citas', requireStaff, async (req, res) => {
 app.post('/api/citas/:id/marcar-realizada', requireStaff, async (req, res) => {
   const r = await pool.query(`update citas set estado='realizada' where id=$1 returning *`, [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Cita no encontrada.', 404);
+  ok(res, r.rows[0]);
+});
+// Nota interna del turno: ayuda-memoria del técnico, solo visible para el equipo (nunca al cliente,
+// nunca se manda por correo ni aparece en el portal). Se van agregando, ninguna se pisa ni se borra.
+app.post('/api/citas/:id/notas', requireStaff, async (req, res) => {
+  const texto = (req.body && req.body.texto || '').trim();
+  if (!texto) return bad(res, 'La nota no puede estar vacía.');
+  const cita = (await pool.query('select notas_internas from citas where id=$1', [req.params.id])).rows[0];
+  if (!cita) return bad(res, 'Turno no encontrado.', 404);
+  const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
+  const notas = [...(cita.notas_internas || []), { texto, autor: staff ? `${staff.nombre} ${staff.apellido}` : null, fecha: new Date().toISOString() }];
+  const r = await pool.query('update citas set notas_internas=$1 where id=$2 returning *', [JSON.stringify(notas), req.params.id]);
   ok(res, r.rows[0]);
 });
 /* ---------------- Servicio Técnico (submenú de Calendario) ----------------
