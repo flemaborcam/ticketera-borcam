@@ -5942,6 +5942,36 @@ function descargarReporteExcel() {
   URL.revokeObjectURL(url);
   showToast('Excel descargado.');
 }
+// Tarjeta de resultados de la encuesta de satisfacción, dentro de Estadísticas. "s" es r.satisfaccion:
+// { enviadas, conformes, noConformes, sinResponder, ticketsNoConformes: [{id, numero, asunto, remitente_nombre}] }
+function renderCardSatisfaccion(s, rangoTexto) {
+  if (!s || !s.enviadas) {
+    return `<div class="card" style="margin-bottom:18px;">
+      <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Encuesta de satisfacción — ${rangoTexto}</div>
+      <div class="hint-text">No se mandó ninguna encuesta de satisfacción en este período.</div>
+    </div>`;
+  }
+  const pctConformes = pctReporte(s.conformes, s.enviadas);
+  const noConformesLista = (s.ticketsNoConformes || []).length
+    ? `<div style="margin-top:14px;">
+        <div style="font-weight:600;font-size:12.5px;margin-bottom:8px;color:var(--danger, #c62828);">Tickets con "No conforme" para revisar</div>
+        ${s.ticketsNoConformes.map(t => `<div style="font-size:13px;padding:7px 0;border-bottom:1px dashed var(--line-strong);">
+          <strong>#${escapeHtml(String(t.numero))}</strong> — ${escapeHtml(t.asunto || '')}${t.remitente_nombre ? ` <span class="hint-text">(${escapeHtml(t.remitente_nombre)})</span>` : ''}
+        </div>`).join('')}
+      </div>`
+    : '';
+  return `<div class="card" style="margin-bottom:18px;">
+    <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Encuesta de satisfacción — ${rangoTexto}</div>
+    <div class="kpi-grid">
+      ${kpiCard('Encuestas mandadas', s.enviadas)}
+      ${kpiCard('Conformes', s.conformes)}
+      ${kpiCard('No conformes', s.noConformes)}
+      ${kpiCard('Sin responder', s.sinResponder)}
+      ${kpiCard('% conformes', pctConformes + '%')}
+    </div>
+    ${noConformesLista}
+  </div>`;
+}
 function renderEstadisticas() {
   const rangoOpts = [
     ['este-mes', 'Este mes'], ['mes-pasado', 'Mes pasado'], ['ultimos-3-meses', 'Últimos 3 meses'],
@@ -6054,6 +6084,7 @@ function renderEstadisticas() {
       <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución mensual — recibidos vs. resueltos</div>
       ${lineChartSvg(r.evolucion)}
     </div>
+    ${renderCardSatisfaccion(r.satisfaccion, rangoTexto)}
     <div class="card">
       <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Detalle por usuario</div>
       <div style="overflow-x:auto;">
