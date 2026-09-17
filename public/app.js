@@ -1037,10 +1037,19 @@ function renderCalendarioHtml() {
   if (subTab === 'config') {
     contenido = renderCalendarioConfigTab(c, filasDias);
   } else {
-    contenido = `
-      <div class="reply-tabs">${tabsHtml}</div>
-      ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
-      ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.')}` : ''}`;
+    const vista = state.calendarioDomoticaVista || 'lista';
+    const vistaToggleHtml = `<div class="reply-tabs" style="margin-bottom:10px;">
+      <button class="reply-tab ${vista === 'lista' ? 'active' : ''}" type="button" onclick="cambiarVistaCalendarioDomotica('lista')">Lista</button>
+      <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaCalendarioDomotica('calendario')">📅 Calendario</button>
+    </div>`;
+    if (vista === 'calendario') {
+      contenido = `${vistaToggleHtml}${renderCalendarioDomoticaGrid()}`;
+    } else {
+      contenido = `${vistaToggleHtml}
+        <div class="reply-tabs">${tabsHtml}</div>
+        ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
+        ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.')}` : ''}`;
+    }
   }
 
   return `
@@ -3054,6 +3063,110 @@ function renderCalendarioListaCitas(filtro, mensajeVacio) {
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${citas.length} turno${citas.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list">${citasHtml}</div>`;
 }
+
+/* ---------------- Calendario visual (grilla de mes) — componente reutilizable ----------------
+   Usado por el calendario de Domótica (renderCalendarioDomoticaGrid). El de Servicio Técnico se
+   suma en un segundo paso, una vez probado este primero. Toma un mapa
+   { 'YYYY-MM-DD': ['<div class="cal-evento...">…</div>', …] } ya armado por el caller (cada chip
+   trae su propio onclick) y arma la grilla de 7 columnas. */
+const MESES_LABEL_CAL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const DOW_LABEL_CAL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+function fechaISOCalendario(anio, mes, dia) {
+  const d = new Date(anio, mes, dia);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+// Fecha (solo día) de un timestamp, en la zona horaria de Montevideo — para agrupar eventos por día
+// de la misma forma que el resto de la app agrupa turnos/citas.
+function fechaLocalISO(fechaHora) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(fechaHora));
+}
+function renderGrillaCalendarioMes(anio, mes, eventosPorFecha, opts) {
+  opts = opts || {};
+  const maxPorDia = opts.maxPorDia || 3;
+  const onAddDia = opts.onAddDia || null; // fn(fechaStr) => string con la llamada JS del onclick
+  const onVerMas = opts.onVerMas || null; // fn(fechaStr) => string con la llamada JS del onclick
+  const primerDia = new Date(anio, mes, 1);
+  const inicioOffset = (primerDia.getDay() + 6) % 7; // 0=lunes … 6=domingo
+  const diasEnMes = new Date(anio, mes + 1, 0).getDate();
+  const totalCeldas = Math.ceil((inicioOffset + diasEnMes) / 7) * 7;
+  const hoyStr = fechaLocalISO(new Date());
+  let celdasHtml = '';
+  for (let i = 0; i < totalCeldas; i++) {
+    const diaNum = i - inicioOffset + 1;
+    const fechaStr = fechaISOCalendario(anio, mes, diaNum);
+    const otroMes = diaNum < 1 || diaNum > diasEnMes;
+    const esHoy = fechaStr === hoyStr;
+    const diaMostrar = Number(fechaStr.split('-')[2]);
+    const eventos = eventosPorFecha[fechaStr] || [];
+    const visibles = eventos.slice(0, maxPorDia);
+    const restantes = eventos.length - visibles.length;
+    const addBtn = (!otroMes && onAddDia) ? `<div class="cal-add-day" onclick="${onAddDia(fechaStr)}">+</div>` : '';
+    const masBtn = restantes > 0 ? `<div class="cal-mas"${onVerMas ? ` onclick="${onVerMas(fechaStr)}"` : ''}>+${restantes} más</div>` : '';
+    celdasHtml += `<div class="cal-day${otroMes ? ' otro-mes' : ''}${esHoy ? ' hoy' : ''}"><span class="cal-num">${diaMostrar}</span>${visibles.join('')}${masBtn}${addBtn}</div>`;
+  }
+  return `<div class="cal-grid">${DOW_LABEL_CAL.map(d => `<div class="cal-dow">${d}</div>`).join('')}${celdasHtml}</div>`;
+}
+function abrirDiaCalendario(fechaStr, tipo) { state.modal = 'dia-calendario'; state.diaCalendarioFecha = fechaStr; state.diaCalendarioTipo = tipo; render(); }
+function renderDiaCalendarioModal() {
+  const fechaStr = state.diaCalendarioFecha;
+  const fechaLegible = new Date(fechaStr + 'T00:00:00-03:00').toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' });
+  // Por ahora este modal de "+N más" solo lo usa el calendario de Domótica; cuando sumemos el de
+  // Servicio Técnico se agrega acá la rama correspondiente (ver mockup Modelo 2).
+  const filas = (cache.citas || []).filter(ci => ci.estado !== 'cancelada' && fechaLocalISO(ci.fecha_hora) === fechaStr).map(ci => ({
+    texto: `${escapeHtml(ci.edificio || ci.nombre_cliente)} · ${new Date(ci.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`,
+    onclick: `abrirDetalleCita('${ci.id}')`
+  }));
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>📅 ${fechaLegible}</h2>
+    <div class="stub-list" style="margin-bottom:14px;">
+      ${filas.length ? filas.map(f => `<button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="${f.onclick}">${f.texto}</button>`).join('') : `<div class="hint-text">No hay turnos ese día.</div>`}
+    </div>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button></div>
+  </div></div>`;
+}
+/* ---- Calendario visual — Domótica ---- */
+function eventosDomoticaPorFecha() {
+  const mapa = {};
+  for (const ci of (cache.citas || [])) {
+    if (ci.estado === 'cancelada') continue;
+    const key = fechaLocalISO(ci.fecha_hora);
+    const label = `${ci.edificio || ci.nombre_cliente} · ${new Date(ci.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`;
+    (mapa[key] = mapa[key] || []).push(`<div class="cal-evento domotica" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleCita('${ci.id}')">${escapeHtml(label)}</div>`);
+  }
+  return mapa;
+}
+function cambiarMesCalendarioDomotica(delta) {
+  const anio = state.calDomoticaAnio != null ? state.calDomoticaAnio : new Date().getFullYear();
+  const mes = state.calDomoticaMes != null ? state.calDomoticaMes : new Date().getMonth();
+  const d = new Date(anio, mes + delta, 1);
+  state.calDomoticaAnio = d.getFullYear();
+  state.calDomoticaMes = d.getMonth();
+  render();
+}
+function cambiarVistaCalendarioDomotica(v) { state.calendarioDomoticaVista = v; render(); }
+// Hoy no existe un modal de staff para crear una cita de domótica a mano — las citas se agendan
+// solo desde el enlace público (/agendar). Hasta que eso se resuelva, el botón "+" del día vacío
+// avisa y ofrece copiar el enlace, en vez de abrir un modal que todavía no existe.
+function agendarDomoticaDesdeCalendario(fechaStr) {
+  showToast('Los turnos de domótica se agendan desde el enlace público de reserva — todavía no hay una carga manual desde acá.');
+  copiarEnlaceAgenda();
+}
+function renderCalendarioDomoticaGrid() {
+  const anio = state.calDomoticaAnio != null ? state.calDomoticaAnio : new Date().getFullYear();
+  const mes = state.calDomoticaMes != null ? state.calDomoticaMes : new Date().getMonth();
+  const grid = renderGrillaCalendarioMes(anio, mes, eventosDomoticaPorFecha(), {
+    maxPorDia: 3,
+    onAddDia: fechaStr => `agendarDomoticaDesdeCalendario('${fechaStr}')`,
+    onVerMas: fechaStr => `abrirDiaCalendario('${fechaStr}','domotica')`
+  });
+  return `
+    <div class="cal-toolbar">
+      <div class="cal-nav"><button type="button" onclick="cambiarMesCalendarioDomotica(-1)">‹</button><div class="cal-mes">${MESES_LABEL_CAL[mes]} ${anio}</div><button type="button" onclick="cambiarMesCalendarioDomotica(1)">›</button></div>
+      <div class="cal-legend"><span><span class="cal-dot" style="background:#3355ee;"></span> Turno de domótica</span></div>
+    </div>
+    ${grid}`;
+}
+
 function abrirDetalleCita(id) {
   state.modal = 'detalle-cita';
   state.citaDetalleId = id;
@@ -6291,6 +6404,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-documento' || state.modal === 'editar-documento') return renderDocumentoModal();
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
+  if (state.modal === 'dia-calendario') return renderDiaCalendarioModal();
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
   if (state.modal === 'nuevo-servicio-tecnico') return renderNuevoServicioTecnicoModal();
   if (state.modal === 'catalogo-costo') return renderCatalogoCostoModal();
