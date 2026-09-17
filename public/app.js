@@ -496,7 +496,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; render(); }
+function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -1076,6 +1076,7 @@ function refrescarVistaServicioTecnico() {
 }
 function renderServicioTecnicoTab() {
   const tab = state.servicioTecnicoTab || 'turnos';
+  const vista = state.servicioTecnicoVista || 'lista';
   const tabsHtml = [
     { v: 'turnos', label: 'Próximos turnos' },
     { v: 'realizados', label: 'Servicios Realizados' },
@@ -1084,7 +1085,11 @@ function renderServicioTecnicoTab() {
     { v: 'mantenimiento', label: '🔧 Mantenimiento' }
   ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
   let contenido;
-  if (tab === 'catalogo') {
+  if (vista === 'calendario') {
+    // Calendario visual: agrupa servicio técnico agendado + mantenimiento, sin importar la sub-tab
+    // (Próximos/Realizados/Mantenimiento) elegida — ver Modelo 2 del mockup aprobado.
+    contenido = renderServicioTecnicoCalendarioMes();
+  } else if (tab === 'catalogo') {
     contenido = renderCatalogoCostosTab();
   } else if (tab === 'reporte') {
     contenido = renderReporteMensualDashboardTab();
@@ -1099,13 +1104,18 @@ function renderServicioTecnicoTab() {
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
     contenido = renderServicioTecnicoLista(filtro, mensajeVacio, tab === 'realizados');
   }
+  const vistaToggleHtml = `<div class="reply-tabs" style="margin-bottom:10px;">
+    <button class="reply-tab ${vista === 'lista' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('lista')">Lista</button>
+    <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('calendario')">📅 Calendario</button>
+  </div>`;
   return `
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div class="page-head-actions">
-        ${tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+        ${vista === 'lista' && tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
     </div>
-    <div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>
+    ${vistaToggleHtml}
+    ${vista === 'lista' ? `<div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>` : ''}
     ${contenido}`;
 }
 function cambiarServicioTecnicoTab(t) {
@@ -1747,6 +1757,74 @@ function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago) {
     <div class="user-list">${html}</div>`;
 }
 function cambiarServiciosRealizadosSubTab(t) { state.serviciosRealizadosSubTab = t; render(); }
+/* ---- Calendario visual — Servicio Técnico (servicio técnico agendado + Mantenimiento) ---- */
+// Aplica los filtros de tipo (todos/mantenimiento/servicio) y de edificio del calendario. Se separa
+// de eventosServicioTecnicoPorFecha() para poder reusarlo también en el detalle de "+N más" de un día.
+function eventosServicioTecnicoFiltrados() {
+  const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
+  const edificioFiltro = state.stCalendarioEdificioFiltro || '';
+  return (cache.serviciosTecnicos || []).filter(s => {
+    const esMant = !!s.contrato_mantenimiento_id;
+    if (tipoFiltro === 'mantenimiento' && !esMant) return false;
+    if (tipoFiltro === 'servicio' && esMant) return false;
+    if (edificioFiltro && String(s.cliente_id) !== String(edificioFiltro)) return false;
+    return true;
+  });
+}
+function eventosServicioTecnicoPorFecha() {
+  const ahora = new Date();
+  const mapa = {};
+  for (const s of eventosServicioTecnicoFiltrados()) {
+    const key = fechaLocalISO(s.fecha_hora);
+    const esMant = !!s.contrato_mantenimiento_id;
+    const clase = esMant ? ((s.estado !== 'realizado' && new Date(s.fecha_hora) < ahora) ? 'mant-vencido' : 'mant') : 'servicio';
+    const hora = s.todo_el_dia ? '' : ' · ' + new Date(s.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' });
+    const label = `${nombreClientePorId(s.cliente_id)}${hora}`;
+    (mapa[key] = mapa[key] || []).push(`<div class="cal-evento ${clase}" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleServicioTecnico('${s.id}')">${escapeHtml(label)}</div>`);
+  }
+  return mapa;
+}
+function cambiarMesCalendarioServicio(delta) {
+  const anio = state.calServicioAnio != null ? state.calServicioAnio : new Date().getFullYear();
+  const mes = state.calServicioMes != null ? state.calServicioMes : new Date().getMonth();
+  const d = new Date(anio, mes + delta, 1);
+  state.calServicioAnio = d.getFullYear();
+  state.calServicioMes = d.getMonth();
+  render();
+}
+function cambiarVistaServicioTecnico(v) { state.servicioTecnicoVista = v; render(); }
+function cambiarFiltroTipoCalendarioServicio(v) { state.stCalendarioFiltroTipo = v; render(); }
+function renderServicioTecnicoCalendarioMes() {
+  const anio = state.calServicioAnio != null ? state.calServicioAnio : new Date().getFullYear();
+  const mes = state.calServicioMes != null ? state.calServicioMes : new Date().getMonth();
+  const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
+  const edificioFiltro = state.stCalendarioEdificioFiltro || '';
+  const grid = renderGrillaCalendarioMes(anio, mes, eventosServicioTecnicoPorFecha(), {
+    maxPorDia: 3,
+    onAddDia: fechaStr => `openNuevoServicioTecnicoModal('${fechaStr}')`,
+    onVerMas: fechaStr => `abrirDiaCalendario('${fechaStr}','servicio')`
+  });
+  const chip = (v, label) => `<div class="cal-chip ${tipoFiltro === v ? 'active' : ''}" onclick="cambiarFiltroTipoCalendarioServicio('${v}')">${label}</div>`;
+  const clientesUnicos = {};
+  for (const s of (cache.serviciosTecnicos || [])) { if (!clientesUnicos[s.cliente_id]) clientesUnicos[s.cliente_id] = nombreClientePorId(s.cliente_id); }
+  const idsOrdenados = Object.keys(clientesUnicos).sort((a, b) => clientesUnicos[a].localeCompare(clientesUnicos[b]));
+  const edificioSelect = `<select class="cal-chip" style="border-radius:8px;padding:5px 10px;" onchange="state.stCalendarioEdificioFiltro=this.value; render();">
+    <option value="">Por edificio ▾ (todos)</option>
+    ${idsOrdenados.map(id => `<option value="${id}" ${String(id) === String(edificioFiltro) ? 'selected' : ''}>${escapeHtml(clientesUnicos[id])}</option>`).join('')}
+  </select>`;
+  return `
+    <div class="cal-toolbar">
+      <div class="cal-nav"><button type="button" onclick="cambiarMesCalendarioServicio(-1)">‹</button><div class="cal-mes">${MESES_LABEL_CAL[mes]} ${anio}</div><button type="button" onclick="cambiarMesCalendarioServicio(1)">›</button></div>
+      <div class="cal-legend">
+        <span><span class="cal-dot" style="background:#3355ee;"></span> Servicio técnico</span>
+        <span><span class="cal-dot" style="background:#1e8e4f;"></span> Mantenimiento</span>
+        <span><span class="cal-dot" style="background:#c1440e;"></span> Mantenimiento atrasado</span>
+      </div>
+      <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>
+    </div>
+    <div class="cal-filtros">${chip('todos', 'Todos')}${chip('mantenimiento', '🔧 Solo mantenimiento')}${chip('servicio', '🛠️ Solo servicio técnico')}${edificioSelect}</div>
+    ${grid}`;
+}
 /* ---- Nuevo turno sin partir de un ticket (siempre pide cliente/edificio) ---- */
 // Editor de costos reutilizado en los modales de "Nuevo turno" (con o sin ticket): permite dejar
 // cargado desde el arranque el costo de la visita (del catálogo o puntual), sin tener que entrar
@@ -1830,17 +1908,18 @@ async function aplicarCostosPendientes(servicioId) {
   }
   state.pendingCostosServicio = [];
 }
-function openNuevoServicioTecnicoModal() {
+function openNuevoServicioTecnicoModal(fechaPrefijada) {
   state.modal = 'nuevo-servicio-tecnico';
   state.nuevoServicioTicketBusqueda = '';
   state.nuevoServicioTicketId = '';
   state.pendingCostosServicio = [];
+  state.nuevoServicioFechaPrefijada = fechaPrefijada || null;
   render();
   asegurarCatalogoCostosCargado().then(() => { if (state.modal === 'nuevo-servicio-tecnico') render(); });
 }
 function renderNuevoServicioTecnicoModal() {
   const ahora = new Date(Date.now() + 60 * 60000);
-  const fechaDefault = ahora.toISOString().slice(0, 10);
+  const fechaDefault = state.nuevoServicioFechaPrefijada || ahora.toISOString().slice(0, 10);
   const horaDefault = ahora.toTimeString().slice(0, 5);
   const busqueda = (state.nuevoServicioTicketBusqueda || '').toLowerCase();
   const ticketsFiltrados = busqueda ? cache.tickets.filter(t => !esTicketDeReserva(t) && (t.numero.toLowerCase().includes(busqueda) || t.asunto.toLowerCase().includes(busqueda))).slice(0, 8) : [];
@@ -3063,12 +3142,16 @@ function renderCalendarioListaCitas(filtro, mensajeVacio) {
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${citas.length} turno${citas.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list">${citasHtml}</div>`;
 }
+function abrirDetalleCita(id) {
+  state.modal = 'detalle-cita';
+  state.citaDetalleId = id;
+  render();
+}
 
 /* ---------------- Calendario visual (grilla de mes) — componente reutilizable ----------------
-   Usado por el calendario de Domótica (renderCalendarioDomoticaGrid). El de Servicio Técnico se
-   suma en un segundo paso, una vez probado este primero. Toma un mapa
-   { 'YYYY-MM-DD': ['<div class="cal-evento...">…</div>', …] } ya armado por el caller (cada chip
-   trae su propio onclick) y arma la grilla de 7 columnas. */
+   Usado por el calendario de Domótica (renderCalendarioDomoticaGrid) y el de Servicio Técnico
+   (renderServicioTecnicoCalendarioMes). Toma un mapa { 'YYYY-MM-DD': ['<div class="cal-evento...">…</div>', …] }
+   ya armado por el caller (cada chip trae su propio onclick) y arma la grilla de 7 columnas. */
 const MESES_LABEL_CAL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const DOW_LABEL_CAL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 function fechaISOCalendario(anio, mes, dia) {
@@ -3109,13 +3192,20 @@ function renderGrillaCalendarioMes(anio, mes, eventosPorFecha, opts) {
 function abrirDiaCalendario(fechaStr, tipo) { state.modal = 'dia-calendario'; state.diaCalendarioFecha = fechaStr; state.diaCalendarioTipo = tipo; render(); }
 function renderDiaCalendarioModal() {
   const fechaStr = state.diaCalendarioFecha;
+  const tipo = state.diaCalendarioTipo;
   const fechaLegible = new Date(fechaStr + 'T00:00:00-03:00').toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' });
-  // Por ahora este modal de "+N más" solo lo usa el calendario de Domótica; cuando sumemos el de
-  // Servicio Técnico se agrega acá la rama correspondiente (ver mockup Modelo 2).
-  const filas = (cache.citas || []).filter(ci => ci.estado !== 'cancelada' && fechaLocalISO(ci.fecha_hora) === fechaStr).map(ci => ({
-    texto: `${escapeHtml(ci.edificio || ci.nombre_cliente)} · ${new Date(ci.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`,
-    onclick: `abrirDetalleCita('${ci.id}')`
-  }));
+  let filas = [];
+  if (tipo === 'domotica') {
+    filas = (cache.citas || []).filter(ci => ci.estado !== 'cancelada' && fechaLocalISO(ci.fecha_hora) === fechaStr).map(ci => ({
+      texto: `${escapeHtml(ci.edificio || ci.nombre_cliente)} · ${new Date(ci.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`,
+      onclick: `abrirDetalleCita('${ci.id}')`
+    }));
+  } else {
+    filas = eventosServicioTecnicoFiltrados().filter(s => fechaLocalISO(s.fecha_hora) === fechaStr).map(s => ({
+      texto: `${s.contrato_mantenimiento_id ? '🔧 ' : '🛠️ '}${escapeHtml(nombreClientePorId(s.cliente_id))}${s.todo_el_dia ? '' : ' · ' + new Date(s.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`,
+      onclick: `abrirDetalleServicioTecnico('${s.id}')`
+    }));
+  }
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>📅 ${fechaLegible}</h2>
     <div class="stub-list" style="margin-bottom:14px;">
@@ -3165,12 +3255,6 @@ function renderCalendarioDomoticaGrid() {
       <div class="cal-legend"><span><span class="cal-dot" style="background:#3355ee;"></span> Turno de domótica</span></div>
     </div>
     ${grid}`;
-}
-
-function abrirDetalleCita(id) {
-  state.modal = 'detalle-cita';
-  state.citaDetalleId = id;
-  render();
 }
 function renderDetalleCitaModal() {
   const ci = (cache.citas || []).find(x => String(x.id) === String(state.citaDetalleId));
