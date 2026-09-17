@@ -4471,9 +4471,11 @@ async function aplicarAvisoFinDeSemana(ticketId) {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fin de semana',$2,true)`,
     [ticketId, mensaje]
   );
-  // El aviso automático ya "contestó" al cliente: si no lo apagamos acá, el ticket queda marcado para
-  // siempre como "Respondió el cliente" aunque el sistema ya le haya avisado.
-  await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
+  // OJO: este aviso es solo una cortesía automática ("estamos fuera de horario"), no una respuesta real
+  // del equipo a la consulta del cliente. Antes acá se apagaba "necesita_atencion", pero eso hacía que
+  // una respuesta genuina del cliente (por ejemplo, a un ticket que se había reabierto) quedara sin la
+  // marca "Respondió el cliente" apenas llegaba fuera de horario — que es justo cuando más hace falta
+  // no perderla de vista. Se deja la marca prendida: se apaga solo cuando alguien del equipo la atiende.
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true, ticketId });
 }
@@ -4502,9 +4504,8 @@ async function aplicarAvisoFueraHorario(ticketId) {
     `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Aviso automático · Fuera de horario',$2,true)`,
     [ticketId, mensaje]
   );
-  // Igual que en el aviso de fin de semana: el aviso automático ya "contestó" al cliente, así que
-  // sacamos la marca de "Respondió el cliente" para que no quede pegada para siempre.
-  await pool.query('update tickets set necesita_atencion=false where id=$1', [ticketId]);
+  // Igual que en el aviso de fin de semana: esto es solo una cortesía automática, no una atención real
+  // del equipo, así que ya no apaga la marca de "Respondió el cliente" (ver comentario más arriba).
   const ctx = await contextoTicket(ticketId);
   await enviarEmailReal({ to: ctx.remitente_email, cc: ctx.ccs, subject: `[${ctx.numero}] ${ctx.asunto}`, text: mensaje, esAutomatico: true, ticketId });
 }
