@@ -2595,6 +2595,27 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
        group by 1 order by 1`
     )).rows.map(r => ({ mes: r.mes, recibidos: Number(r.recibidos), resueltos: Number(r.resueltos) }));
 
+    // Encuesta de satisfacción: se cuentan las encuestas mandadas en el período (por encuesta_ultima_fecha)
+    // y, de esas, cuántas ya tienen respuesta (satisfaccion 'si'/'no') y cuántas siguen sin contestar.
+    const encuestasEnviadas = (await pool.query(
+      `select count(*) from tickets where encuesta_ultima_fecha between $1 and $2`, [desde, hasta]
+    )).rows[0].count;
+    const encuestasConformes = (await pool.query(
+      `select count(*) from tickets where encuesta_ultima_fecha between $1 and $2 and satisfaccion='si'`, [desde, hasta]
+    )).rows[0].count;
+    const encuestasNoConformes = (await pool.query(
+      `select id, numero, asunto, remitente_nombre from tickets
+       where encuesta_ultima_fecha between $1 and $2 and satisfaccion='no'
+       order by satisfaccion_fecha desc`, [desde, hasta]
+    )).rows;
+    const satisfaccion = {
+      enviadas: Number(encuestasEnviadas),
+      conformes: Number(encuestasConformes),
+      noConformes: encuestasNoConformes.length,
+      sinResponder: Number(encuestasEnviadas) - Number(encuestasConformes) - encuestasNoConformes.length,
+      ticketsNoConformes: encuestasNoConformes
+    };
+
     ok(res, {
       rango: { desde: desde.toISOString().slice(0, 10), hasta: hasta.toISOString().slice(0, 10) },
       general: {
@@ -2606,7 +2627,8 @@ app.get('/api/reportes', requireStaff, requireSuperadmin, async (req, res) => {
       porUsuario,
       evolucion,
       porCategoria,
-      porEdificio
+      porEdificio,
+      satisfaccion
     });
   } catch (e) { bad(res, 'No se pudo armar el reporte: ' + e.message); }
 });
