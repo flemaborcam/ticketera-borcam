@@ -2118,6 +2118,20 @@ app.post('/api/servicios-tecnicos/:id/enviar-orden-mantenimiento', requireStaff,
     ok(res, actualizado);
   } catch (e) { bad(res, e.message); }
 });
+// Descarga directa del PDF de una visita de mantenimiento ya realizada, con los datos reales de esa
+// visita — no hace falta haberlo mandado por correo antes ni volver a mandarlo para poder verlo.
+app.get('/api/servicios-tecnicos/:id/orden-mantenimiento-pdf', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'Turno no encontrado.', 404);
+  if (!servicio.checklist_sistemas) return bad(res, 'Este turno no es de mantenimiento.');
+  const cliente = servicio.cliente_id ? (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0] : null;
+  try {
+    const pdfBuffer = await generarPdfOrdenMantenimiento(servicio, cliente);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="Orden de mantenimiento - ${servicio.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (e) { bad(res, 'No se pudo generar el PDF: ' + e.message); }
+});
 // Actualiza la respuesta de un ítem puntual (estado + motivo opcional) dentro del checklist de un
 // sistema, en una visita de mantenimiento ya generada.
 app.post('/api/servicios-tecnicos/:id/checklist-item', requireStaff, async (req, res) => {
