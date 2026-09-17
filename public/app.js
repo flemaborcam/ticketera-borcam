@@ -1121,11 +1121,19 @@ function renderMantenimientoSeccion() {
   } else if (sub === 'dashboard') {
     contenido = renderDashboardMantenimiento();
   } else {
+    const clienteFiltro = state.mantenimientoListaCliente || '';
     const filtro = sub === 'realizados'
-      ? (s => s.estado === 'realizado' && s.contrato_mantenimiento_id)
-      : (s => s.estado !== 'realizado' && s.contrato_mantenimiento_id);
+      ? (s => s.estado === 'realizado' && s.contrato_mantenimiento_id && (!clienteFiltro || s.cliente_id === clienteFiltro))
+      : (s => s.estado !== 'realizado' && s.contrato_mantenimiento_id && (!clienteFiltro || s.cliente_id === clienteFiltro));
     const mensajeVacio = sub === 'realizados' ? 'Todavía no hay ninguna visita de mantenimiento marcada como realizada.' : 'No hay visitas de mantenimiento próximas ni pendientes.';
-    contenido = renderServicioTecnicoLista(filtro, mensajeVacio);
+    // Filtro por edificio: la lista sale de los clientes marcados "Cliente de mantenimiento" (cada
+    // contrato es de un edificio/cliente puntual), no de una lista aparte.
+    const clientesMantenimientoFiltro = (cache.clientes || []).filter(c => c.esMantenimiento);
+    const filtroClienteHtml = `<select style="max-width:260px;margin-bottom:14px;" onchange="state.mantenimientoListaCliente=this.value; render();">
+      <option value="">Todos los edificios</option>
+      ${clientesMantenimientoFiltro.map(c => `<option value="${c.id}" ${c.id === clienteFiltro ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
+    </select>`;
+    contenido = `${filtroClienteHtml}${renderServicioTecnicoLista(filtro, mensajeVacio)}`;
   }
   return `<div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>${contenido}`;
 }
@@ -2090,11 +2098,19 @@ async function enviarOrdenMantenimientoServicio(id) {
 }
 function renderEnvioOrdenMantenimiento(s) {
   if (s.estado !== 'realizado') return `<div class="hint-text" style="margin-bottom:14px;">La orden se puede mandar por correo una vez que el turno quede marcado como realizado.</div>`;
+  const botonDescargar = `<a class="btn btn-ghost" href="/api/servicios-tecnicos/${s.id}/orden-mantenimiento-pdf" target="_blank" rel="noopener">📄 Descargar PDF</a>`;
   if (s.orden_mantenimiento_enviada) {
-    return `<div class="hint-text" style="margin-bottom:14px;">✅ Orden enviada al cliente el ${fmtDateTime(s.orden_mantenimiento_enviada_fecha)}. <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:12px;" onclick="enviarOrdenMantenimientoServicio('${s.id}')">Reenviar</button></div>`;
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+      <div class="hint-text" style="margin:0;">✅ Orden enviada al cliente el ${fmtDateTime(s.orden_mantenimiento_enviada_fecha)}.</div>
+      <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:12px;" onclick="enviarOrdenMantenimientoServicio('${s.id}')">Reenviar</button>
+      ${botonDescargar}
+    </div>`;
   }
   return `<div style="margin-bottom:14px;">
-    <button type="button" class="btn btn-primary" onclick="enviarOrdenMantenimientoServicio('${s.id}')">📧 Enviar orden por correo al cliente</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="btn btn-primary" onclick="enviarOrdenMantenimientoServicio('${s.id}')">📧 Enviar orden por correo al cliente</button>
+      ${botonDescargar}
+    </div>
     <div class="hint-text" style="margin-top:6px;">Si no la mandás a mano, se manda sola a las 2 horas.</div>
   </div>`;
 }
