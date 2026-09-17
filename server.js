@@ -453,6 +453,10 @@ pool.query('alter table telegram_notificaciones_ticket add column if not exists 
 pool.query('alter table tickets add column if not exists satisfaccion_token text').catch(e => console.error('No se pudo migrar satisfaccion_token:', e.message));
 pool.query('alter table tickets add column if not exists satisfaccion text').catch(e => console.error('No se pudo migrar satisfaccion:', e.message));
 pool.query('alter table tickets add column if not exists satisfaccion_fecha timestamptz').catch(e => console.error('No se pudo migrar satisfaccion_fecha:', e.message));
+// Guarda cuándo se mandó la última encuesta, para no volver a mandarla si el ticket se reabre y se
+// vuelve a resolver poco después (evita el círculo: se reabre por la respuesta del cliente a la
+// encuesta → se resuelve de nuevo → se manda otra encuesta → confunde al cliente otra vez).
+pool.query('alter table tickets add column if not exists encuesta_ultima_fecha timestamptz').catch(e => console.error('No se pudo migrar encuesta_ultima_fecha:', e.message));
 // Migración automática: checklist de pasos por categoría (plantillas en configuracion, estado por ticket).
 pool.query(`alter table configuracion add column if not exists checklist_categorias jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_categorias:', e.message));
 pool.query(`alter table tickets add column if not exists checklist_estado jsonb not null default '{}'::jsonb`).catch(e => console.error('No se pudo migrar checklist_estado:', e.message));
@@ -955,11 +959,20 @@ async function aplicarCambioEstado(ticketId, nuevoEstado) {
 }
 // Al resolver un ticket, se manda un correo aparte con dos enlaces (Sí / No) para que el cliente
 // confirme si quedó conforme. Cada vez se genera un token nuevo, así una respuesta vieja no cuenta dos veces.
+const DIAS_MINIMOS_ENTRE_ENCUESTAS = 15;
 async function enviarEncuestaSatisfaccion(ticketId) {
   const cfg = await getConfig();
   if (cfg.encuesta_satisfaccion_activa === false) return;
+  const t = (await pool.query('select encuesta_ultima_fecha from tickets where id=$1', [ticketId])).rows[0];
+  if (t && t.encuesta_ultima_fecha) {
+    const diasDesdeUltima = (Date.now() - new Date(t.encuesta_ultima_fecha).getTime()) / (1000 * 60 * 60 * 24);
+    // Si el ticket ya recibió una encuesta hace poco (se reabrió y se volvió a resolver enseguida,
+    // típicamente por una respuesta del cliente a la encuesta anterior), no se manda otra vez para no
+    // confundirlo. Si pasó bastante tiempo, se asume que es un problema distinto y se manda de nuevo.
+    if (diasDesdeUltima < DIAS_MINIMOS_ENTRE_ENCUESTAS) return;
+  }
   const token = crypto.randomUUID();
-  await pool.query('update tickets set satisfaccion_token=$1, satisfaccion=null, satisfaccion_fecha=null where id=$2', [token, ticketId]);
+  await pool.query('update tickets set satisfaccion_token=$1, satisfaccion=null, satisfaccion_fecha=null, encuesta_ultima_fecha=now() where id=$2', [token, ticketId]);
   const ctx = await contextoTicket(ticketId);
   const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
   const urlSi = `${baseUrl}/api/satisfaccion/${ticketId}/si?token=${token}`;
