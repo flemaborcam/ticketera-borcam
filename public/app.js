@@ -1771,15 +1771,32 @@ function eventosServicioTecnicoFiltrados() {
     return true;
   });
 }
+// Para Servicio Técnico (no mantenimiento) el color cuenta la historia del turno:
+// azul = todavía no se realizó (y está en horario), rojo = se pasó la hora y no se marcó realizado
+// ("atrasado", con la palabra al costado), verde = realizado, negro = realizado pero con pago pendiente.
+// Mantenimiento sigue con su propia lógica de siempre (verde al día / rojo vencido), sin cambios acá.
+function claseYLabelServicioTecnico(s, ahora) {
+  const esMant = !!s.contrato_mantenimiento_id;
+  const nombre = nombreClientePorId(s.cliente_id);
+  const hora = s.todo_el_dia ? '' : ' · ' + new Date(s.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' });
+  if (esMant) {
+    const clase = (s.estado !== 'realizado' && new Date(s.fecha_hora) < ahora) ? 'mant-vencido' : 'mant';
+    return { clase, label: `${nombre}${hora}` };
+  }
+  const atrasado = s.estado !== 'realizado' && new Date(s.fecha_hora) < ahora;
+  if (atrasado) return { clase: 'servicio-atrasado', label: `${nombre}${hora} · Atrasado` };
+  if (s.estado === 'realizado') {
+    const pendientePago = servicioTieneCosto(s) && !s.pagado;
+    return { clase: pendientePago ? 'servicio-pago-pendiente' : 'servicio-realizado', label: `${nombre}${hora}` };
+  }
+  return { clase: 'servicio', label: `${nombre}${hora}` };
+}
 function eventosServicioTecnicoPorFecha() {
   const ahora = new Date();
   const mapa = {};
   for (const s of eventosServicioTecnicoFiltrados()) {
     const key = fechaLocalISO(s.fecha_hora);
-    const esMant = !!s.contrato_mantenimiento_id;
-    const clase = esMant ? ((s.estado !== 'realizado' && new Date(s.fecha_hora) < ahora) ? 'mant-vencido' : 'mant') : 'servicio';
-    const hora = s.todo_el_dia ? '' : ' · ' + new Date(s.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' });
-    const label = `${nombreClientePorId(s.cliente_id)}${hora}`;
+    const { clase, label } = claseYLabelServicioTecnico(s, ahora);
     (mapa[key] = mapa[key] || []).push(`<div class="cal-evento ${clase}" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleServicioTecnico('${s.id}')">${escapeHtml(label)}</div>`);
   }
   return mapa;
@@ -1805,20 +1822,21 @@ function renderServicioTecnicoCalendarioMes() {
     onVerMas: fechaStr => `abrirDiaCalendario('${fechaStr}','servicio')`
   });
   const chip = (v, label) => `<div class="cal-chip ${tipoFiltro === v ? 'active' : ''}" onclick="cambiarFiltroTipoCalendarioServicio('${v}')">${label}</div>`;
-  const clientesUnicos = {};
-  for (const s of (cache.serviciosTecnicos || [])) { if (!clientesUnicos[s.cliente_id]) clientesUnicos[s.cliente_id] = nombreClientePorId(s.cliente_id); }
-  const idsOrdenados = Object.keys(clientesUnicos).sort((a, b) => clientesUnicos[a].localeCompare(clientesUnicos[b]));
+  // El filtro por edificio muestra TODOS los clientes (no solo los que ya tienen un turno cargado
+  // en este mes), igual que el filtro de la lista de Mantenimiento — así no falta ninguno.
+  const clientesOrdenados = [...(cache.clientes || [])].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
   const edificioSelect = `<select class="cal-chip" style="border-radius:8px;padding:5px 10px;" onchange="state.stCalendarioEdificioFiltro=this.value; render();">
     <option value="">Por edificio ▾ (todos)</option>
-    ${idsOrdenados.map(id => `<option value="${id}" ${String(id) === String(edificioFiltro) ? 'selected' : ''}>${escapeHtml(clientesUnicos[id])}</option>`).join('')}
+    ${clientesOrdenados.map(c => `<option value="${c.id}" ${String(c.id) === String(edificioFiltro) ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
   </select>`;
   return `
     <div class="cal-toolbar">
       <div class="cal-nav"><button type="button" onclick="cambiarMesCalendarioServicio(-1)">‹</button><div class="cal-mes">${MESES_LABEL_CAL[mes]} ${anio}</div><button type="button" onclick="cambiarMesCalendarioServicio(1)">›</button></div>
       <div class="cal-legend">
-        <span><span class="cal-dot" style="background:#3355ee;"></span> Servicio técnico</span>
-        <span><span class="cal-dot" style="background:#1e8e4f;"></span> Mantenimiento</span>
-        <span><span class="cal-dot" style="background:#c1440e;"></span> Mantenimiento atrasado</span>
+        <span><span class="cal-dot" style="background:#3355ee;"></span> Servicio técnico agendado</span>
+        <span><span class="cal-dot" style="background:#1e8e4f;"></span> Realizado</span>
+        <span><span class="cal-dot" style="background:#1a1a1a;"></span> Pendiente de pago</span>
+        <span><span class="cal-dot" style="background:#c1440e;"></span> Atrasado</span>
       </div>
       <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>
     </div>
@@ -3201,8 +3219,9 @@ function renderDiaCalendarioModal() {
       onclick: `abrirDetalleCita('${ci.id}')`
     }));
   } else {
+    const ahoraModal = new Date();
     filas = eventosServicioTecnicoFiltrados().filter(s => fechaLocalISO(s.fecha_hora) === fechaStr).map(s => ({
-      texto: `${s.contrato_mantenimiento_id ? '🔧 ' : '🛠️ '}${escapeHtml(nombreClientePorId(s.cliente_id))}${s.todo_el_dia ? '' : ' · ' + new Date(s.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`,
+      texto: `${s.contrato_mantenimiento_id ? '🔧 ' : '🛠️ '}${escapeHtml(claseYLabelServicioTecnico(s, ahoraModal).label)}`,
       onclick: `abrirDetalleServicioTecnico('${s.id}')`
     }));
   }
