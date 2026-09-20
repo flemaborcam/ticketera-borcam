@@ -1702,6 +1702,37 @@ app.get('/api/clientes', requireStaff, async (req, res) => {
   )).rows;
   ok(res, clientes);
 });
+// Exporta Edificios, Administraciones y Otros clientes a un Excel con una hoja por grupo, con las
+// mismas columnas que la plantilla de "Importar desde Excel" (para poder editar y volver a importar
+// si hace falta) más Portal, que es solo informativo.
+app.get('/api/clientes/exportar', requireStaff, async (req, res) => {
+  const clientes = (await pool.query(
+    `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.correo_informes,c.rol_cliente,c.contacto_nombre,
+            (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id, c.es_mantenimiento,
+            a.nombre as administrado_por_nombre
+     from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
+  )).rows;
+  const encabezado = ['Nombre', 'Dirección', 'Teléfono', 'Contacto', 'Correo', 'Correo informes', 'Rol', 'Administrado por', 'Mantenimiento', 'Portal'];
+  const filaDe = c => [
+    c.nombre || '', c.direccion || '', c.telefono || '', c.contacto_nombre || '', c.correo || '', c.correo_informes || '',
+    c.rol_cliente || '', c.administrado_por_nombre || '', c.es_mantenimiento ? 'Sí' : 'No', c.tiene_portal ? 'Sí' : 'No'
+  ];
+  const edificios = clientes.filter(c => c.rol_cliente === 'Edificio');
+  const administraciones = clientes.filter(c => c.rol_cliente === 'Administración');
+  const otros = clientes.filter(c => c.rol_cliente !== 'Edificio' && c.rol_cliente !== 'Administración' && !(c.rol_cliente === 'Apartamento' && c.administrado_por_id));
+
+  const wb = XLSX.utils.book_new();
+  for (const [nombreHoja, filas] of [['Edificios', edificios], ['Administraciones', administraciones], ['Otros clientes', otros]]) {
+    const hoja = XLSX.utils.aoa_to_sheet([encabezado, ...filas.map(filaDe)]);
+    hoja['!cols'] = encabezado.map((_, i) => ({ wch: i === 0 || i === 1 ? 28 : 16 }));
+    XLSX.utils.book_append_sheet(wb, hoja, nombreHoja);
+  }
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const fecha = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="Clientes_Borcam_${fecha}.xlsx"`);
+  res.send(buffer);
+});
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.params.id])).rows;
   ok(res, tickets);
