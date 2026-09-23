@@ -4558,6 +4558,7 @@ function renderTicket(id) {
         ${(!esTicketDeReserva(t) && !(t.serviciosTecnicos || []).some(s => s.estado !== 'realizado')) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
         <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
+        <a class="btn btn-ghost" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">📄 Exportar PDF</a>
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
       </div>
       <div class="meta-grid">
@@ -4653,7 +4654,6 @@ function renderGrupos() {
     ? `<div class="hint-text" style="margin-bottom:10px;">Hay ${apartamentosSueltos.length} apartamento${apartamentosSueltos.length === 1 ? '' : 's'} sin edificio asignado (rol "Apartamento" sin "Administrado por"); quedan listados acá abajo, en Otros.</div>` : '';
   return `${clientesRowStyleTag()}<div class="page-head"><div><h1>Clientes</h1><div class="sub">Edificios con sus apartamentos, administraciones con los edificios que gestionan, y el resto de los clientes.</div></div>
       <div class="page-head-actions">
-        <a class="btn btn-ghost" href="/api/clientes/exportar" target="_blank" rel="noopener">📊 Exportar</a>
         <button class="btn btn-ghost" onclick="openImportarClientesModal()">📥 Importar desde Excel</button>
         <button class="btn btn-primary" onclick="openNuevoGrupoModal()">+ Nuevo cliente</button>
       </div></div>
