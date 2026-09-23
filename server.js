@@ -1702,37 +1702,6 @@ app.get('/api/clientes', requireStaff, async (req, res) => {
   )).rows;
   ok(res, clientes);
 });
-// Exporta Edificios, Administraciones y Otros clientes a un Excel con una hoja por grupo, con las
-// mismas columnas que la plantilla de "Importar desde Excel" (para poder editar y volver a importar
-// si hace falta) más Portal, que es solo informativo.
-app.get('/api/clientes/exportar', requireStaff, async (req, res) => {
-  const clientes = (await pool.query(
-    `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.correo_informes,c.rol_cliente,c.contacto_nombre,
-            (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id, c.es_mantenimiento,
-            a.nombre as administrado_por_nombre
-     from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
-  )).rows;
-  const encabezado = ['Nombre', 'Dirección', 'Teléfono', 'Contacto', 'Correo', 'Correo informes', 'Rol', 'Administrado por', 'Mantenimiento', 'Portal'];
-  const filaDe = c => [
-    c.nombre || '', c.direccion || '', c.telefono || '', c.contacto_nombre || '', c.correo || '', c.correo_informes || '',
-    c.rol_cliente || '', c.administrado_por_nombre || '', c.es_mantenimiento ? 'Sí' : 'No', c.tiene_portal ? 'Sí' : 'No'
-  ];
-  const edificios = clientes.filter(c => c.rol_cliente === 'Edificio');
-  const administraciones = clientes.filter(c => c.rol_cliente === 'Administración');
-  const otros = clientes.filter(c => c.rol_cliente !== 'Edificio' && c.rol_cliente !== 'Administración' && !(c.rol_cliente === 'Apartamento' && c.administrado_por_id));
-
-  const wb = XLSX.utils.book_new();
-  for (const [nombreHoja, filas] of [['Edificios', edificios], ['Administraciones', administraciones], ['Otros clientes', otros]]) {
-    const hoja = XLSX.utils.aoa_to_sheet([encabezado, ...filas.map(filaDe)]);
-    hoja['!cols'] = encabezado.map((_, i) => ({ wch: i === 0 || i === 1 ? 28 : 16 }));
-    XLSX.utils.book_append_sheet(wb, hoja, nombreHoja);
-  }
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  const fecha = new Date().toISOString().slice(0, 10);
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="Clientes_Borcam_${fecha}.xlsx"`);
-  res.send(buffer);
-});
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.params.id])).rows;
   ok(res, tickets);
@@ -2109,6 +2078,142 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
     } catch (e) { reject(e); }
   });
 }
+// Mismo criterio de limpieza que usa el frontend para mostrar el cuerpo de un mensaje: recorta el
+// texto citado de respuestas por correo (recortarCitas, ya usado para procesar entrantes) y junta
+// espacios/saltos de línea sobrantes.
+function limpiarCuerpoTexto(texto) {
+  const sinCitas = recortarCitas(texto || '');
+  return sinCitas.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+// PDF de "Exportar ticket" — mismo look corporativo que la orden de mantenimiento (franja naranja,
+// encabezado Borcam), con la conversación armada como burbujas (cliente a la izquierda, equipo a la
+// derecha) para poder reenviarla tal cual por mail. Solo entran los mensajes que el cliente también
+// puede ver: se excluyen las notas internas ('nota'), igual que en el resto del sistema (ver
+// "tipo <> 'nota'" usado para el último mensaje visible en la bandeja). Los adjuntos no se incrustan
+// en el PDF (harían el archivo pesado y desprolijo) — se listan por nombre al final.
+function generarPdfTicket(ticket, clienteNombre) {
+  const mensajes = (ticket.mensajes || []).filter(m => m.tipo !== 'nota');
+  const adjuntos = mensajes.flatMap(m => m.adjuntos || []).map(a => a.nombre).filter(Boolean);
+
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
+      const chunks = [];
+      doc.on('data', c => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      const M = 42;
+      const pageW = doc.page.width;
+      const contentW = pageW - M * 2;
+      const bottomLimit = doc.page.height - 60;
+
+      function piePagina() {
+        doc.fontSize(7.5).fillColor('#999')
+          .text(BORCAM_PIE, M, doc.page.height - 34, { width: contentW, align: 'center' });
+      }
+      function franjaEncabezadoPagina() { doc.rect(0, 0, pageW, 6).fill(BORCAM_NARANJA); }
+      function nuevaFranjaSiHaceFalta(alturaNecesaria) {
+        if (doc.y + alturaNecesaria > bottomLimit) {
+          piePagina();
+          doc.addPage();
+          franjaEncabezadoPagina();
+          doc.y = 34;
+        }
+      }
+
+      // Encabezado
+      franjaEncabezadoPagina();
+      doc.fontSize(22).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('BORCAM', M, 30);
+      doc.fontSize(9).fillColor('#888').font('Helvetica-Oblique').text('Tu hogar a otra dimensión', M, 54);
+      doc.fontSize(15).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('Ticket de soporte', M, 30, { width: contentW, align: 'right' });
+      doc.fontSize(9).fillColor('#555').font('Helvetica')
+        .text(`Ticket N° ${ticket.numero}`, M, 52, { width: contentW, align: 'right' })
+        .text(`Exportado: ${new Date().toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}`, M, 64, { width: contentW, align: 'right' });
+      doc.moveTo(M, 84).lineTo(pageW - M, 84).strokeColor('#ddd').lineWidth(1).stroke();
+
+      // Datos del ticket, en recuadro. La pastilla de estado se calcula antes que el ancho del
+      // asunto, para restarle ese espacio y que no se superpongan si el asunto es largo y envuelve
+      // en varias líneas.
+      const infoY = 96;
+      const estadoColor = ticket.estado === 'Resuelto' ? '#1E8E4F' : BORCAM_NARANJA;
+      const estadoTexto = String(ticket.estado || '').toUpperCase();
+      const estadoAncho = Math.max(62, doc.font('Helvetica-Bold').fontSize(8).widthOfString(estadoTexto) + 20);
+      const anchoAsunto = contentW / 2 - 12 - estadoAncho - 10;
+      doc.font('Helvetica').fontSize(10);
+      const alturaAsunto = doc.heightOfString(ticket.asunto || '', { width: anchoAsunto });
+      const infoAlto = Math.max(56, 34 + alturaAsunto);
+      doc.roundedRect(M, infoY, contentW, infoAlto, 4).fillAndStroke('#F7F8FA', '#E3E6EA');
+      doc.fontSize(9.5).fillColor('#666').font('Helvetica-Bold').text('CLIENTE', M + 12, infoY + 10);
+      doc.fontSize(10.5).fillColor('#000').font('Helvetica').text(clienteNombre || ticket.remitente_nombre || '—', M + 12, infoY + 22);
+      doc.fontSize(9).fillColor('#555').font('Helvetica')
+        .text(`Abierto: ${new Date(ticket.creado).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}`, M + 12, infoY + 38);
+      doc.fontSize(9.5).fillColor('#666').font('Helvetica-Bold').text('ASUNTO', M + contentW / 2, infoY + 10, { width: anchoAsunto });
+      doc.fontSize(10).fillColor('#000').font('Helvetica').text(ticket.asunto || '', M + contentW / 2, infoY + 22, { width: anchoAsunto });
+      doc.roundedRect(pageW - M - estadoAncho, infoY + 10, estadoAncho, 16, 8).fillAndStroke(estadoColor, estadoColor);
+      doc.fontSize(8).fillColor('#fff').font('Helvetica-Bold').text(estadoTexto, pageW - M - estadoAncho, infoY + 14, { width: estadoAncho, align: 'center' });
+
+      doc.y = infoY + infoAlto + 22;
+
+      // Conversación
+      doc.fontSize(11).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('Conversación con el cliente', M, doc.y);
+      doc.y += 14;
+
+      const burbujaAncho = contentW * 0.78;
+      if (!mensajes.length) {
+        doc.fontSize(9.5).fillColor('#888').font('Helvetica-Oblique').text('Este ticket todavía no tiene mensajes.', M, doc.y);
+        doc.y += 18;
+      }
+      for (const m of mensajes) {
+        const esCliente = m.tipo === 'entrante';
+        const x = esCliente ? M : pageW - M - burbujaAncho;
+        const colorFondo = esCliente ? '#F1F3F6' : '#EAF1FF';
+        const colorBorde = esCliente ? '#E1E4E9' : '#CBDCF9';
+        const colorEtiqueta = esCliente ? '#666' : BORCAM_AZUL;
+        const texto = limpiarCuerpoTexto(m.cuerpo || '');
+        const encabezado = `${m.autor || (esCliente ? ticket.remitente_nombre : 'Borcam')} · ${new Date(m.fecha).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}`;
+
+        doc.font('Helvetica-Bold').fontSize(8.5);
+        const alturaEncabezado = doc.heightOfString(encabezado, { width: burbujaAncho - 24 });
+        doc.font('Helvetica').fontSize(9.5);
+        const alturaTexto = doc.heightOfString(texto, { width: burbujaAncho - 24 });
+        const alturaBurbuja = 16 + alturaEncabezado + 6 + alturaTexto + 12;
+
+        nuevaFranjaSiHaceFalta(alturaBurbuja + 10);
+        const y = doc.y;
+        doc.roundedRect(x, y, burbujaAncho, alturaBurbuja, 6).fillAndStroke(colorFondo, colorBorde);
+        doc.fontSize(8.5).fillColor(colorEtiqueta).font('Helvetica-Bold').text(encabezado, x + 12, y + 10, { width: burbujaAncho - 24 });
+        doc.fontSize(9.5).fillColor('#222').font('Helvetica').text(texto, x + 12, y + 10 + alturaEncabezado + 6, { width: burbujaAncho - 24 });
+        doc.y = y + alturaBurbuja + 10;
+      }
+
+      // Adjuntos (listados por nombre, no incrustados)
+      if (adjuntos.length) {
+        nuevaFranjaSiHaceFalta(20 + adjuntos.length * 14);
+        doc.fontSize(10).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text('Adjuntos de la conversación', M, doc.y + 4);
+        doc.y += 20;
+        for (const nombre of adjuntos) {
+          doc.fontSize(9).fillColor('#444').font('Helvetica').text(`•  ${nombre}`, M + 4, doc.y);
+          doc.y += 14;
+        }
+      }
+
+      piePagina();
+      doc.end();
+    } catch (e) { reject(e); }
+  });
+}
+app.get('/api/tickets/:id/pdf', requireStaff, async (req, res) => {
+  const ticket = await ticketConMensajes(req.params.id);
+  if (!ticket) return bad(res, 'Ticket no encontrado.', 404);
+  const cliente = ticket.cliente_id ? (await pool.query('select nombre from clientes where id=$1', [ticket.cliente_id])).rows[0] : null;
+  try {
+    const pdfBuffer = await generarPdfTicket(ticket, cliente ? cliente.nombre : null);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="Ticket ${ticket.numero}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (e) { bad(res, 'No se pudo generar el PDF: ' + e.message); }
+});
 // Vista previa de una plantilla: arma el mismo PDF de "Orden de mantenimiento" pero con datos de
 // ejemplo (no hace falta que exista ningún turno real), para ver de entrada cómo va a quedar el
 // checklist de esa plantilla antes de asignarla a un contrato. Se abre directo en el navegador.
