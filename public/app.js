@@ -1874,7 +1874,7 @@ function autocompletarCostoDesdeCatalogo(prefijo) {
 function renderCostosPendientesEditor() {
   const items = state.pendingCostosServicio || [];
   const catalogoOptions = (cache.catalogoCostos || []).filter(c => c.activo).map(c => `<option value="${c.id}">${escapeHtml(c.nombre)} (${c.moneda} ${Math.round(Number(c.precio))} + IVA)</option>`).join('');
-  return `<div style="border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:14px;">
+  return `<div id="costos-pendientes-editor" style="border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin-bottom:14px;">
     <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos (opcional)</div>
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:${items.length ? '10px' : '0'};">
       ${items.map((c, i) => `
@@ -1912,11 +1912,21 @@ function agregarCostoPendiente() {
   if (precioUnitario === '' || isNaN(Number(precioUnitario))) { showToast('Escribí un precio.'); return; }
   state.pendingCostosServicio = state.pendingCostosServicio || [];
   state.pendingCostosServicio.push({ catalogoItemId, descripcion: descripcion.trim(), cantidad: Number(cantidad) || 1, precioUnitario: Number(precioUnitario), moneda: moneda === 'USD' ? 'USD' : 'UYU' });
-  render();
+  refrescarCostosPendientesEditor();
 }
 function quitarCostoPendiente(i) {
   state.pendingCostosServicio = (state.pendingCostosServicio || []).filter((_, idx) => idx !== i);
-  render();
+  refrescarCostosPendientesEditor();
+}
+// Solo repinta la sección de "Costos (opcional)" del modal, en vez de un render() completo: el modal
+// (Nuevo turno / Agendar servicio técnico) tiene campos como título, descripción, fecha y hora que no
+// están atados a "state" — un render() completo los reconstruye desde cero y borra lo que el usuario
+// ya escribió. Si por algún motivo no se encuentra el bloque de costos en el DOM, se hace un render()
+// normal como respaldo.
+function refrescarCostosPendientesEditor() {
+  const el = document.getElementById('costos-pendientes-editor');
+  if (el) el.outerHTML = renderCostosPendientesEditor();
+  else render();
 }
 // Aplica, después de crear el turno, los costos que se hayan dejado cargados en el modal.
 async function aplicarCostosPendientes(servicioId) {
