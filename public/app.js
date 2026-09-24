@@ -404,7 +404,7 @@ async function openTicket(id) {
   // Recuerda desde qué sección se abrió (Reservas, bandeja general, etc.) para que "Volver" regrese
   // ahí y no siempre a la bandeja general — antes te sacaba de Reservas aunque hubieras entrado desde ahí.
   if (state.view !== 'ticket') state.ticketVolverA = state.view;
-  state.ticketId = id; state.view = 'ticket'; state.replyTab = 'saliente'; state.pendingAttachments = [];
+  state.ticketId = id; state.view = 'ticket'; state.replyTab = 'saliente'; state.pendingAttachments = []; state.replyDraftCuerpo = '';
   render();
   await refreshTicket(id);
   render();
@@ -556,6 +556,7 @@ async function submitReply(ev, ticketId) {
     } else {
       await api('POST', `/api/tickets/${ticketId}/mensajes`, { tipo: 'entrante', cuerpo });
     }
+    state.replyDraftCuerpo = '';
     await refreshTicket(ticketId);
     render();
   } catch (e) { showToast(e.message); }
@@ -4600,7 +4601,7 @@ function renderTicket(id) {
         ${state.replyTab === 'saliente' && cache.respuestas.length ? `
         <div class="field"><label>Respuesta predefinida</label><select onchange="insertCanned(this)"><option value="">Elegir una respuesta…</option>${cache.respuestas.map(r => `<option value="${r.id}">${escapeHtml(r.titulo)}</option>`).join('')}</select></div>` : ''}
         ${state.replyTab === 'nota' ? `<div class="hint-text" style="margin-bottom:10px;">Esta nota es solo para uso interno del equipo. El cliente nunca la ve, ni en el portal ni por correo.</div>` : ''}
-        <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="${state.replyTab === 'saliente' ? 'Escribí tu respuesta…' : state.replyTab === 'nota' ? 'Escribí la nota interna…' : 'Escribí el correo que llegaría del solicitante…'}" required></textarea></div>
+        <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="${state.replyTab === 'saliente' ? 'Escribí tu respuesta…' : state.replyTab === 'nota' ? 'Escribí la nota interna…' : 'Escribí el correo que llegaría del solicitante…'}" oninput="state.replyDraftCuerpo=this.value;" required>${escapeHtml(state.replyDraftCuerpo || '')}</textarea></div>
         ${state.replyTab === 'saliente' && u.firma_html ? `<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" name="incluirFirma" checked> Incluir mi firma</label>` : ''}
         ${state.replyTab === 'saliente' ? `
         <div class="field" style="margin-top:12px;"><label>CC (copia a)</label><input name="cc" type="text" value="${escapeHtml(ccSugeridoParaTicket(t))}" placeholder="otro-correo@ejemplo.com, otro2@ejemplo.com"><div class="hint-text">Se completa solo con quienes estuvieron en copia en este ticket. Podés editarlo antes de enviar.</div></div>
