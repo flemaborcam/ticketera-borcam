@@ -1957,6 +1957,7 @@ function renderNuevoServicioTecnicoModal() {
            <div id="nuevo-servicio-ticket-resultados">${renderResultadosTicketNuevoServicio(ticketsFiltrados)}</div>`}
     </div>
     <div class="field"><label>Título del evento</label><input type="text" id="nuevo-servicio-titulo" placeholder="Ej: Revisión de cámaras"></div>
+    <div class="field"><label>Descripción (opcional)</label><textarea id="nuevo-servicio-descripcion" rows="3" placeholder="Breve descripción del problema o del trabajo a realizar"></textarea></div>
     <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="nuevo-servicio-todo-el-dia" onchange="toggleTodoElDiaIcs('nuevo-servicio')"> Todo el día</label>
     <div class="field-row">
       <div class="field"><label>Fecha</label><input type="date" id="nuevo-servicio-fecha" value="${fechaDefault}"></div>
@@ -1987,6 +1988,7 @@ function refrescarBusquedaTicketNuevoServicio() {
 async function guardarNuevoServicioTecnico() {
   const clienteId = document.getElementById('nuevo-servicio-cliente').value;
   const titulo = document.getElementById('nuevo-servicio-titulo').value;
+  const descripcion = document.getElementById('nuevo-servicio-descripcion').value;
   const fecha = document.getElementById('nuevo-servicio-fecha').value;
   const hora = document.getElementById('nuevo-servicio-hora').value;
   const duracion = document.getElementById('nuevo-servicio-duracion').value;
@@ -2001,7 +2003,7 @@ async function guardarNuevoServicioTecnico() {
   try {
     const nuevo = await api('POST', '/api/servicios-tecnicos', {
       clienteId, ticketId: ticketElegido ? ticketElegido.id : null, ticketNumero: ticketElegido ? ticketElegido.numero : null,
-      titulo, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId
+      titulo, descripcion, fecha, hora, duracion, todoElDia, aplicaIva, tecnicoAsignadoId
     });
     await aplicarCostosPendientes(nuevo.id);
     const filas = await api('GET', '/api/servicios-tecnicos');
