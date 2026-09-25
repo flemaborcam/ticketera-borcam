@@ -172,21 +172,24 @@ function reproducirSonidoAviso() {
 async function verificarTicketsNuevos() {
   if (!session || session.type !== 'staff') return;
   try {
-    const filas = await api('GET', '/api/tickets');
-    const nuevos = filas.map(mapTicket);
+    // Chequeo liviano (solo id, asunto y si necesita atención) en vez de /api/tickets completo: este
+    // polling corre cada 60 segundos en segundo plano, en cada pestaña abierta, y /api/tickets trae
+    // además el texto de TODA la conversación de cada ticket (para el buscador) — repetir eso cada
+    // minuto es lo que estaba generando el consumo alto de egress en Supabase. Como acá no llega la
+    // info completa, ya no se pisa cache.tickets: la bandeja se sigue actualizando sola al entrar a
+    // verla o hacer una acción, pero no de fondo cada minuto.
+    const nuevos = await api('GET', '/api/tickets/notificaciones');
     if (!notifTicketsConocidos) {
-      cache.tickets = nuevos;
-      notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
+      notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, !!t.necesita_atencion]));
       return;
     }
     let ticketsNuevos = 0, respuestasCliente = 0;
     nuevos.forEach(t => {
       if (esTicketDeReserva(t)) return;
       if (!notifTicketsConocidos.has(t.id)) ticketsNuevos++;
-      else if (t.necesitaAtencion && !notifTicketsConocidos.get(t.id)) respuestasCliente++;
+      else if (t.necesita_atencion && !notifTicketsConocidos.get(t.id)) respuestasCliente++;
     });
-    cache.tickets = nuevos;
-    notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
+    notifTicketsConocidos = new Map(nuevos.filter(t => !esTicketDeReserva(t)).map(t => [t.id, !!t.necesita_atencion]));
     if (ticketsNuevos || respuestasCliente) {
       reproducirSonidoAviso();
       // showToast() hace un render() completo de la pantalla: si el agente está justo escribiendo
