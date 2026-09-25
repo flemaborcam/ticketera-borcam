@@ -1154,6 +1154,15 @@ app.get('/api/tickets', requireStaff, async (req, res) => {
   )).rows;
   ok(res, tickets);
 });
+// Versión liviana de /api/tickets, solo para el chequeo de notificaciones (campanita) que corre cada
+// 60 segundos en segundo plano en cada pestaña abierta. La versión completa trae el texto de TODA la
+// conversación de cada ticket (para el buscador de la bandeja), y repetir eso cada minuto, en cada
+// pestaña, es lo que estaba generando el consumo alto de egress en Supabase. Acá solo se trae lo
+// mínimo para saber si hay tickets nuevos o si un cliente respondió.
+app.get('/api/tickets/notificaciones', requireStaff, async (req, res) => {
+  const tickets = (await pool.query('select id, asunto, necesita_atencion from tickets order by actualizado desc')).rows;
+  ok(res, tickets);
+});
 app.get('/api/tickets/:id', requireStaff, async (req, res) => {
   const t = await ticketConMensajes(req.params.id);
   if (!t) return bad(res, 'No encontrado', 404);
