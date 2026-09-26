@@ -1608,7 +1608,7 @@ function renderReporteMensualDashboardTab() {
   }).join('');
 
   return `${cabecera}
-    <div class="stat-cards" style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 18px;">${tarjetasTotales}</div>
+    <div class="kpi-panel stat-cards" style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 18px;">${tarjetasTotales}</div>
     <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:15px;">${filas.length} servicio${filas.length === 1 ? '' : 's'} realizado${filas.length === 1 ? '' : 's'} en ${clientesOrdenados.length} cliente${clientesOrdenados.length === 1 ? '' : 's'}</h1></div></div>
     <div class="user-list" style="display:flex;flex-direction:column;gap:8px;">${filasClientes}</div>`;
 }
@@ -3823,9 +3823,11 @@ function renderShell(inner) {
   return `
   <style>
     /* Tarjetas de totales del dashboard de Reporte mensual (Servicio Técnico). */
-    .stat-card{background:var(--card,#fff);border:1px solid var(--line);border-radius:10px;padding:14px 18px;min-width:180px;flex:1;}
-    .stat-card-label{font-size:12px;color:var(--muted,#6b7280);margin-bottom:6px;}
-    .stat-card-value{font-size:22px;font-weight:700;}
+    /* Mismo estilo "vidrio sobre azul marino" del panel de Estadísticas, aplicado acá también. */
+    .stat-card{background:rgba(255,255,255,.08);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:14px 18px;min-width:180px;flex:1;box-shadow:0 14px 28px -14px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12);}
+    .stat-card-label{font-size:12px;color:#AEC0DE;margin-bottom:6px;}
+    .stat-card-value{font-size:22px;font-weight:700;color:#fff;}
+    @media print { .kpi-panel.stat-cards{ background:#fff !important; } .stat-card{ background:#fff !important; box-shadow:none !important; border:1px solid #ddd !important; } .stat-card-label{ color:var(--muted,#6b7280) !important; } .stat-card-value{ color:var(--ink) !important; } }
     /* Arreglo: el menú lateral usaba "position: sticky", que se "despega" de su lugar cerca del
        final de una página muy larga (como la bandeja de Tickets, con hasta 20 tickets por página).
        Con "fixed" queda anclado a la pantalla siempre, sin importar cuánto scroll tenga el contenido. */
@@ -6152,9 +6154,9 @@ function kpiIconYColor(label) {
 }
 function kpiCard(label, value) {
   const [icon, color] = kpiIconYColor(label);
-  return `<div class="kpi-tile" style="color:${color};">
-    <div class="ico-badge" style="background:${color}17;color:${color};">${icon}</div>
-    <div class="v" style="color:var(--ink);">${value}</div><div class="l">${escapeHtml(label)}</div>
+  return `<div class="kpi-tile">
+    <div class="ico-badge" style="background:${color};">${icon}</div>
+    <div class="v">${value}</div><div class="l">${escapeHtml(label)}</div>
   </div>`;
 }
 function barChartSvg(datos) {
@@ -6291,13 +6293,13 @@ function renderCardSatisfaccion(s, rangoTexto) {
     : '';
   return `<div class="card" style="margin-bottom:18px;">
     <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Encuesta de satisfacción — ${rangoTexto}</div>
-    <div class="kpi-grid">
+    <div class="kpi-panel"><div class="kpi-grid">
       ${kpiCard('Encuestas mandadas', s.enviadas)}
       ${kpiCard('Conformes', s.conformes)}
       ${kpiCard('No conformes', s.noConformes)}
       ${kpiCard('Sin responder', s.sinResponder)}
       ${kpiCard('% conformes', pctConformes + '%')}
-    </div>
+    </div></div>
     ${noConformesLista}
   </div>`;
 }
@@ -6326,15 +6328,18 @@ function renderEstadisticas() {
         .card { box-shadow:none !important; border:1px solid #ddd !important; break-inside:avoid; }
       }
       .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; }
-      .kpi-tile { position:relative; overflow:hidden; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
-        box-shadow:0 1px 2px rgba(15,42,77,.05), 0 10px 22px -12px rgba(15,42,77,.22);
+      /* Panel de vidrio esmerilado sobre fondo azul marino (opción elegida) — reemplaza la tarjeta
+         blanca simple que envolvía estos números. */
+      .kpi-panel { background:linear-gradient(135deg,#0A1830 0%,#16345F 55%,#0F2A4D 100%); border-radius:14px; padding:20px; }
+      .kpi-tile { position:relative; overflow:hidden; background:rgba(255,255,255,.08); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); border:1px solid rgba(255,255,255,.16); border-radius:16px; padding:16px 18px;
+        box-shadow:0 14px 28px -14px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.12);
         transition:transform .18s ease, box-shadow .18s ease; }
-      .kpi-tile:hover { transform:translateY(-3px); box-shadow:0 1px 2px rgba(15,42,77,.05), 0 16px 30px -12px rgba(15,42,77,.32); }
-      .kpi-tile::before { content:''; position:absolute; top:-24px; right:-24px; width:88px; height:88px; border-radius:50%; background:currentColor; opacity:.09; }
-      .kpi-tile .ico-badge { position:relative; z-index:1; width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; margin-bottom:12px; box-shadow:inset 0 1px 0 rgba(255,255,255,.5); }
-      .kpi-tile .v { position:relative; z-index:1; font-family:var(--font-display); font-weight:700; font-size:25px; }
-      .kpi-tile .l { position:relative; z-index:1; font-size:12px; color:var(--ink-soft); margin-top:2px; }
-      @media print { .kpi-tile{ box-shadow:none !important; } .kpi-tile::before{ display:none; } }
+      .kpi-tile:hover { transform:translateY(-3px); box-shadow:0 20px 36px -14px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.16); }
+      .kpi-tile::before { content:''; position:absolute; top:-24px; right:-24px; width:88px; height:88px; border-radius:50%; background:#fff; opacity:.05; }
+      .kpi-tile .ico-badge { position:relative; z-index:1; width:36px; height:36px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:15px; margin-bottom:12px; color:#fff !important; box-shadow:0 6px 14px -4px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.35); }
+      .kpi-tile .v { position:relative; z-index:1; font-family:var(--font-display); font-weight:700; font-size:25px; color:#fff; }
+      .kpi-tile .l { position:relative; z-index:1; font-size:12px; color:#AEC0DE; margin-top:2px; }
+      @media print { .kpi-panel{ background:#fff !important; } .kpi-tile{ box-shadow:none !important; background:#fff !important; border:1px solid #ddd !important; } .kpi-tile .v,.kpi-tile .l{ color:var(--ink) !important; } .kpi-tile::before{ display:none; } }
       .reportes-table { width:100%; border-collapse:collapse; font-size:13px; }
       .reportes-table th, .reportes-table td { padding:9px 10px; border-bottom:1px solid var(--line-strong); }
       .reportes-table th { text-align:left; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--ink-soft); }
@@ -6356,14 +6361,14 @@ function renderEstadisticas() {
       <div class="card" style="margin-bottom:18px;">
         <div style="font-family:var(--font-display);font-weight:700;font-size:20px;">${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</div>
         <div class="hint-text" style="margin-bottom:16px;">${escapeHtml(u.cargo || '')}</div>
-        <div class="kpi-grid">
+        <div class="kpi-panel"><div class="kpi-grid">
           ${kpiCard('Tickets atendidos', u.ticketsAsignados)}
           ${kpiCard('Resueltos/Cerrados', u.ticketsResueltos)}
           ${kpiCard('% resueltos', pctReporte(u.ticketsResueltos, u.ticketsAsignados) + '%')}
           ${kpiCard('Mensajes enviados', u.mensajesEnviados)}
           ${kpiCard('Prom. 1ra respuesta', fmtHoras(u.promedioPrimeraRespuestaHoras))}
           ${kpiCard('Prom. resolución', fmtHoras(u.promedioResolucionHoras))}
-        </div>
+        </div></div>
       </div>
       <div class="card">
         <div style="font-weight:600;font-size:13.5px;margin-bottom:12px;">Evolución del equipo — últimos 6 meses</div>
@@ -6386,7 +6391,7 @@ function renderEstadisticas() {
     ${filtros}
     <div class="report-print-head"><h2 style="font-family:var(--font-display);">Reporte de productividad del equipo</h2>
       <div class="hint-text">Período: ${rangoTexto} · Emitido: ${fmtDateShort(new Date().toISOString())}</div></div>
-    <div class="card" style="margin-bottom:18px;">
+    <div class="kpi-panel" style="margin-bottom:18px;">
       <div class="kpi-grid">
         ${kpiCard('Tickets recibidos', r.general.recibidos)}
         ${kpiCard('Resueltos/Cerrados', r.general.resueltos)}
