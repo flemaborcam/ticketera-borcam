@@ -24,6 +24,19 @@ let state = {
   reportesDesde: '', reportesHasta: ''
 };
 
+/* ---------------- Menú lateral colapsado (solo iconos) ---------------- */
+// Mismo patrón que el modo oscuro/claro: se guarda la elección en localStorage para que quede
+// recordada la próxima vez que entre, y solo afecta al menú del panel interno (no al portal de cliente).
+function sidebarColapsadoInicial() {
+  try { return localStorage.getItem('sidebarColapsado') === '1'; } catch (e) { return false; }
+}
+let sidebarColapsado = sidebarColapsadoInicial();
+function toggleSidebar() {
+  sidebarColapsado = !sidebarColapsado;
+  try { localStorage.setItem('sidebarColapsado', sidebarColapsado ? '1' : '0'); } catch (e) {}
+  render();
+}
+
 /* ---------------- Modo oscuro/claro ---------------- */
 // Si el usuario ya eligió un modo a mano, se respeta esa elección (queda guardada). Si nunca lo
 // tocó, sigue automáticamente el modo del sistema operativo (y lo actualiza si lo cambia mientras
@@ -3745,7 +3758,7 @@ function navItems(activeView) {
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
   );
-  return items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+  return items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('');
 }
 // Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
 // 13+ botones apretados en una sola fila ilegible. El resto del menú completo vive en el modal
@@ -3805,8 +3818,19 @@ function renderShell(inner) {
     .sidebar::after{content:'';position:absolute;top:0;right:0;width:1px;height:100%;background:linear-gradient(180deg,transparent,rgba(61,126,240,.55),transparent);}
     .sidebar .brand-mark{position:relative;padding-bottom:16px;margin-bottom:14px;flex-direction:column;align-items:flex-start;gap:8px;}
     .sidebar .brand-mark::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:linear-gradient(90deg,rgba(255,255,255,.22),transparent);}
-    .sidebar .brand-mark .name{letter-spacing:.05em;font-size:11px;white-space:normal;line-height:1.4;width:100%;}
+    .sidebar .brand-mark .name{letter-spacing:.05em;font-size:11px;white-space:normal;line-height:1.4;width:100%;transition:opacity .15s ease;}
     .sidebar nav{gap:4px;}
+
+    /* Menú colapsado a solo iconos (botón ☰ en el logo). El ancho se anima; las etiquetas de texto
+       se ocultan con opacity+width en vez de display:none para que la transición se vea prolija. */
+    .sidebar{width:230px;flex:none;transition:width .2s ease;}
+    .sidebar.collapsed{width:72px;}
+    .sidebar-collapse-toggle{border:none;background:rgba(255,255,255,.1);color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;transition:background .15s ease;}
+    .sidebar-collapse-toggle:hover{background:rgba(255,255,255,.2);}
+    .sidebar.collapsed .brand-mark{flex-direction:row;align-items:center;justify-content:center;}
+    .sidebar.collapsed .brand-mark .name,.sidebar.collapsed .nav-btn-label,.sidebar.collapsed .who-text{display:none;}
+    .sidebar.collapsed .who{justify-content:center;}
+    .sidebar.collapsed .nav-btn{justify-content:center;padding:9px;}
     .nav-btn{position:relative;border-radius:10px;padding:9px 12px 9px 10px;transition:background .15s ease,color .15s ease,transform .15s ease;}
     .nav-btn .ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.06);font-size:13px;flex:none;transition:background .15s ease,transform .15s ease;}
     .nav-btn:hover{background:rgba(255,255,255,.08);color:#fff;transform:translateX(2px);}
@@ -3853,8 +3877,16 @@ function renderShell(inner) {
     .badge-vencido{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--stamp-red-tint);color:var(--stamp-red);border:1px solid var(--stamp-red);}
     @media (prefers-reduced-motion: reduce){.tag-urgente,.badge-atencion{animation:none;}}
 
-    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;border-left:4px solid var(--line);}
     .stub-asunto{color:var(--ink);}
+    /* Franja izquierda de color según prioridad, para ubicarla de un vistazo sin tener que leer el
+       texto del pill (rojo=alta, naranja=media, gris=baja). El pill de prioridad toma el mismo color. */
+    .stub[data-prioridad="alta"]{border-left-color:#E0473C;}
+    .stub[data-prioridad="media"]{border-left-color:#E8952C;}
+    .stub[data-prioridad="baja"]{border-left-color:#9AA6B8;}
+    .tag-alta{color:#E0473C;}
+    .tag-media{color:#E8952C;}
+    .tag-baja{color:#9AA6B8;}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
     .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);position:relative;overflow:hidden;}
     .stub-num::before,.stub-num::after{background:var(--paper);}
@@ -3889,11 +3921,11 @@ function renderShell(inner) {
     :root[data-theme="dark"] ::selection{background:var(--brand);color:#fff;}
   </style>
   <div class="shell">
-    <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
+    <aside class="sidebar ${sidebarColapsado ? 'collapsed' : ''}"><div class="brand-mark"><button type="button" class="sidebar-collapse-toggle" onclick="toggleSidebar()" title="${sidebarColapsado ? 'Expandir menú' : 'Colapsar menú'}">&#9776;</button>${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${avatarInner(u)}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
       <button type="button" class="sidebar-theme-toggle" onclick="toggleTema()" title="Cambiar a modo ${document.documentElement.getAttribute('data-theme') === 'dark' ? 'claro' : 'oscuro'}">${document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'}</button></div>
-      <button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
+      <button class="nav-btn" onclick="logout()" title="Cerrar sesión"><span class="ico">&#8630;</span><span class="nav-btn-label">Cerrar sesión</span></button></div>
     </aside>
     <div class="main">
       <div class="topbar">${state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;width:34px;height:34px;padding:0;flex:none;justify-content:center;border-radius:50%;background:rgba(255,255,255,.14);margin-right:10px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:19px;line-height:1;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
@@ -3918,8 +3950,16 @@ function dashboardStyleTag() {
     .filters select:focus,.filters input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
     .filters input[type=search]{border-radius:99px;padding-left:14px;}
 
-    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;}
+    .stub{border-radius:12px;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;border-left:4px solid var(--line);}
     .stub-asunto{color:var(--ink);}
+    /* Franja izquierda de color según prioridad, para ubicarla de un vistazo sin tener que leer el
+       texto del pill (rojo=alta, naranja=media, gris=baja). El pill de prioridad toma el mismo color. */
+    .stub[data-prioridad="alta"]{border-left-color:#E0473C;}
+    .stub[data-prioridad="media"]{border-left-color:#E8952C;}
+    .stub[data-prioridad="baja"]{border-left-color:#9AA6B8;}
+    .tag-alta{color:#E0473C;}
+    .tag-media{color:#E8952C;}
+    .tag-baja{color:#9AA6B8;}
     .stub:hover{transform:translateY(-2px);box-shadow:0 10px 24px -8px rgba(15,42,77,.22);border-color:var(--line-strong);}
     .stub-num{background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);}
     .stub-num::before,.stub-num::after{background:var(--paper);}
