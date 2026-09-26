@@ -1706,6 +1706,15 @@ function construirPdfReporteMensualServicios(filas, mes) {
   doc.save(`Reporte servicio tecnico ${mes}.pdf`);
 }
 function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
+// Link de "Ver ubicación": arma una búsqueda de Google Maps con la dirección tal cual está cargada en
+// la ficha del cliente/edificio — sin usar ninguna API de mapas (que tendría costo), solo un enlace
+// que abre Maps en el navegador o la app del celular de quien lo toque. Devuelve null si ese cliente
+// no tiene dirección cargada, para no mostrar un botón que no lleve a ningún lado.
+function urlUbicacionCliente(clienteId) {
+  const c = cache.clientes.find(x => x.id === clienteId);
+  if (!c || !c.direccion || !c.direccion.trim()) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.direccion.trim())}`;
+}
 function nombreUsuarioPorId(id) { const u = (cache.usuarios || []).find(x => x.id === id); return u ? `${u.nombre} ${u.apellido}` : '—'; }
 // Select de "Técnico asignado", reutilizado en Nuevo turno / Agendar / Editar servicio técnico —
 // para elegir quién va a ir a la visita, y poder cambiarlo después si ese técnico no puede ir.
@@ -2334,11 +2343,13 @@ function renderDetalleServicioTecnicoModal() {
   const estadoPresupuesto = s.presupuesto_aprobado
     ? `<span class="tag tag-resuelto">✅ Aprobado por el cliente${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</span>`
     : (s.presupuesto_enviado ? `<span class="tag tag-cat">📤 Enviado, esperando conformidad</span>` : `<span class="hint-text" style="margin:0;">Todavía no se envió al cliente.</span>`);
+  const urlUbicacion = urlUbicacionCliente(s.cliente_id);
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px;">
     <h2>🛠️ Detalle del servicio técnico</h2>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
+    ${urlUbicacion ? `<div style="margin-bottom:16px;"><a class="btn btn-ghost" href="${urlUbicacion}" target="_blank" rel="noopener">📍 Ver ubicación</a></div>` : ''}
     ${s.estado === 'realizado' ? renderDetalleRealizadoServicio(s) : ''}
     ${s.checklist_sistemas ? renderChecklistSistemasServicio(s) : ''}
     ${s.checklist_sistemas ? renderNotasMantenimientoServicio(s) : ''}
@@ -4575,6 +4586,7 @@ function renderTicket(id) {
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
         <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
         <a class="btn btn-ghost" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">📄 Exportar PDF</a>
+        ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">📍 Ver ubicación</a>` : ''}
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
       </div>
       <div class="meta-grid">
