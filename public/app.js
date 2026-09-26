@@ -3821,14 +3821,21 @@ function renderShell(inner) {
     .sidebar .brand-mark .name{letter-spacing:.05em;font-size:11px;white-space:normal;line-height:1.4;width:100%;transition:opacity .15s ease;}
     .sidebar nav{gap:4px;}
 
-    /* Menú colapsado a solo iconos (botón ☰ en el logo). El ancho se anima; las etiquetas de texto
-       se ocultan con opacity+width en vez de display:none para que la transición se vea prolija. */
+    /* Menú colapsado a solo iconos. El botón usa flechas «/» (no el mismo símbolo que el ícono de
+       Tickets) para que no se confundan estando uno arriba del otro. El logo con el nombre "BORCAM"
+       se oculta al colapsar (si no, queda recortado feo en un espacio tan angosto) y en su lugar
+       queda solo el botón, centrado. */
     .sidebar{width:230px;flex:none;transition:width .2s ease;}
-    .sidebar.collapsed{width:72px;}
-    .sidebar-collapse-toggle{border:none;background:rgba(255,255,255,.1);color:#fff;width:28px;height:28px;border-radius:8px;font-size:14px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;transition:background .15s ease;}
+    .sidebar.collapsed{width:68px;}
+    .brand-mark{position:relative;}
+    .sidebar-collapse-toggle{position:absolute;top:0;right:0;border:none;background:rgba(255,255,255,.1);color:#fff;width:26px;height:26px;border-radius:7px;font-size:13px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;transition:background .15s ease;}
     .sidebar-collapse-toggle:hover{background:rgba(255,255,255,.2);}
-    .sidebar.collapsed .brand-mark{flex-direction:row;align-items:center;justify-content:center;}
-    .sidebar.collapsed .brand-mark .name,.sidebar.collapsed .nav-btn-label,.sidebar.collapsed .who-text{display:none;}
+    .sidebar:not(.collapsed) .brand-mark{padding-right:32px;}
+    .sidebar.collapsed .brand-mark{display:flex;align-items:center;justify-content:center;min-height:26px;}
+    .sidebar.collapsed .brand-mark .logo-img,.sidebar.collapsed .brand-mark .name{display:none;}
+    .sidebar.collapsed .brand-mark::after{display:none;}
+    .sidebar.collapsed .sidebar-collapse-toggle{position:static;}
+    .sidebar.collapsed .nav-btn-label,.sidebar.collapsed .who-text{display:none;}
     .sidebar.collapsed .who{justify-content:center;}
     .sidebar.collapsed .nav-btn{justify-content:center;padding:9px;}
     .nav-btn{position:relative;border-radius:10px;padding:9px 12px 9px 10px;transition:background .15s ease,color .15s ease,transform .15s ease;}
@@ -3921,7 +3928,7 @@ function renderShell(inner) {
     :root[data-theme="dark"] ::selection{background:var(--brand);color:#fff;}
   </style>
   <div class="shell">
-    <aside class="sidebar ${sidebarColapsado ? 'collapsed' : ''}"><div class="brand-mark"><button type="button" class="sidebar-collapse-toggle" onclick="toggleSidebar()" title="${sidebarColapsado ? 'Expandir menú' : 'Colapsar menú'}">&#9776;</button>${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
+    <aside class="sidebar ${sidebarColapsado ? 'collapsed' : ''}"><div class="brand-mark"><button type="button" class="sidebar-collapse-toggle" onclick="toggleSidebar()" title="${sidebarColapsado ? 'Expandir menú' : 'Colapsar menú'}">${sidebarColapsado ? '&#187;' : '&#171;'}</button>${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItems(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><div class="sidebar-avatar">${avatarInner(u)}</div><div class="who-text"><strong>${escapeHtml(u.nombre)} ${escapeHtml(u.apellido)}</strong>${escapeHtml(u.cargo)}</div>
       <button type="button" class="sidebar-theme-toggle" onclick="toggleTema()" title="Cambiar a modo ${document.documentElement.getAttribute('data-theme') === 'dark' ? 'claro' : 'oscuro'}">${document.documentElement.getAttribute('data-theme') === 'dark' ? '☀️' : '🌙'}</button></div>
