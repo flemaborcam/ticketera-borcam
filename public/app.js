@@ -3846,8 +3846,9 @@ function renderShell(inner) {
        Tickets) para que no se confundan estando uno arriba del otro. El logo con el nombre "BORCAM"
        se oculta al colapsar (si no, queda recortado feo en un espacio tan angosto) y en su lugar
        queda solo el botón, centrado. */
-    .sidebar{width:230px;flex:none;transition:width .2s ease;}
-    .sidebar.collapsed{width:68px;}
+    .sidebar{width:230px;flex:none;transition:width .2s ease;overflow-x:hidden;}
+    .sidebar.collapsed{width:78px;}
+    @media (min-width: 881px) { .sidebar.collapsed + .main{margin-left:78px;} }
     .brand-mark{position:relative;}
     .sidebar-collapse-toggle{position:absolute;top:0;right:0;border:none;background:rgba(255,255,255,.1);color:#fff;width:26px;height:26px;border-radius:7px;font-size:13px;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;transition:background .15s ease;}
     .sidebar-collapse-toggle:hover{background:rgba(255,255,255,.2);}
@@ -3857,7 +3858,10 @@ function renderShell(inner) {
     .sidebar.collapsed .brand-mark::after{display:none;}
     .sidebar.collapsed .sidebar-collapse-toggle{position:static;}
     .sidebar.collapsed .nav-btn-label,.sidebar.collapsed .who-text{display:none;}
-    .sidebar.collapsed .who{justify-content:center;}
+    /* La fila de "quién soy" (avatar + botón de modo oscuro) no entra lado a lado en el ancho
+       colapsado, así que ahí se apilan uno arriba del otro en vez de desbordar con scrollbar. */
+    .sidebar.collapsed .who{flex-direction:column;justify-content:center;gap:8px;padding:4px 0 12px;}
+    .sidebar.collapsed .sidebar-theme-toggle{margin-left:0;}
     .sidebar.collapsed .nav-btn{justify-content:center;padding:9px;}
     .nav-btn{position:relative;border-radius:10px;padding:9px 12px 9px 10px;transition:background .15s ease,color .15s ease,transform .15s ease;}
     .nav-btn .ico{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:rgba(255,255,255,.06);font-size:13px;flex:none;transition:background .15s ease,transform .15s ease;}
