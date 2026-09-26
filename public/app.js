@@ -3847,7 +3847,11 @@ function renderShell(inner) {
   return `
   <style>
     /* Tarjetas de totales del dashboard de Reporte mensual (Servicio Técnico). */
-    /* Mismo estilo "vidrio sobre azul marino" del panel de Estadísticas, aplicado acá también. */
+    /* Mismo estilo "vidrio sobre azul marino" del panel de Estadísticas, aplicado acá también.
+       El fondo degradé de .kpi-panel va acá (en el <style> global) y no solo en Estadísticas, porque
+       esta página lo necesita también — si no, el panel queda transparente y el texto blanco no se ve. */
+    .kpi-panel{background:linear-gradient(135deg,#0A1830 0%,#16345F 55%,#0F2A4D 100%);border-radius:14px;padding:20px;}
+    @media print { .kpi-panel{ background:#fff !important; } }
     .stat-card{background:rgba(255,255,255,.08);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:14px 18px;min-width:180px;flex:1;box-shadow:0 14px 28px -14px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12);}
     .stat-card-label{font-size:12px;color:#AEC0DE;margin-bottom:6px;}
     .stat-card-value{font-size:22px;font-weight:700;color:#fff;}
