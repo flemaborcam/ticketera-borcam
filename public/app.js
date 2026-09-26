@@ -1126,7 +1126,7 @@ function renderServicioTecnicoTab() {
     <button class="reply-tab ${vista === 'lista' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('lista')">Lista</button>
     <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('calendario')">📅 Calendario</button>
   </div>`;
-  return `
+  return `${servicioTecnicoListaStyleTag()}
     <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div class="page-head-actions">
         ${vista === 'lista' && tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
@@ -1135,6 +1135,18 @@ function renderServicioTecnicoTab() {
     ${vistaToggleHtml}
     ${vista === 'lista' ? `<div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>` : ''}
     ${contenido}`;
+}
+// Tarjeta de turno con franja lateral de color según el estado de pago (opción 3 del mockup que
+// aprobó Federico) — reemplaza el .user-row genérico solo acá, en Próximos turnos/Servicios Realizados.
+function servicioTecnicoListaStyleTag() {
+  return `<style id="servicio-tecnico-lista-style-v1">
+    .st-turno{display:flex;align-items:stretch;background:#fff;border-radius:12px;margin-bottom:10px;overflow:hidden;box-shadow:0 10px 22px -14px rgba(15,42,77,.22),0 1px 2px rgba(15,42,77,.05);transition:box-shadow .15s ease,transform .15s ease;border:none;padding:0;}
+    .st-turno:hover{box-shadow:0 16px 30px -14px rgba(15,42,77,.3);transform:translateY(-1px);}
+    .st-turno-stripe{width:6px;flex:none;}
+    .st-turno-body{flex:1;min-width:0;display:flex;align-items:center;gap:14px;padding:14px 16px;}
+    .st-turno-ico{width:38px;height:38px;border-radius:11px;background:linear-gradient(145deg,#3D7EF0,#1B3F73);display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;flex:none;box-shadow:0 6px 14px -4px rgba(27,63,115,.5),inset 0 1px 0 rgba(255,255,255,.35);}
+    :root[data-theme="dark"] .st-turno{background:var(--card);}
+  </style>`;
 }
 function cambiarServicioTecnicoTab(t) {
   state.servicioTecnicoTab = t;
@@ -1767,16 +1779,28 @@ function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago) {
   const html = turnos.length ? turnos.map(s => {
     const tieneCosto = servicioTieneCosto(s);
     let badgePago = '';
+    // Color de la franja lateral: verde si ya está pagado, naranja si tiene costo pendiente de cobro,
+    // azul (el color neutro de la marca) para los turnos que todavía no tienen costo cargado.
+    let franjaColor = 'var(--brand)';
     if (tieneCosto) {
-      badgePago = s.pagado
-        ? ` <span class="tag tag-resuelto" style="margin-left:6px;">🟢 Pagado${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}</span>`
-        : ` <span class="tag tag-cat" style="margin-left:6px;">🟠 Pendiente de pago</span>`;
+      if (s.pagado) {
+        franjaColor = '#1E9E6B';
+        badgePago = ` <span class="tag tag-resuelto" style="margin-left:6px;">🟢 Pagado${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}</span>`;
+      } else {
+        franjaColor = '#E8622C';
+        badgePago = ` <span class="tag tag-cat" style="margin-left:6px;">🟠 Pendiente de pago</span>`;
+      }
     }
     return `
-    <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
-      <div class="avatar">🛠️</div>
-      <div><div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}${badgePago}</div>
-      <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''} · 👤 ${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</div></div>
+    <button type="button" class="st-turno" style="width:100%;text-align:left;cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
+      <div class="st-turno-stripe" style="background:${franjaColor};"></div>
+      <div class="st-turno-body">
+        <div class="st-turno-ico">🔧</div>
+        <div style="flex:1;min-width:0;">
+          <div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}${badgePago}</div>
+          <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''} · 👤 ${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</div>
+        </div>
+      </div>
     </button>`;
   }).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
   return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
