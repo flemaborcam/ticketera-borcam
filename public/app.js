@@ -21,7 +21,8 @@ let state = {
   filtersReservas: { estado: 'Abierto', prioridad: 'todas', search: '' }, paginaReservas: 1, paginaReservasAgendadas: 1,
   newsletterDestinatarios: [], newsletterAdjuntos: [],
   reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
-  reportesDesde: '', reportesHasta: ''
+  reportesDesde: '', reportesHasta: '',
+  configMenuAbierto: false
 };
 
 /* ---------------- Menú lateral colapsado (solo iconos) ---------------- */
@@ -3743,22 +3744,42 @@ function logoSvg(variant) {
   const src = variant === 'white' ? '/logo-white.png' : '/logo.png';
   return `<img src="${src}" alt="Borcam" class="logo-img">`;
 }
+// Vistas que ahora viven adentro del desplegable "Configuración" en vez de tener renglón propio
+// en el menú principal.
+const NAV_CONFIG_SUBVISTAS = ['configuracion', 'usuarios', 'perfil', 'automatizaciones'];
+// Con el menú colapsado a solo iconos no hay lugar para desplegar el submenú angosto, así que ahí
+// tocar "Configuración" navega directo a esa sección en vez de abrir el desplegable.
+function toggleConfigMenu() {
+  if (sidebarColapsado) { go('configuracion'); return; }
+  state.configMenuAbierto = !state.configMenuAbierto; render();
+}
 function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
-    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
     { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'servicio-tecnico', label: 'Servicio Técnico', ico: '&#128295;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
-  items.push(
-    { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
-    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
-  );
-  return items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('');
+  const botonesPrincipales = items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('');
+
+  // "Configuración" se abre solo si ya estás parado en alguna de sus subvistas, o si lo abriste a mano.
+  const abierto = state.configMenuAbierto || NAV_CONFIG_SUBVISTAS.includes(activeView);
+  const subItems = [
+    { v: 'configuracion', label: 'General', ico: '&#9881;' },
+    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
+    { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
+    { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+  ];
+  const configBtn = `<button class="nav-btn nav-btn-config ${abierto ? 'open' : ''} ${NAV_CONFIG_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleConfigMenu()" title="Configuración"><span class="ico">&#9881;</span><span class="nav-btn-label">Configuración</span><span class="nav-btn-chev">&#9654;</span></button>
+    <div class="nav-submenu ${abierto ? 'open' : ''}">
+      ${subItems.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
+    </div>`;
+
+  return botonesPrincipales + configBtn;
 }
 // Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
 // 13+ botones apretados en una sola fila ilegible. El resto del menú completo vive en el modal
@@ -3845,6 +3866,18 @@ function renderShell(inner) {
     .nav-btn.active{background:linear-gradient(90deg,var(--brand) 0%,var(--brand-2) 130%);color:#fff;box-shadow:0 4px 14px -2px rgba(30,86,199,.55);}
     .nav-btn.active .ico{background:rgba(255,255,255,.22);}
     .nav-btn.active::before{content:'';position:absolute;left:-14px;top:50%;transform:translateY(-50%);width:4px;height:22px;border-radius:0 4px 4px 0;background:#fff;box-shadow:0 0 10px 2px rgba(255,255,255,.6);}
+
+    /* Desplegable de "Configuración": agrupa Usuarios, Mi perfil y Automatizaciones para que no
+       ocupen renglón propio en el menú principal. */
+    .nav-btn-chev{margin-left:auto;font-size:9px;opacity:.65;transition:transform .15s ease;flex:none;}
+    .nav-btn-config.open .nav-btn-chev{transform:rotate(90deg);}
+    .nav-submenu{overflow:hidden;max-height:0;transition:max-height .2s ease;}
+    .nav-submenu.open{max-height:220px;}
+    .nav-subbtn{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;border-radius:8px;padding:7px 12px 7px 34px;font-size:12.5px;font-weight:600;color:#AEC0DE;transition:background .15s ease,color .15s ease;margin-bottom:2px;cursor:pointer;text-align:left;}
+    .nav-subbtn:hover{background:rgba(255,255,255,.07);color:#fff;}
+    .nav-subbtn.active{background:rgba(61,126,240,.28);color:#fff;}
+    .nav-subbtn .ico{display:inline-flex;align-items:center;justify-content:center;width:18px;font-size:11px;flex:none;}
+    .sidebar.collapsed .nav-submenu,.sidebar.collapsed .nav-btn-chev{display:none;}
     .sidebar-foot{border-top-color:rgba(255,255,255,.1);}
     .sidebar-foot .who{display:flex;align-items:center;gap:10px;padding:4px 4px 12px;}
     .sidebar-avatar{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;color:#fff;background:linear-gradient(135deg,var(--brand-2),#8B5CF6);box-shadow:0 0 0 2px rgba(255,255,255,.15);overflow:hidden;}
