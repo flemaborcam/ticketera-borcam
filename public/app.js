@@ -4588,7 +4588,7 @@ function renderThreadHtml(t) {
         <span>${fmtDateTime(m.fecha)}</span></div>
       ${m.cc.length ? `<div class="msg-cc">CC: ${m.cc.map(escapeHtml).join(', ')}</div>` : ''}
       <div class="msg-body">${escapeHtml(limpiarCuerpo(m.cuerpo))}</div>
-      ${m.cuerpoHtml ? `<iframe class="msg-html-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" srcdoc="${escapeHtml(m.cuerpoHtml)}"></iframe>` : ''}
+      ${m.cuerpoHtml ? `<iframe class="msg-html-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" srcdoc="${escapeHtml(m.cuerpoHtml)}" onload="try{var __d=this.contentWindow.document;var __h=Math.max(__d.body ? __d.body.scrollHeight : 0, __d.documentElement ? __d.documentElement.scrollHeight : 0);this.style.height=(__h+16)+'px';}catch(e){}"></iframe>` : ''}
       ${m.adjuntos.length ? renderAdjuntos(t.id, m.id, m.adjuntos) : ''}
       ${m.firmaHtml ? `<div class="msg-firma">${m.firmaHtml}</div>` : ''}</div>`;
   }).join('');
@@ -4634,7 +4634,7 @@ function ticketStyleTag() {
     /* Evita que una URL larga sin espacios (frecuente en correos con imágenes embebidas) empuje
        el ancho de la burbuja y desborde la pantalla. */
     .msg-body{overflow-wrap:anywhere;word-break:break-word;}
-    .msg-html-frame{max-width:100%;}
+    .msg-html-frame{max-width:100%;width:100%;min-height:40px;border:none;display:block;}
     .msg-entrante{border-top-left-radius:4px !important;}
     .msg-entrante::before{content:'';position:absolute;left:-7px;top:0;width:0;height:0;border:8px solid transparent;border-top-color:#fff;border-left:0;transform:rotate(-8deg);}
     .msg-saliente{border-top-right-radius:4px !important;}
