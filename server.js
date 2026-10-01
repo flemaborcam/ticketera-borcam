@@ -4438,8 +4438,26 @@ app.post('/api/portal/tickets', requireClientePortalOApiKey, async (req, res) =>
   if (!edificioId || !ids.includes(edificioId)) return bad(res, 'Elegí para qué edificio es el ticket.');
   const cliente = (await pool.query('select * from clientes where id=$1', [edificioId])).rows[0];
   if (!cliente) return bad(res, 'No encontrado', 404);
-  const remitenteNombre = cliente.contacto_nombre || cliente.nombre;
-  const remitenteEmail = cliente.correo || '';
+  // El remitente del ticket (a quien le llega la respuesta por mail) es quien está GESTIONANDO
+  // el ticket - la cuenta autenticada (clienteIdActual) - no necesariamente el edificio puntual
+  // al que pertenece. Por ejemplo: Kingsa administra Domus; un ticket sobre Domus lo tiene que
+  // responder por mail Kingsa, no el contacto propio que Domus tenga cargado en su ficha.
+  const cuentaGestora = clienteIdActual === edificioId
+    ? cliente
+    : (await pool.query('select * from clientes where id=$1', [clienteIdActual])).rows[0] || cliente;
+  let remitenteNombre = cuentaGestora.contacto_nombre || cuentaGestora.nombre;
+  let remitenteEmail = cuentaGestora.correo || '';
+  // Si el pedido viene autenticado por API key (una integracion externa, como Convive) y declara
+  // explicitamente a nombre de quien es el ticket (por ejemplo, un residente puntual), se respeta
+  // ese remitente en vez del de la cuenta gestora - asi la respuesta le llega a esa persona y no
+  // a la Administracion. Via sesion de portal humano esto no se acepta (no hace falta, y evita que
+  // alguien logueado pueda falsear el remitente de sus propios tickets).
+  if (req.clienteIdExterno) {
+    const nombreOverride = (req.body.remitenteNombre || '').trim();
+    const emailOverride = (req.body.remitenteEmail || '').trim();
+    if (nombreOverride) remitenteNombre = nombreOverride;
+    if (emailOverride) remitenteEmail = emailOverride;
+  }
   const numero = await nextTicketNumero();
   const r = await pool.query(
     `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, cliente_id, necesita_atencion)
