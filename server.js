@@ -774,6 +774,29 @@ function requireCliente(req, res, next) {
   if (!req.session || req.session.type !== 'cliente') return res.status(401).json({ error: 'No autenticado' });
   next();
 }
+// Igual que requireCliente (sesión del portal, login humano con usuario/contraseña), pero además acepta
+// una API key de administración vía "Authorization: Bearer <key>" — pensada para que un sistema externo
+// (como Convive) pueda traer/crear/responder tickets de UNA administración puntual sin tener que loguearse
+// como si fuera una persona. Deliberadamente NO se usa en perfil/documentos/servicios: la key solo abre
+// lo mínimo que necesita una integración (edificios y tickets).
+async function requireClientePortalOApiKey(req, res, next) {
+  if (req.session && req.session.type === 'cliente') return next();
+  const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  const apiKey = m && m[1] ? m[1].trim() : null;
+  if (!apiKey) return res.status(401).json({ error: 'No autenticado' });
+  try {
+    const cliente = (await pool.query('select id from clientes where api_key = $1', [apiKey])).rows[0];
+    if (!cliente) return res.status(401).json({ error: 'No autenticado' });
+    req.clienteIdExterno = cliente.id;
+    next();
+  } catch (e) {
+    res.status(500).json({ error: 'Error validando la API key' });
+  }
+}
+// Devuelve el cliente autenticado sin importar si vino por sesión de portal o por API key.
+function clienteIdDeRequest(req) {
+  return req.clienteIdExterno || (req.session && req.session.clienteId);
+}
 function ok(res, data) { res.json(data); }
 function bad(res, msg, code) { res.status(code || 400).json({ error: msg }); }
 // Una cuenta de portal (por ejemplo, una Administración) puede gestionar varios edificios a la vez.
@@ -4398,19 +4421,20 @@ async function procesarAdjuntosBase64(ticketId, adjuntos) {
   }
   return procesados;
 }
-app.get('/api/portal/edificios', requireCliente, async (req, res) => {
-  const ids = await idsClienteGestionados(req.session.clienteId);
+app.get('/api/portal/edificios', requireClientePortalOApiKey, async (req, res) => {
+  const ids = await idsClienteGestionados(clienteIdDeRequest(req));
   const edificios = (await pool.query('select id, nombre, rol_cliente as "rolCliente" from clientes where id = any($1) order by nombre', [ids])).rows;
   ok(res, edificios);
 });
-app.post('/api/portal/tickets', requireCliente, async (req, res) => {
+app.post('/api/portal/tickets', requireClientePortalOApiKey, async (req, res) => {
   const asunto = (req.body.asunto || '').trim();
   const cuerpo = (req.body.cuerpo || '').trim();
   if (!asunto || !cuerpo) return bad(res, 'Faltan datos.');
-  const ids = await idsClienteGestionados(req.session.clienteId);
+  const clienteIdActual = clienteIdDeRequest(req);
+  const ids = await idsClienteGestionados(clienteIdActual);
   // Si la cuenta gestiona más de un edificio, el formulario tiene que decir para cuál es el ticket;
   // si solo gestiona el suyo, usamos ese directamente sin pedirle nada extra.
-  const edificioId = ids.length > 1 ? req.body.edificioClienteId : req.session.clienteId;
+  const edificioId = ids.length > 1 ? req.body.edificioClienteId : clienteIdActual;
   if (!edificioId || !ids.includes(edificioId)) return bad(res, 'Elegí para qué edificio es el ticket.');
   const cliente = (await pool.query('select * from clientes where id=$1', [edificioId])).rows[0];
   if (!cliente) return bad(res, 'No encontrado', 404);
@@ -4462,8 +4486,8 @@ app.put('/api/portal/perfil', requireCliente, async (req, res) => {
   }
   ok(res, { ok: true });
 });
-app.get('/api/portal/tickets', requireCliente, async (req, res) => {
-  const ids = await idsClienteGestionados(req.session.clienteId);
+app.get('/api/portal/tickets', requireClientePortalOApiKey, async (req, res) => {
+  const ids = await idsClienteGestionados(clienteIdDeRequest(req));
   const tickets = (await pool.query(
     `select t.*, c.nombre as edificio_nombre from tickets t left join clientes c on c.id = t.cliente_id
      where t.cliente_id = any($1) order by t.actualizado desc`,
@@ -4471,24 +4495,25 @@ app.get('/api/portal/tickets', requireCliente, async (req, res) => {
   )).rows;
   ok(res, tickets);
 });
-app.get('/api/portal/tickets/:id', requireCliente, async (req, res) => {
-  const ids = await idsClienteGestionados(req.session.clienteId);
+app.get('/api/portal/tickets/:id', requireClientePortalOApiKey, async (req, res) => {
+  const ids = await idsClienteGestionados(clienteIdDeRequest(req));
   const t = await ticketConMensajes(req.params.id);
   if (!t || !ids.includes(t.cliente_id)) return bad(res, 'No encontrado', 404);
   t.mensajes = t.mensajes.filter(m => m.tipo !== 'nota');
   ok(res, t);
 });
-app.post('/api/portal/tickets/:id/mensajes', requireCliente, async (req, res) => {
+app.post('/api/portal/tickets/:id/mensajes', requireClientePortalOApiKey, async (req, res) => {
   const id = req.params.id;
   const cuerpo = (req.body.cuerpo || '').trim();
   if (!cuerpo) return bad(res, 'El mensaje no puede estar vacío.');
-  const ids = await idsClienteGestionados(req.session.clienteId);
+  const clienteIdActual = clienteIdDeRequest(req);
+  const ids = await idsClienteGestionados(clienteIdActual);
   const t = (await pool.query('select * from tickets where id=$1', [id])).rows[0];
   if (!t || !ids.includes(t.cliente_id)) return bad(res, 'No encontrado', 404);
   // Si la cuenta que responde es la administración (no el propio edificio dueño del ticket),
   // aclaramos quién escribe para que en el hilo quede claro que no fue el edificio directamente.
-  const cliente = (await pool.query('select nombre from clientes where id=$1', [req.session.clienteId])).rows[0];
-  if (t.cliente_id !== req.session.clienteId) {
+  const cliente = (await pool.query('select nombre from clientes where id=$1', [clienteIdActual])).rows[0];
+  if (t.cliente_id !== clienteIdActual) {
     const edificio = (await pool.query('select nombre from clientes where id=$1', [t.cliente_id])).rows[0];
     cliente.nombre = `${cliente.nombre} (Administración de ${edificio ? edificio.nombre : 'edificio'})`;
   }
