@@ -4902,15 +4902,20 @@ async function revisarCasillaReal() {
           const parsed = await simpleParser(msg.source);
           await procesarCorreoEntrante(parsed);
         } catch (e) { console.error('Error procesando un correo:', e.message); }
-        if (msg.uid > maxUid) maxUid = msg.uid;
+        // Guardamos el UID apenas se procesa CADA correo, no al final de toda la tanda: si se cae la
+        // conexión o algo falla más adelante en el mismo ciclo, el próximo intento (60s después) ya no
+        // vuelve a reprocesar los correos que sí se guardaron bien. Antes el UID se guardaba una sola
+        // vez al final, y un fallo a mitad de camino hacía que se reprocesaran correos ya procesados
+        // (tickets y adjuntos duplicados) hasta que un ciclo completo terminara sin errores.
+        if (msg.uid > maxUid) {
+          maxUid = msg.uid;
+          await pool.query('update configuracion set imap_ultimo_uid=$1 where id=1', [maxUid]);
+        }
       }
     } finally {
       lock.release();
     }
     await client.logout();
-    if (maxUid > (cfg.imap_ultimo_uid || 0)) {
-      await pool.query('update configuracion set imap_ultimo_uid=$1 where id=1', [maxUid]);
-    }
   } catch (e) {
     console.error('Error revisando la casilla real:', e.message);
   } finally {
@@ -5047,12 +5052,20 @@ app.get('/api/adjuntos/:ticketId/:mensajeId/:adjuntoId', async (req, res) => {
   if (!m) return res.status(404).json({ error: 'No encontrado' });
   const adj = (m.adjuntos || []).find(a => a.id === adjuntoId);
   if (!adj || !adj.path) return res.status(404).json({ error: 'Adjunto no encontrado' });
+  // Un adjunto nunca cambia una vez subido (cada envío genera un "path" propio y nuevo en Storage),
+  // así que su propio id sirve como ETag estable. Si el navegador ya lo tiene guardado, contestamos
+  // 304 sin volver a pedirle el archivo a Supabase — esto es lo que generaba la mayor parte del
+  // egress: cada vista de un ticket con adjuntos volvía a descargarlos enteros del lado del servidor,
+  // aunque el navegador ya los tuviera.
+  const etag = `"adj-${adjuntoId}"`;
+  res.set('Cache-Control', 'private, max-age=604800, immutable');
+  res.set('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
   try {
     const upstream = await descargarArchivoStorage(adj.path);
     const buf = Buffer.from(await upstream.arrayBuffer());
     res.set('Content-Type', adj.mime || 'application/octet-stream');
     res.set('Content-Disposition', `inline; filename="${encodeURIComponent(adj.nombre)}"`);
-    res.set('Cache-Control', 'private, max-age=86400');
     res.send(buf);
   } catch (e) {
     res.status(500).json({ error: e.message });
