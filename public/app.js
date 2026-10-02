@@ -1850,7 +1850,28 @@ function eventosServicioTecnicoPorFecha() {
     const { clase, label } = claseYLabelServicioTecnico(s, ahora);
     (mapa[key] = mapa[key] || []).push(`<div class="cal-evento ${clase}" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleServicioTecnico('${s.id}')">${escapeHtml(label)}</div>`);
   }
+  const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
+  if (tipoFiltro !== 'servicio') {
+    for (const p of (cache.mantenimientosProyectados || [])) {
+      const nombre = `🔧 ${p.clienteNombre}`;
+      (mapa[p.fecha] = mapa[p.fecha] || []).push(`<div class="cal-evento proyectado" title="Proyectado: ${escapeHtml(nombre)}" onclick="event.stopPropagation();abrirDetalleMantenimientoProyectado('${p.contratoId}','${p.fecha}')">${escapeHtml(nombre)} (proyectado)</div>`);
+    }
+  }
   return mapa;
+}
+// Trae las fechas proyectadas de mantenimiento (líneas punteadas del calendario) para el mes que se
+// está mirando — se recalculan en el servidor en base a la frecuencia de cada contrato, respetando
+// días hábiles y el cupo diario, igual que el turno real que se generaría. Se cachean por mes para
+// no repetir el pedido en cada render.
+async function asegurarMantenimientosProyectadosCargados(anio, mes) {
+  const key = `${anio}-${mes}`;
+  if (cache.mantenimientosProyectadosMesKey === key) return;
+  try {
+    const datos = await api('GET', `/api/calendario/mantenimientos-proyectados?anio=${anio}&mes=${mes}`);
+    cache.mantenimientosProyectados = datos;
+    cache.mantenimientosProyectadosMesKey = key;
+  } catch (e) { cache.mantenimientosProyectados = cache.mantenimientosProyectados || []; }
+  if (state.view === 'servicio-tecnico' && state.servicioTecnicoVista === 'calendario') refrescarVistaServicioTecnico();
 }
 function cambiarMesCalendarioServicio(delta) {
   const anio = state.calServicioAnio != null ? state.calServicioAnio : new Date().getFullYear();
@@ -1862,11 +1883,53 @@ function cambiarMesCalendarioServicio(delta) {
 }
 function cambiarVistaServicioTecnico(v) { state.servicioTecnicoVista = v; render(); }
 function cambiarFiltroTipoCalendarioServicio(v) { state.stCalendarioFiltroTipo = v; render(); }
+function abrirDetalleMantenimientoProyectado(contratoId, fecha) {
+  state.modal = 'detalle-mantenimiento-proyectado';
+  state.proyectadoContratoId = contratoId;
+  state.proyectadoFecha = fecha;
+  render();
+}
+function renderDetalleMantenimientoProyectadoModal() {
+  const p = (cache.mantenimientosProyectados || []).find(x => String(x.contratoId) === String(state.proyectadoContratoId) && x.fecha === state.proyectadoFecha);
+  if (!p) return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal"><div class="hint-text">Este mantenimiento proyectado ya no está disponible (puede que ya se haya generado el turno). </div><div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button></div></div></div>`;
+  const fechaLegible = new Date(p.fecha + 'T00:00:00-03:00').toLocaleDateString('es-UY', { dateStyle: 'full', timeZone: 'America/Montevideo' });
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+    <h2>🔧 Mantenimiento proyectado</h2>
+    <div class="stub-list" style="margin-bottom:14px;">
+      <div><strong>${escapeHtml(p.clienteNombre)}</strong></div>
+      <div class="hint-text">Sistemas: ${escapeHtml(nombreSistemasParaTituloCliente(p.sistemas))}</div>
+      <div class="hint-text">Fecha proyectada: ${fechaLegible}</div>
+      <div class="hint-text" style="margin-top:8px;">Este turno todavía no existe — se generaría automáticamente cerca de esta fecha, o podés generarlo ahora mismo.</div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+      <button type="button" class="btn btn-primary" onclick="generarTurnoMantenimientoAhora('${p.contratoId}')">Generar turno ahora</button>
+    </div>
+  </div></div>`;
+}
+function nombreSistemasParaTituloCliente(sistemas) {
+  return Array.isArray(sistemas) && sistemas.length ? sistemas.join(', ') : 'Mantenimiento';
+}
+async function generarTurnoMantenimientoAhora(contratoId) {
+  try {
+    await api('POST', `/api/contratos-mantenimiento/${contratoId}/generar-turno-ahora`);
+    showToast('Turno de mantenimiento generado.');
+    cache.mantenimientosProyectadosMesKey = null;
+    closeModal();
+    refrescarVistaServicioTecnico();
+    const anio = state.calServicioAnio != null ? state.calServicioAnio : new Date().getFullYear();
+    const mes = state.calServicioMes != null ? state.calServicioMes : new Date().getMonth();
+    const [servicios] = await Promise.all([api('GET', '/api/servicios-tecnicos'), asegurarMantenimientosProyectadosCargados(anio, mes)]);
+    cache.serviciosTecnicos = servicios;
+    refrescarVistaServicioTecnico();
+  } catch (e) { showToast(e.message); }
+}
 function renderServicioTecnicoCalendarioMes() {
   const anio = state.calServicioAnio != null ? state.calServicioAnio : new Date().getFullYear();
   const mes = state.calServicioMes != null ? state.calServicioMes : new Date().getMonth();
   const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
   const edificioFiltro = state.stCalendarioEdificioFiltro || '';
+  asegurarMantenimientosProyectadosCargados(anio, mes);
   const grid = renderGrillaCalendarioMes(anio, mes, eventosServicioTecnicoPorFecha(), {
     maxPorDia: 3,
     onAddDia: fechaStr => `openNuevoServicioTecnicoModal('${fechaStr}')`,
@@ -1888,6 +1951,7 @@ function renderServicioTecnicoCalendarioMes() {
         <span><span class="cal-dot" style="background:#1e8e4f;"></span> Realizado</span>
         <span><span class="cal-dot" style="background:#1a1a1a;"></span> Pendiente de pago</span>
         <span><span class="cal-dot" style="background:#c1440e;"></span> Atrasado</span>
+        <span><span class="cal-dot" style="background:transparent;border:1.5px dashed #1e8e4f;"></span> Mantenimiento proyectado</span>
       </div>
       <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>
     </div>
@@ -3289,6 +3353,12 @@ function renderDiaCalendarioModal() {
       texto: `${s.contrato_mantenimiento_id ? '🔧 ' : '🛠️ '}${escapeHtml(claseYLabelServicioTecnico(s, ahoraModal).label)}`,
       onclick: `abrirDetalleServicioTecnico('${s.id}')`
     }));
+    if ((state.stCalendarioFiltroTipo || 'todos') !== 'servicio') {
+      for (const p of (cache.mantenimientosProyectados || [])) {
+        if (p.fecha !== fechaStr) continue;
+        filas.push({ texto: `🔧 ${escapeHtml(p.clienteNombre)} (proyectado)`, onclick: `abrirDetalleMantenimientoProyectado('${p.contratoId}','${p.fecha}')` });
+      }
+    }
   }
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
     <h2>📅 ${fechaLegible}</h2>
@@ -6654,6 +6724,7 @@ function renderActiveModal() {
   if (state.modal === 'agendar-servicio') return renderAgendarServicioModal();
   if (state.modal === 'detalle-cita') return renderDetalleCitaModal();
   if (state.modal === 'dia-calendario') return renderDiaCalendarioModal();
+  if (state.modal === 'detalle-mantenimiento-proyectado') return renderDetalleMantenimientoProyectadoModal();
   if (state.modal === 'detalle-servicio-tecnico') return renderDetalleServicioTecnicoModal();
   if (state.modal === 'nuevo-servicio-tecnico') return renderNuevoServicioTecnicoModal();
   if (state.modal === 'catalogo-costo') return renderCatalogoCostoModal();
