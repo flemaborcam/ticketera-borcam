@@ -1896,6 +1896,77 @@ app.post('/api/contratos-mantenimiento/:id/pausar', requireStaff, async (req, re
   if (!r.rows[0]) return bad(res, 'Contrato no encontrado.', 404);
   ok(res, r.rows[0]);
 });
+app.get('/api/calendario/mantenimientos-proyectados', requireStaff, async (req, res) => {
+  const anio = parseInt(req.query.anio, 10);
+  const mes = parseInt(req.query.mes, 10); // 0-11
+  if (!Number.isInteger(anio) || !Number.isInteger(mes)) return bad(res, 'Faltan año/mes.');
+  const inicioMes = `${anio}-${String(mes + 1).padStart(2, '0')}-01`;
+  const finMes = new Date(Date.UTC(anio, mes + 1, 0)).toISOString().slice(0, 10);
+  const contratos = (await pool.query(
+    `select cm.*, c.nombre as cliente_nombre from contratos_mantenimiento cm
+     join clientes c on c.id = cm.cliente_id
+     where cm.activo = true`
+  )).rows;
+  const proyectados = [];
+  for (const c of contratos) {
+    // Simula los próximos ciclos teóricos del contrato hasta pasarse del mes consultado.
+    let ideal = new Date(c.proxima_fecha instanceof Date ? c.proxima_fecha.toISOString().slice(0, 10) + 'T00:00:00Z' : c.proxima_fecha + 'T00:00:00Z');
+    for (let i = 0; i < 12; i++) {
+      const idealStr = ideal.toISOString().slice(0, 10);
+      if (idealStr > finMes) break;
+      if (idealStr >= inicioMes) {
+        const fechaAjustada = await proximoDiaHabilConCupo(ideal);
+        proyectados.push({
+          contratoId: c.id,
+          clienteId: c.cliente_id,
+          clienteNombre: c.cliente_nombre,
+          sistemas: c.sistemas,
+          fechaIdeal: idealStr,
+          fecha: fechaAjustada,
+          esPrimerCiclo: i === 0
+        });
+      }
+      ideal.setUTCMonth(ideal.getUTCMonth() + c.frecuencia_meses);
+    }
+  }
+  ok(res, proyectados);
+});
+app.post('/api/contratos-mantenimiento/:id/generar-turno-ahora', requireStaff, async (req, res) => {
+  const c = (await pool.query('select * from contratos_mantenimiento where id=$1 and activo=true', [req.params.id])).rows[0];
+  if (!c) return bad(res, 'Contrato no encontrado o inactivo.', 404);
+  if (c.ultima_generacion && new Date(c.ultima_generacion) >= new Date(c.proxima_fecha)) {
+    return bad(res, 'Ya existe un turno generado para el ciclo actual de este contrato.');
+  }
+  const cliente = (await pool.query('select nombre from clientes where id=$1', [c.cliente_id])).rows[0];
+  const checklist = {};
+  for (const s of (c.sistemas || [])) {
+    const plantilla = (await pool.query('select * from plantillas_mantenimiento where sistema=$1', [s])).rows[0];
+    checklist[s] = checklistDesdePlantilla(plantilla);
+  }
+  const idealStr = c.proxima_fecha instanceof Date ? c.proxima_fecha.toISOString().slice(0, 10) : c.proxima_fecha;
+  const fechaStr = await proximoDiaHabilConCupo(new Date(idealStr + 'T00:00:00Z'));
+  const turno = (await pool.query(
+    `insert into servicios_tecnicos (cliente_id, titulo, fecha_hora, estado, contrato_mantenimiento_id, checklist_sistemas, frecuencia_mantenimiento_meses)
+     values ($1,$2,$3,'pendiente',$4,$5,$6) returning *`,
+    [
+      c.cliente_id,
+      `Mantenimiento: ${nombreSistemasParaTitulo(c.sistemas)}${cliente ? ' — ' + cliente.nombre : ''}`,
+      `${fechaStr}T09:00:00-03:00`,
+      c.id,
+      JSON.stringify(checklist),
+      c.frecuencia_meses
+    ]
+  )).rows[0];
+  // El próximo ciclo se calcula siempre desde la fecha teórica del contrato (c.proxima_fecha),
+  // nunca desde la fecha en que se generó el turno a mano, para que la cadencia no se corra.
+  const siguiente = new Date(idealStr + 'T00:00:00Z');
+  siguiente.setUTCMonth(siguiente.getUTCMonth() + c.frecuencia_meses);
+  await pool.query(
+    'update contratos_mantenimiento set ultima_generacion=$1, proxima_fecha=$2 where id=$3',
+    [idealStr, siguiente.toISOString().slice(0, 10), c.id]
+  );
+  ok(res, turno);
+});
 app.post('/api/contratos-mantenimiento/:id/reactivar', requireStaff, async (req, res) => {
   const r = await pool.query('update contratos_mantenimiento set activo=true where id=$1 returning *', [req.params.id]);
   if (!r.rows[0]) return bad(res, 'Contrato no encontrado.', 404);
@@ -4438,26 +4509,8 @@ app.post('/api/portal/tickets', requireClientePortalOApiKey, async (req, res) =>
   if (!edificioId || !ids.includes(edificioId)) return bad(res, 'Elegí para qué edificio es el ticket.');
   const cliente = (await pool.query('select * from clientes where id=$1', [edificioId])).rows[0];
   if (!cliente) return bad(res, 'No encontrado', 404);
-  // El remitente del ticket (a quien le llega la respuesta por mail) es quien está GESTIONANDO
-  // el ticket - la cuenta autenticada (clienteIdActual) - no necesariamente el edificio puntual
-  // al que pertenece. Por ejemplo: Kingsa administra Domus; un ticket sobre Domus lo tiene que
-  // responder por mail Kingsa, no el contacto propio que Domus tenga cargado en su ficha.
-  const cuentaGestora = clienteIdActual === edificioId
-    ? cliente
-    : (await pool.query('select * from clientes where id=$1', [clienteIdActual])).rows[0] || cliente;
-  let remitenteNombre = cuentaGestora.contacto_nombre || cuentaGestora.nombre;
-  let remitenteEmail = cuentaGestora.correo || '';
-  // Si el pedido viene autenticado por API key (una integracion externa, como Convive) y declara
-  // explicitamente a nombre de quien es el ticket (por ejemplo, un residente puntual), se respeta
-  // ese remitente en vez del de la cuenta gestora - asi la respuesta le llega a esa persona y no
-  // a la Administracion. Via sesion de portal humano esto no se acepta (no hace falta, y evita que
-  // alguien logueado pueda falsear el remitente de sus propios tickets).
-  if (req.clienteIdExterno) {
-    const nombreOverride = (req.body.remitenteNombre || '').trim();
-    const emailOverride = (req.body.remitenteEmail || '').trim();
-    if (nombreOverride) remitenteNombre = nombreOverride;
-    if (emailOverride) remitenteEmail = emailOverride;
-  }
+  const remitenteNombre = cliente.contacto_nombre || cliente.nombre;
+  const remitenteEmail = cliente.correo || '';
   const numero = await nextTicketNumero();
   const r = await pool.query(
     `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, cliente_id, necesita_atencion)
@@ -5030,6 +5083,33 @@ setInterval(revisarReservasVencidas, 30 * 60 * 1000);
 function nombreSistemasParaTitulo(sistemas) {
   return Array.isArray(sistemas) && sistemas.length ? sistemas.join(', ') : 'Mantenimiento';
 }
+// Cupo diario de mantenimientos: fijo en 3 (no configurable). Solo cuenta turnos de mantenimiento
+// (contrato_mantenimiento_id no nulo) — no afecta turnos de servicio técnico cargados a mano, que
+// sí pueden agendarse un fin de semana si hace falta (ej. urgencias). Esto ajusta únicamente la
+// fecha real del turno generado; el cálculo teórico de "próxima fecha" del contrato nunca se toca,
+// así la cadencia del contrato no se corre con el tiempo.
+const CUPO_MANTENIMIENTOS_POR_DIA = 3;
+function esFinDeSemana(fecha) {
+  const d = fecha.getUTCDay();
+  return d === 0 || d === 6;
+}
+async function proximoDiaHabilConCupo(fechaIdeal) {
+  const f = new Date(Date.UTC(fechaIdeal.getUTCFullYear(), fechaIdeal.getUTCMonth(), fechaIdeal.getUTCDate()));
+  for (let i = 0; i < 60; i++) {
+    if (!esFinDeSemana(f)) {
+      const fStr = f.toISOString().slice(0, 10);
+      const { rows } = await pool.query(
+        `select count(*)::int as c from servicios_tecnicos
+         where contrato_mantenimiento_id is not null
+           and (fecha_hora at time zone 'America/Montevideo')::date = $1::date`,
+        [fStr]
+      );
+      if (rows[0].c < CUPO_MANTENIMIENTOS_POR_DIA) return fStr;
+    }
+    f.setUTCDate(f.getUTCDate() + 1);
+  }
+  return f.toISOString().slice(0, 10); // fallback de seguridad, no debería llegar acá
+}
 async function revisarContratosMantenimiento() {
   try {
     const contratos = (await pool.query(
@@ -5045,7 +5125,8 @@ async function revisarContratosMantenimiento() {
         const plantilla = (await pool.query('select * from plantillas_mantenimiento where sistema=$1', [s])).rows[0];
         checklist[s] = checklistDesdePlantilla(plantilla);
       }
-      const fechaStr = c.proxima_fecha instanceof Date ? c.proxima_fecha.toISOString().slice(0, 10) : c.proxima_fecha;
+      const fechaIdealStr = c.proxima_fecha instanceof Date ? c.proxima_fecha.toISOString().slice(0, 10) : c.proxima_fecha;
+      const fechaStr = await proximoDiaHabilConCupo(new Date(fechaIdealStr + 'T00:00:00Z'));
       await pool.query(
         `insert into servicios_tecnicos (cliente_id, titulo, fecha_hora, estado, contrato_mantenimiento_id, checklist_sistemas, frecuencia_mantenimiento_meses)
          values ($1,$2,$3,'pendiente',$4,$5,$6)`,
