@@ -766,7 +766,7 @@ const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'R
 const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso', 'Redes', 'Incendio', 'Portería', 'Alarma', 'Otro'];
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
-const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento'];
+const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento', 'Cliente Particular'];
 /* ---------------- Helpers ---------------- */
 function requireStaff(req, res, next) {
   if (!req.session || req.session.type !== 'staff') return res.status(401).json({ error: 'No autenticado' });
