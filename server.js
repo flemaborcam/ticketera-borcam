@@ -656,6 +656,7 @@ pool.query('alter table servicios_tecnicos add column if not exists pagado_medio
 pool.query('alter table servicios_tecnicos add column if not exists pagado_nota text').catch(e => console.error('No se pudo migrar pagado_nota:', e.message));
 // Migración automática: marca services que nunca van a tener costo (visitas de diagnóstico/relevamiento),
 // para que la barra de progreso salte directo a "En curso" sin pasar por la etapa de presupuesto.
+pool.query(`alter table servicios_tecnicos add column if not exists fotos_visita jsonb not null default '[]'::jsonb`).catch(e => console.error('No se pudo migrar fotos_visita:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists sin_costo boolean not null default false').catch(e => console.error('No se pudo migrar sin_costo:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists descripcion text').catch(e => console.error('No se pudo migrar descripcion:', e.message));
 // Migración automática: fecha de la reserva, leída automáticamente del cuerpo del correo cuando el
@@ -2015,6 +2016,7 @@ function checklistDesdePlantilla(plantilla) {
 }
 const ESTADOS_CHECKLIST_LABEL = { satisfactorio: 'Satisfactorio', atencion: 'Necesita atención', inmediata: 'Atención inmediata', no_aplica: 'No aplica' };
 const ESTADOS_CHECKLIST_COLOR = { satisfactorio: '#1e8e4f', atencion: '#b8860b', inmediata: '#c0392b', no_aplica: '#8a8a8a' };
+const MAX_FOTOS_VISITA = 5;
 const BORCAM_AZUL = '#0F2A4D';
 const BORCAM_NARANJA = '#E8622C';
 const BORCAM_PIE = 'BORCAM EQUIPAMIENTOS S.R.L — Av 8 de Octubre 2956, Montevideo — Tel.: 598+ 24878281 — administracion@borcam.com.uy';
@@ -2043,6 +2045,15 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
   try {
     costosOrden = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [servicio.id])).rows;
   } catch (e) { console.error('No se pudieron leer los costos para el PDF de la orden:', e.message); }
+  // Fotos sacadas durante la visita (máximo 5, cada una con su nota al pie). Si alguna no se puede bajar,
+  // se omite y la orden sale igual.
+  const fotosOrden = [];
+  for (const f of (servicio.fotos_visita || []).slice(0, MAX_FOTOS_VISITA)) {
+    try {
+      const up = await descargarArchivoStorage(f.path);
+      fotosOrden.push({ buffer: Buffer.from(await up.arrayBuffer()), nota: f.nota || '' });
+    } catch (e) { console.error('No se pudo bajar una foto de la visita para el PDF:', e.message); }
+  }
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
@@ -2210,6 +2221,32 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
           doc.y += 16;
         }
         doc.y += 8;
+      }
+
+      // Fotos de la visita (solo si se cargó alguna): grilla de 2 por fila, cada una con su nota al pie
+      if (fotosOrden.length) {
+        nuevaFranjaSiHaceFalta(22 + 10 + 150 + 40); // el título no queda solo: tiene que entrar con la primera fila de fotos
+        doc.rect(M, doc.y, contentW, 22).fill(BORCAM_AZUL);
+        doc.fontSize(11).fillColor('#fff').font('Helvetica-Bold').text('Fotos de la visita', M + 10, doc.y + 6);
+        doc.y += 22 + 10;
+        const gap = 16;
+        const celdaW = (contentW - gap) / 2;
+        const imgH = 150;
+        for (let i = 0; i < fotosOrden.length; i += 2) {
+          const fila = fotosOrden.slice(i, i + 2);
+          const altoNotas = Math.max(...fila.map(f => f.nota ? medirAlto(doc, f.nota, celdaW, 'Helvetica-Oblique', 8.5) : 0));
+          const altoFila = imgH + (altoNotas ? altoNotas + 8 : 0) + 14;
+          nuevaFranjaSiHaceFalta(altoFila);
+          const filaY = doc.y;
+          fila.forEach((f, j) => {
+            const x = M + j * (celdaW + gap);
+            doc.rect(x, filaY, celdaW, imgH).lineWidth(0.5).strokeColor('#ddd').stroke();
+            try { doc.image(f.buffer, x + 2, filaY + 2, { fit: [celdaW - 4, imgH - 4], align: 'center', valign: 'center' }); } catch (e) { /* foto corrupta, se omite */ }
+            if (f.nota) doc.fontSize(8.5).fillColor('#555').font('Helvetica-Oblique').text(f.nota, x, filaY + imgH + 6, { width: celdaW });
+          });
+          doc.y = filaY + altoFila;
+        }
+        doc.y += 4;
       }
 
       // Conformidad / firma del cliente
@@ -3979,6 +4016,52 @@ app.post('/api/servicios-tecnicos/:id/costos', requireStaff, async (req, res) =>
 app.delete('/api/costos-servicio/:id', requireStaff, async (req, res) => {
   await pool.query('delete from costos_servicio_tecnico where id=$1', [req.params.id]);
   ok(res, { ok: true });
+});
+/* ---- Fotos de la visita de mantenimiento (máx. 5, con nota al pie; salen al final de la orden en PDF) ---- */
+app.post('/api/servicios-tecnicos/:id/fotos-visita', requireStaff, async (req, res) => {
+  const { dataUrl, nota } = req.body || {};
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
+  if (!servicio.checklist_sistemas) return bad(res, 'Las fotos de la visita son solo para turnos de mantenimiento.');
+  const actuales = servicio.fotos_visita || [];
+  if (actuales.length >= MAX_FOTOS_VISITA) return bad(res, `Ya hay ${MAX_FOTOS_VISITA} fotos cargadas (el máximo por visita).`);
+  const m = String(dataUrl || '').match(/^data:(image\/(?:jpeg|png));base64,(.+)$/);
+  if (!m) return bad(res, 'La foto tiene que ser JPG o PNG.');
+  const buffer = Buffer.from(m[2], 'base64');
+  if (!buffer.length || buffer.length > 4 * 1024 * 1024) return bad(res, 'La foto está vacía o pesa demasiado.');
+  const fotoId = crypto.randomUUID();
+  const path = `servicios/${servicio.id}/fotos-visita/${fotoId}.${m[1] === 'image/png' ? 'png' : 'jpg'}`;
+  try { await subirArchivoStorage(path, buffer, m[1]); } catch (e) { return bad(res, 'No se pudo guardar la foto: ' + e.message, 500); }
+  const nueva = { id: fotoId, path, mime: m[1], size: buffer.length, nota: String(nota || '').trim().slice(0, 200), fecha: new Date().toISOString() };
+  const r = await pool.query('update servicios_tecnicos set fotos_visita=$1 where id=$2 returning *', [JSON.stringify([...actuales, nueva]), servicio.id]);
+  ok(res, r.rows[0]);
+});
+app.put('/api/servicios-tecnicos/:id/fotos-visita/:fotoId', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'No encontrado.', 404);
+  const fotos = (servicio.fotos_visita || []).map(f => f.id === req.params.fotoId ? { ...f, nota: String((req.body || {}).nota || '').trim().slice(0, 200) } : f);
+  const r = await pool.query('update servicios_tecnicos set fotos_visita=$1 where id=$2 returning *', [JSON.stringify(fotos), servicio.id]);
+  ok(res, r.rows[0]);
+});
+app.delete('/api/servicios-tecnicos/:id/fotos-visita/:fotoId', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'No encontrado.', 404);
+  const actuales = servicio.fotos_visita || [];
+  const foto = actuales.find(f => f.id === req.params.fotoId);
+  if (foto) await eliminarArchivosStorage([foto.path]).catch(e => console.error('No se pudo borrar la foto de la visita de Storage:', e.message));
+  const r = await pool.query('update servicios_tecnicos set fotos_visita=$1 where id=$2 returning *', [JSON.stringify(actuales.filter(f => f.id !== req.params.fotoId)), servicio.id]);
+  ok(res, r.rows[0]);
+});
+app.get('/api/servicios-tecnicos/:id/fotos-visita/:fotoId/ver', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select fotos_visita from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  const foto = servicio && (servicio.fotos_visita || []).find(f => f.id === req.params.fotoId);
+  if (!foto) return bad(res, 'No encontrada.', 404);
+  try {
+    const up = await descargarArchivoStorage(foto.path);
+    res.setHeader('Content-Type', foto.mime || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.send(Buffer.from(await up.arrayBuffer()));
+  } catch (e) { bad(res, 'No se pudo cargar la foto.', 500); }
 });
 /* ---- Presupuestos adjuntos: se guardan en el mismo Storage que los adjuntos de mensajes ---- */
 app.post('/api/servicios-tecnicos/:id/presupuesto', requireStaff, async (req, res) => {
