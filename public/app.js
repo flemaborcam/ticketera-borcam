@@ -7213,7 +7213,7 @@ function renderAuth() {
     </div></div>`;
   }
   if (mode === 'register-cliente') {
-    const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento']).map(r => `<option value="${r}">${r}</option>`).join('');
+    const rolOptions = (CAT.ROLES_CLIENTE && CAT.ROLES_CLIENTE.length ? CAT.ROLES_CLIENTE : ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento', 'Cliente Particular']).map(r => `<option value="${r}">${r}</option>`).join('');
     return `${authStyleTag()}<div class="auth-wrap">${authBgHtml()}<div class="auth-card">
     <div class="auth-card-brand">${logoSvg('white')}</div>
     <div class="auth-card-body">
