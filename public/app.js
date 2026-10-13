@@ -2211,7 +2211,7 @@ async function actualizarItemChecklistServicio(id, sistema, itemId, estado) {
   try {
     const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/checklist-item`, { sistema, itemId, estado });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
-    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    if (idx >= 0) cache.serviciosTecnicos[idx] = { ...cache.serviciosTecnicos[idx], ...actualizado };
     renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
@@ -2296,7 +2296,7 @@ async function agregarNotaMantenimientoServicio(id) {
   try {
     const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/nota-mantenimiento`, { texto });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
-    if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
+    if (idx >= 0) cache.serviciosTecnicos[idx] = { ...cache.serviciosTecnicos[idx], ...actualizado };
     renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
@@ -2304,7 +2304,7 @@ async function eliminarNotaMantenimientoServicio(id, idx) {
   try {
     const actualizado = await api('DELETE', `/api/servicios-tecnicos/${id}/nota-mantenimiento/${idx}`);
     const i = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
-    if (i >= 0) cache.serviciosTecnicos[i] = actualizado;
+    if (i >= 0) cache.serviciosTecnicos[i] = { ...cache.serviciosTecnicos[i], ...actualizado };
     renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
@@ -2324,6 +2324,92 @@ function renderNotasMantenimientoServicio(s) {
       <input type="text" id="nueva-nota-mantenimiento" placeholder="Agregar una observación de la visita" style="flex:1;">
       <button type="button" class="btn btn-ghost" onclick="agregarNotaMantenimientoServicio('${s.id}')">Agregar</button>
     </div>
+  </div>`;
+}
+// Fotos de la visita (máx. 5): se achican en el celular antes de subirlas y salen al final de la orden en PDF.
+const MAX_FOTOS_VISITA_UI = 5;
+function comprimirImagenParaVisita(file, maxLado = 1600, calidad = 0.78) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const esc = Math.min(1, maxLado / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * esc)), h = Math.max(1, Math.round(img.naturalHeight * esc));
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', calidad));
+      } catch (e) { URL.revokeObjectURL(url); reject(new Error('No se pudo preparar la foto.')); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen. Probá con otra foto.')); };
+    img.src = url;
+  });
+}
+function actualizarServicioEnCacheLocal(id, actualizado) {
+  const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
+  if (idx >= 0) cache.serviciosTecnicos[idx] = { ...cache.serviciosTecnicos[idx], ...actualizado };
+}
+async function elegirFotoVisita(servicioId, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  try {
+    showToast('Preparando la foto…');
+    const dataUrl = await comprimirImagenParaVisita(file);
+    state.fotoVisitaPendiente = { servicioId, dataUrl };
+    renderConservandoScrollModal();
+  } catch (e) { showToast(e.message); }
+  input.value = '';
+}
+function cancelarFotoVisita() { state.fotoVisitaPendiente = null; renderConservandoScrollModal(); }
+async function subirFotoVisita(servicioId) {
+  const p = state.fotoVisitaPendiente;
+  if (!p) return;
+  const nota = ((document.getElementById('nota-foto-visita') || {}).value || '').trim();
+  try {
+    const actualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/fotos-visita`, { dataUrl: p.dataUrl, nota });
+    state.fotoVisitaPendiente = null;
+    actualizarServicioEnCacheLocal(servicioId, actualizado);
+    renderConservandoScrollModal();
+    showToast('Foto agregada.');
+  } catch (e) { showToast(e.message); }
+}
+async function guardarNotaFotoVisita(servicioId, fotoId, nota) {
+  try {
+    const actualizado = await api('PUT', `/api/servicios-tecnicos/${servicioId}/fotos-visita/${fotoId}`, { nota });
+    actualizarServicioEnCacheLocal(servicioId, actualizado);
+  } catch (e) { showToast(e.message); }
+}
+async function quitarFotoVisita(servicioId, fotoId) {
+  if (!confirm('¿Quitar esta foto de la visita?')) return;
+  try {
+    const actualizado = await api('DELETE', `/api/servicios-tecnicos/${servicioId}/fotos-visita/${fotoId}`);
+    actualizarServicioEnCacheLocal(servicioId, actualizado);
+    renderConservandoScrollModal();
+  } catch (e) { showToast(e.message); }
+}
+function renderFotosVisitaServicio(s) {
+  if (!s.checklist_sistemas) return '';
+  const fotos = s.fotos_visita || [];
+  const pend = state.fotoVisitaPendiente && String(state.fotoVisitaPendiente.servicioId) === String(s.id) ? state.fotoVisitaPendiente : null;
+  const lleno = fotos.length >= MAX_FOTOS_VISITA_UI;
+  return `<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+    <div style="font-weight:600;font-size:14px;margin-bottom:4px;">📷 Fotos de la visita <span style="font-weight:400;color:var(--ink-soft);font-size:12.5px;">(${fotos.length}/${MAX_FOTOS_VISITA_UI})</span></div>
+    <div class="hint-text" style="margin-bottom:10px;">Salen al final de la orden de mantenimiento que recibe el cliente, cada una con su nota.</div>
+    ${fotos.length ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px;">
+      ${fotos.map(f => `<div style="border:1px solid var(--line);border-radius:8px;padding:6px;">
+        <img src="/api/servicios-tecnicos/${s.id}/fotos-visita/${f.id}/ver" alt="Foto de la visita" loading="lazy" style="width:100%;height:120px;object-fit:cover;border-radius:6px;display:block;margin-bottom:6px;">
+        <input type="text" value="${escapeHtml(f.nota || '')}" maxlength="200" placeholder="Nota al pie (ej: cámara del pasillo dañada)" style="width:100%;font-size:12.5px;" onblur="guardarNotaFotoVisita('${s.id}', '${f.id}', this.value)">
+        <button type="button" class="btn btn-ghost" style="padding:3px 8px;font-size:12px;margin-top:6px;" onclick="quitarFotoVisita('${s.id}', '${f.id}')">Quitar</button>
+      </div>`).join('')}
+    </div>` : `<div class="hint-text" style="margin-bottom:10px;">Sin fotos todavía.</div>`}
+    ${pend ? `<div style="border:1px dashed var(--line-strong);border-radius:8px;padding:8px;">
+      <img src="${pend.dataUrl}" alt="Vista previa" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px;display:block;margin-bottom:8px;">
+      <input type="text" id="nota-foto-visita" maxlength="200" placeholder="Nota al pie (opcional)" style="width:100%;margin-bottom:8px;">
+      <div style="display:flex;gap:8px;"><button type="button" class="btn btn-primary" onclick="subirFotoVisita('${s.id}')">Subir foto</button><button type="button" class="btn btn-ghost" onclick="cancelarFotoVisita()">Cancelar</button></div>
+    </div>`
+      : lleno ? `<div class="hint-text">Ya está el máximo de ${MAX_FOTOS_VISITA_UI} fotos. Quitá una para agregar otra.</div>`
+      : `<label class="btn btn-ghost" style="display:inline-block;cursor:pointer;">📷 Agregar foto<input type="file" accept="image/*" style="display:none;" onchange="elegirFotoVisita('${s.id}', this)"></label>`}
   </div>`;
 }
 // Envío de la orden completa (PDF con checklist + notas) al correo del cliente, por una casilla
@@ -2467,6 +2553,7 @@ function renderDetalleServicioTecnicoModal() {
     ${s.estado === 'realizado' ? renderDetalleRealizadoServicio(s) : ''}
     ${s.checklist_sistemas ? renderChecklistSistemasServicio(s) : ''}
     ${s.checklist_sistemas ? renderNotasMantenimientoServicio(s) : ''}
+    ${s.checklist_sistemas ? renderFotosVisitaServicio(s) : ''}
     ${s.checklist_sistemas ? renderEnvioOrdenMantenimiento(s) : ''}
 
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
