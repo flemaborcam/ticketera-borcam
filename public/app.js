@@ -2401,14 +2401,14 @@ function renderEtapaServicioTecnico(s, tieneCosto) {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
   } else if (s.estado === 'pendiente' && presupuestoEsperando) {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
-      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Reenviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
+      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')">📤 Reenviar presupuesto al cliente</button>
       <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
     </div>`;
   } else if (s.estado === 'pendiente' && presupuestoAprobado) {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
   } else if (s.estado === 'pendiente') {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
-      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')" title="${s.ticket_id ? '' : 'Se va a crear un ticket automáticamente para poder notificar al cliente'}">📤 Enviar presupuesto al cliente${s.ticket_id ? '' : ' (crea ticket)'}</button>
+      <button type="button" class="btn btn-primary" onclick="enviarPresupuestoServicioTecnico('${s.id}')">📤 Enviar presupuesto al cliente</button>
       <button type="button" class="btn btn-ghost" style="font-size:12px;" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button>
     </div>`;
   } else if (s.estado === 'en_curso') {
@@ -2444,7 +2444,7 @@ function renderDetalleServicioTecnicoModal() {
   const adjuntos = s.presupuesto_adjuntos || [];
   const estadoPresupuesto = s.presupuesto_aprobado
     ? `<span class="tag tag-resuelto">✅ Aprobado por el cliente${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</span>`
-    : (s.presupuesto_enviado ? `<span class="tag tag-cat">📤 Enviado, esperando conformidad</span>` : `<span class="hint-text" style="margin:0;">Todavía no se envió al cliente.</span>`);
+    : (s.presupuesto_enviado ? `<span class="tag tag-cat">📤 Enviado${s.presupuesto_enviado_fecha ? ' el ' + fmtDateTime(s.presupuesto_enviado_fecha) : ''}${s.presupuesto_enviado_a ? ' a ' + escapeHtml(s.presupuesto_enviado_a) : ''}, esperando conformidad</span>` : `<span class="hint-text" style="margin:0;">Todavía no se envió al cliente.</span>`);
   const urlUbicacion = urlUbicacionCliente(s.cliente_id);
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px;">
     <h2>🛠️ Detalle del servicio técnico</h2>
@@ -2703,10 +2703,13 @@ async function borrarPresupuestoAdjunto(servicioId, adjId) {
 }
 async function enviarPresupuestoServicioTecnico(servicioId) {
   try {
-    const ticketActualizado = await api('POST', `/api/servicios-tecnicos/${servicioId}/enviar-presupuesto`);
-    const mapeado = mapTicket(ticketActualizado);
-    const idx = cache.tickets.findIndex(x => x.id === mapeado.id);
-    if (idx >= 0) cache.tickets[idx] = mapeado; else cache.tickets.push(mapeado);
+    const respuesta = await api('POST', `/api/servicios-tecnicos/${servicioId}/enviar-presupuesto`);
+    // Servicio sin ticket: el servidor manda el correo directo y no devuelve ningún ticket.
+    if (!respuesta || !respuesta.sinTicket) {
+      const mapeado = mapTicket(respuesta);
+      const idx = cache.tickets.findIndex(x => x.id === mapeado.id);
+      if (idx >= 0) cache.tickets[idx] = mapeado; else cache.tickets.push(mapeado);
+    }
     await recargarServicioTecnico(servicioId);
     showToast('Presupuesto enviado al cliente.');
   } catch (e) { showToast(e.message); }
