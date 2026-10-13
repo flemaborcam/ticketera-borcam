@@ -2353,7 +2353,8 @@ function renderEnvioOrdenMantenimiento(s) {
 // grande con la acción que sigue; lo administrativo (editar/reprogramar/eliminar/ver ticket/comprobante)
 // se movió aparte, abajo del todo, como "utilidades".
 function renderEtapaServicioTecnico(s, tieneCosto) {
-  const usaPresupuesto = !s.sin_costo && !!(s.presupuesto_enviado || s.presupuesto_aprobado);
+  const esMantenimientoSrv = !!s.contrato_mantenimiento_id;
+  const usaPresupuesto = !esMantenimientoSrv && !s.sin_costo && !!(s.presupuesto_enviado || s.presupuesto_aprobado);
   const presupuestoAprobado = usaPresupuesto && s.presupuesto_aprobado;
   const presupuestoEsperando = usaPresupuesto && s.presupuesto_enviado && !s.presupuesto_aprobado;
   const etapas = ['Pendiente'];
@@ -2397,7 +2398,7 @@ function renderEtapaServicioTecnico(s, tieneCosto) {
   </div>`;
 
   let ctaHtml;
-  if (s.estado === 'pendiente' && s.sin_costo) {
+  if (s.estado === 'pendiente' && (s.sin_costo || esMantenimientoSrv)) {
     ctaHtml = `<div style="margin-bottom:14px;"><button type="button" class="btn btn-primary" onclick="iniciarServicioTecnico('${s.id}')">🚗 Marcar en curso</button></div>`;
   } else if (s.estado === 'pendiente' && presupuestoEsperando) {
     ctaHtml = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
@@ -2446,6 +2447,8 @@ function renderDetalleServicioTecnicoModal() {
     ? `<span class="tag tag-resuelto">✅ Aprobado por el cliente${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</span>`
     : (s.presupuesto_enviado ? `<span class="tag tag-cat">📤 Enviado${s.presupuesto_enviado_fecha ? ' el ' + fmtDateTime(s.presupuesto_enviado_fecha) : ''}${s.presupuesto_enviado_a ? ' a ' + escapeHtml(s.presupuesto_enviado_a) : ''}, esperando conformidad</span>` : `<span class="hint-text" style="margin:0;">Todavía no se envió al cliente.</span>`);
   const urlUbicacion = urlUbicacionCliente(s.cliente_id);
+  const esMantModal = !!s.contrato_mantenimiento_id;
+  const sinCostoEf = !esMantModal && !!s.sin_costo;
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:640px;">
     <h2>🛠️ Detalle del servicio técnico</h2>
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
@@ -2459,10 +2462,10 @@ function renderDetalleServicioTecnicoModal() {
 
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
+      ${esMantModal ? `<div class="hint-text" style="margin-bottom:10px;">Si durante el mantenimiento se detecta un equipo dañado que requiere cambio inmediato, cargalo acá. Va a aparecer en la orden de mantenimiento que se le manda al cliente y se avisa al grupo de Telegram.</div>` : `<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
         <input type="checkbox" ${s.sin_costo ? 'checked' : ''} ${costos.length ? 'disabled' : ''} onchange="toggleSinCostoServicio('${s.id}', this.checked)"> Sin costo (visita de diagnóstico / relevamiento — no se va a facturar)
-      </label>
-      ${s.sin_costo ? `<div class="hint-text">Marcado como sin costo. Para cargar costos, destildá esta opción.</div>` : `
+      </label>`}
+      ${sinCostoEf ? `<div class="hint-text">Marcado como sin costo. Para cargar costos, destildá esta opción.</div>` : `
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
         <input type="checkbox" ${s.aplica_iva !== false ? 'checked' : ''} onchange="toggleAplicaIvaServicio('${s.id}', this.checked)"> Aplicar IVA (22%)
       </label>
@@ -2491,7 +2494,7 @@ function renderDetalleServicioTecnicoModal() {
       <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>`}
     </div>
 
-    <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+    ${esMantModal ? '' : `<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">📎 Presupuesto adjunto</div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
         ${adjuntos.length ? adjuntos.map(a => `
@@ -2504,7 +2507,7 @@ function renderDetalleServicioTecnicoModal() {
       <div id="pending-presupuestos">${renderPendingPresupuestosChips()}</div>
       ${(state.pendingPresupuestos || []).length ? `<button type="button" class="btn btn-ghost" style="margin-top:8px;" onclick="subirPresupuestosServicioTecnico('${s.id}')">Subir archivo(s)</button>` : ''}
       <div style="margin-top:10px;">${estadoPresupuesto}</div>
-    </div>
+    </div>`}
 
     ${!puedeMarcar ? `<div class="hint-text" style="margin-bottom:10px;">${s.firma_sin_firma
       ? `✍️ Sin firma del cliente — ${escapeHtml(s.firma_motivo_sin_firma || 'no había nadie presente.')}`
