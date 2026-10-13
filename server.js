@@ -4182,9 +4182,15 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
       return bad(res, `No se pudo adjuntar el archivo "${adj.nombre}". No se envió nada, probá de nuevo.`, 500);
     }
   }
-  const enviado = await enviarEmailReal({ to: String(cliente.correo).trim(), subject: `Presupuesto: ${servicio.titulo}`, text: cuerpo, attachments, esAutomatico: false });
+  // Destinatarios: correo principal + correo de informes (si hay), sin repetir.
+  const vistos = new Set();
+  const destinatarios = [cliente.correo, cliente.correo_informes]
+    .map(x => String(x || '').trim())
+    .filter(x => x && !vistos.has(x.toLowerCase()) && vistos.add(x.toLowerCase()));
+  const destinatariosTexto = destinatarios.join(', ');
+  const enviado = await enviarEmailReal({ to: destinatariosTexto, subject: `Presupuesto: ${servicio.titulo}`, text: cuerpo, attachments, esAutomatico: false });
   if (!enviado) return bad(res, 'No se pudo enviar el correo (revisá la configuración de correo). El presupuesto NO quedó marcado como enviado.', 500);
-  await pool.query('update servicios_tecnicos set presupuesto_enviado=true, presupuesto_enviado_fecha=now(), presupuesto_enviado_a=$2 where id=$1', [servicio.id, String(cliente.correo).trim()]);
+  await pool.query('update servicios_tecnicos set presupuesto_enviado=true, presupuesto_enviado_fecha=now(), presupuesto_enviado_a=$2 where id=$1', [servicio.id, destinatariosTexto]);
   ok(res, { sinTicket: true, servicio: await servicioTecnicoConCostos(servicio.id) });
 });
 // Genera (o, si ya existía, devuelve) el comprobante no fiscal de un servicio técnico: número
