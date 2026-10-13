@@ -615,6 +615,8 @@ pool.query(`create table if not exists servicios_tecnicos (
 pool.query('alter table servicios_tecnicos add column if not exists cliente_id uuid').catch(e => console.error('No se pudo migrar cliente_id en servicios_tecnicos:', e.message));
 pool.query(`alter table servicios_tecnicos add column if not exists presupuesto_adjuntos jsonb not null default '[]'::jsonb`).catch(e => console.error('No se pudo migrar presupuesto_adjuntos:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_enviado boolean not null default false').catch(e => console.error('No se pudo migrar presupuesto_enviado:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_enviado_fecha timestamptz').catch(e => console.error('No se pudo migrar presupuesto_enviado_fecha:', e.message));
+pool.query('alter table servicios_tecnicos add column if not exists presupuesto_enviado_a text').catch(e => console.error('No se pudo migrar presupuesto_enviado_a:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado boolean not null default false').catch(e => console.error('No se pudo migrar presupuesto_aprobado:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_fecha timestamptz').catch(e => console.error('No se pudo migrar presupuesto_aprobado_fecha:', e.message));
 pool.query('alter table servicios_tecnicos add column if not exists presupuesto_aprobado_ip text').catch(e => console.error('No se pudo migrar presupuesto_aprobado_ip:', e.message));
@@ -3610,6 +3612,12 @@ app.post('/api/presupuesto/aprobar/:token', async (req, res) => {
       [s.ticket_id, 'Cliente', `Dio conformidad con el presupuesto de "${s.titulo}" desde el link enviado por correo (IP: ${ip}). Ya se puede avanzar con la tarea.`]
     );
     await pool.query('update tickets set necesita_atencion=true, actualizado=now() where id=$1', [s.ticket_id]);
+  } else {
+    // Servicio sin ticket: no hay conversación donde dejar el aviso, así que se avisa al grupo de
+    // Telegram (y queda la etiqueta "Presupuesto aprobado" visible en el listado de servicios técnicos).
+    const cli = (await pool.query('select nombre from clientes where id=$1', [s.cliente_id])).rows[0];
+    enviarTelegram(`✅ <b>Presupuesto aprobado</b>\nCliente: ${escapeHtmlSrv(cli ? cli.nombre : 'Cliente')}\nServicio: ${escapeHtmlSrv(s.titulo)}\nYa se puede avanzar con la tarea.`)
+      .catch(e => console.error('No se pudo avisar por Telegram la aprobación del presupuesto:', e.message));
   }
   ok(res, { ok: true });
 });
@@ -3967,35 +3975,27 @@ app.get('/api/servicios-tecnicos/:id/presupuesto/:adjId/descargar', requireStaff
     upstream.pipe(res);
   } catch (e) { bad(res, 'No se pudo descargar el archivo.', 500); }
 });
-// El presupuesto solo se puede mandar al cliente cuando el servicio está asociado a un ticket (así el
-// aviso y la aprobación quedan registrados en la conversación de ese ticket). Manda un mensaje de sistema
-// con el detalle de costos y un correo avisando que hay un presupuesto esperando su conformidad.
+// Manda el presupuesto al cliente para que dé su conformidad. Dos caminos:
+//  - Servicio asociado a un ticket: el detalle queda como mensaje en esa conversación y el correo sale con
+//    el número de ticket en el asunto (como siempre).
+//  - Servicio SIN ticket (un pedido de service que no vino por correo): NO se crea ningún ticket. Sale un
+//    correo directo al correo del cliente, con los archivos de presupuesto adjuntos y el link de
+//    conformidad, y queda registrada la fecha de envío en el propio servicio. Si el cliente contesta ese
+//    correo, entra como un ticket nuevo normal. Cuando aprueba, se avisa por Telegram (ver aprobar).
 app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (req, res) => {
-  let servicio = await servicioTecnicoConCostos(req.params.id);
+  const servicio = await servicioTecnicoConCostos(req.params.id);
   if (!servicio) return bad(res, 'No encontrado.', 404);
   if (!servicio.costos.length && !(servicio.presupuesto_adjuntos || []).length) return bad(res, 'Cargá al menos un costo o un archivo de presupuesto antes de enviarlo.');
-  // Si el servicio no nació de un ticket, se crea uno acá mismo para poder notificar al cliente y
-  // dejar registrado el presupuesto y su aprobación — no hace falta cargarlo a mano de antemano.
-  if (!servicio.ticket_id) {
-    const cliente = (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0];
+  let t = null;
+  let cliente = null;
+  if (servicio.ticket_id) {
+    t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
+    if (!t) return bad(res, 'El ticket asociado ya no existe.');
+  } else {
+    cliente = (await pool.query('select * from clientes where id=$1', [servicio.cliente_id])).rows[0];
     if (!cliente) return bad(res, 'El cliente de este servicio técnico ya no existe.');
-    const numero = await nextTicketNumero();
-    const staff = (await pool.query('select nombre, apellido from usuarios where id=$1', [req.session.userId])).rows[0];
-    const r = await pool.query(
-      `insert into tickets (numero, asunto, categoria, prioridad, estado, remitente_nombre, remitente_email, cliente_id, asignado_a)
-       values ($1,$2,'Soporte Técnico','Media','En progreso',$3,$4,$5,$6) returning id`,
-      [numero, servicio.titulo, cliente.contacto_nombre || cliente.nombre, cliente.correo || '', cliente.id, req.session.userId]
-    );
-    const ticketId = r.rows[0].id;
-    await pool.query(
-      `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'sistema',$2,$3,true)`,
-      [ticketId, staff ? `${staff.nombre} ${staff.apellido}` : 'Sistema', `Ticket creado automáticamente al enviar el presupuesto de "${servicio.titulo}".`]
-    );
-    await pool.query('update servicios_tecnicos set ticket_id=$1, ticket_numero=$2 where id=$3', [ticketId, numero, servicio.id]);
-    servicio = { ...servicio, ticket_id: ticketId, ticket_numero: numero };
+    if (!cliente.correo || !String(cliente.correo).trim()) return bad(res, 'Este cliente no tiene un correo cargado. Cargalo en su ficha para poder enviarle el presupuesto.');
   }
-  const t = (await pool.query('select * from tickets where id=$1', [servicio.ticket_id])).rows[0];
-  if (!t) return bad(res, 'El ticket asociado ya no existe.');
   // Los precios cargados son sin IVA; acá se suma el 22% (tasa básica en Uruguay) para el total
   // final, salvo que el service tenga el IVA desactivado (cliente que solo pide el comprobante
   // interno, sin factura oficial) — en ese caso el total es directamente el subtotal.
@@ -4021,16 +4021,37 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   }
   const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
   const linkAprobacion = `${baseUrl}/aprobar-presupuesto/${token}`;
-  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${(servicio.presupuesto_adjuntos || []).length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés dar tu conformidad entrando acá, sin necesidad de loguearte:\n${linkAprobacion}`;
-  await pool.query(
-    `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Presupuesto enviado',$2,true)`,
-    [servicio.ticket_id, cuerpo]
-  );
-  await pool.query('update servicios_tecnicos set presupuesto_enviado=true where id=$1', [servicio.id]);
-  await pool.query('update tickets set actualizado=now() where id=$1', [servicio.ticket_id]);
-  const ccs = await collectTicketCCs(servicio.ticket_id);
-  await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true, ticketId: servicio.ticket_id });
-  ok(res, await ticketConMensajes(servicio.ticket_id));
+  const adjuntosPresupuesto = servicio.presupuesto_adjuntos || [];
+  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${adjuntosPresupuesto.length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés dar tu conformidad entrando acá, sin necesidad de loguearte:\n${linkAprobacion}`;
+
+  if (t) {
+    await pool.query(
+      `insert into mensajes (ticket_id, tipo, autor, cuerpo, automatico) values ($1,'saliente','Presupuesto enviado',$2,true)`,
+      [servicio.ticket_id, cuerpo]
+    );
+    await pool.query('update servicios_tecnicos set presupuesto_enviado=true, presupuesto_enviado_fecha=now(), presupuesto_enviado_a=$2 where id=$1', [servicio.id, t.remitente_email || null]);
+    await pool.query('update tickets set actualizado=now() where id=$1', [servicio.ticket_id]);
+    const ccs = await collectTicketCCs(servicio.ticket_id);
+    await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true, ticketId: servicio.ticket_id });
+    return ok(res, await ticketConMensajes(servicio.ticket_id));
+  }
+
+  // Sin ticket: se descargan los archivos de presupuesto para mandarlos adjuntos (el cliente no tiene
+  // otro lugar donde verlos, a diferencia de un ticket con portal). Si algo falla, no se marca como enviado.
+  const attachments = [];
+  for (const adj of adjuntosPresupuesto) {
+    try {
+      const upstream = await descargarArchivoStorage(adj.path);
+      attachments.push({ filename: adj.nombre, content: Buffer.from(await upstream.arrayBuffer()), contentType: adj.mime || undefined });
+    } catch (e) {
+      console.error('No se pudo adjuntar el presupuesto al correo:', e.message);
+      return bad(res, `No se pudo adjuntar el archivo "${adj.nombre}". No se envió nada, probá de nuevo.`, 500);
+    }
+  }
+  const enviado = await enviarEmailReal({ to: String(cliente.correo).trim(), subject: `Presupuesto: ${servicio.titulo}`, text: cuerpo, attachments, esAutomatico: false });
+  if (!enviado) return bad(res, 'No se pudo enviar el correo (revisá la configuración de correo). El presupuesto NO quedó marcado como enviado.', 500);
+  await pool.query('update servicios_tecnicos set presupuesto_enviado=true, presupuesto_enviado_fecha=now(), presupuesto_enviado_a=$2 where id=$1', [servicio.id, String(cliente.correo).trim()]);
+  ok(res, { sinTicket: true, servicio: await servicioTecnicoConCostos(servicio.id) });
 });
 // Genera (o, si ya existía, devuelve) el comprobante no fiscal de un servicio técnico: número
 // correlativo propio (serie A) + todos los datos que necesita el frontend para armar el PDF.
