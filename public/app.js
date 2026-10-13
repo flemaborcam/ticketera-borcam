@@ -2198,12 +2198,21 @@ const ESTADOS_CHECKLIST_MANTENIMIENTO = [
   { v: 'inmediata', label: '❌ Atención inmediata' },
   { v: 'no_aplica', label: '— No aplica' }
 ];
+// Redibuja la pantalla pero deja la ventana (modal) en el mismo punto de scroll: sin esto, cada respuesta
+// del checklist volvía al principio del detalle, sobre todo en el celular.
+function renderConservandoScrollModal() {
+  const antes = document.querySelector('.modal');
+  const top = antes ? antes.scrollTop : 0;
+  render();
+  const despues = document.querySelector('.modal');
+  if (despues && top) despues.scrollTop = top;
+}
 async function actualizarItemChecklistServicio(id, sistema, itemId, estado) {
   try {
     const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/checklist-item`, { sistema, itemId, estado });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
-    render();
+    renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
 async function guardarMotivoItemChecklistServicio(id, sistema, itemId, estadoActual, motivo) {
@@ -2288,7 +2297,7 @@ async function agregarNotaMantenimientoServicio(id) {
     const actualizado = await api('POST', `/api/servicios-tecnicos/${id}/nota-mantenimiento`, { texto });
     const idx = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (idx >= 0) cache.serviciosTecnicos[idx] = actualizado;
-    render();
+    renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
 async function eliminarNotaMantenimientoServicio(id, idx) {
@@ -2296,7 +2305,7 @@ async function eliminarNotaMantenimientoServicio(id, idx) {
     const actualizado = await api('DELETE', `/api/servicios-tecnicos/${id}/nota-mantenimiento/${idx}`);
     const i = (cache.serviciosTecnicos || []).findIndex(x => String(x.id) === String(id));
     if (i >= 0) cache.serviciosTecnicos[i] = actualizado;
-    render();
+    renderConservandoScrollModal();
   } catch (e) { showToast(e.message); }
 }
 function renderNotasMantenimientoServicio(s) {
