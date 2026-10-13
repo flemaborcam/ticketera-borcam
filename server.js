@@ -2037,6 +2037,12 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
       firmaBuffer = Buffer.from(await upstream.arrayBuffer());
     } catch (e) { console.error('No se pudo descargar la firma para el PDF de la orden:', e.message); }
   }
+  // Trabajos / repuestos adicionales cargados en la visita (ej: equipo dañado que se cambió en el momento).
+  // Si falla la lectura, la orden sale igual, solo que sin este bloque.
+  let costosOrden = [];
+  try {
+    costosOrden = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [servicio.id])).rows;
+  } catch (e) { console.error('No se pudieron leer los costos para el PDF de la orden:', e.message); }
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({ size: 'A4', margin: 0, bufferPages: true });
@@ -2168,6 +2174,42 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
           doc.fontSize(9.5).fillColor('#222').font('Helvetica').text(n.texto, M + 12, doc.y + 11, { width: contentW - 24 });
           doc.y += alturaTexto + 20;
         }
+      }
+
+      // Trabajos / repuestos adicionales (solo si se cargó algún costo en la visita)
+      if (costosOrden.length) {
+        const aplicaIvaOrden = servicio.aplica_iva !== false;
+        nuevaFranjaSiHaceFalta(60);
+        doc.rect(M, doc.y, contentW, 22).fill(BORCAM_AZUL);
+        doc.fontSize(11).fillColor('#fff').font('Helvetica-Bold').text('Trabajos / repuestos adicionales', M + 10, doc.y + 6);
+        doc.y += 22 + 6;
+        const anchoMonto = 150;
+        const anchoDesc = contentW - anchoMonto - 24;
+        const subtotalesOrden = {};
+        for (const c of costosOrden) {
+          const monto = Math.round(Number(c.cantidad) * Number(c.precio_unitario));
+          subtotalesOrden[c.moneda] = (subtotalesOrden[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
+          const textoDesc = `${c.descripcion} x${c.cantidad}`;
+          const alturaDesc = Math.max(medirAlto(doc, textoDesc, anchoDesc, 'Helvetica', 9.5), 14);
+          nuevaFranjaSiHaceFalta(alturaDesc + 12);
+          const filaY = doc.y;
+          doc.fontSize(9.5).fillColor('#222').font('Helvetica').text(textoDesc, M + 12, filaY + 5, { width: anchoDesc });
+          doc.fontSize(9.5).fillColor('#222').font('Helvetica-Bold').text(`${c.moneda} ${monto}`, M + contentW - anchoMonto - 12, filaY + 5, { width: anchoMonto, align: 'right' });
+          doc.y = filaY + alturaDesc + 10;
+          doc.moveTo(M, doc.y).lineTo(M + contentW, doc.y).strokeColor('#eee').lineWidth(0.5).stroke();
+        }
+        doc.y += 6;
+        for (const [moneda, sub] of Object.entries(subtotalesOrden)) {
+          const subR = Math.round(sub);
+          const iva = Math.round(sub * 0.22);
+          const linea = aplicaIvaOrden
+            ? `Total ${moneda} ${subR} + IVA (${moneda} ${iva}) = ${moneda} ${subR + iva}`
+            : `Total ${moneda} ${subR} (sin IVA)`;
+          nuevaFranjaSiHaceFalta(20);
+          doc.fontSize(10).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text(linea, M, doc.y, { width: contentW, align: 'right' });
+          doc.y += 16;
+        }
+        doc.y += 8;
       }
 
       // Conformidad / firma del cliente
@@ -3903,7 +3945,7 @@ app.delete('/api/catalogo-costos/:id', requireStaff, async (req, res) => {
 app.post('/api/servicios-tecnicos/:id/costos', requireStaff, async (req, res) => {
   const servicioId = req.params.id;
   const { catalogoItemId, descripcion, cantidad, precioUnitario, moneda } = req.body || {};
-  const servicio = (await pool.query('select id from servicios_tecnicos where id=$1', [servicioId])).rows[0];
+  const servicio = (await pool.query('select id, cliente_id, titulo, contrato_mantenimiento_id from servicios_tecnicos where id=$1', [servicioId])).rows[0];
   if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
   let desc = descripcion, precio = precioUnitario, mon = moneda;
   if (catalogoItemId) {
@@ -3923,6 +3965,15 @@ app.post('/api/servicios-tecnicos/:id/costos', requireStaff, async (req, res) =>
   // Si el service estaba marcado "sin costo" y ahora se le carga un costo, deja de aplicar esa marca
   // (ya no es una visita sin cobro).
   await pool.query('update servicios_tecnicos set sin_costo=false where id=$1', [servicioId]);
+  // Si el costo se cargó en una visita de mantenimiento (ej: equipo dañado que hay que cambiar), avisamos
+  // al grupo de Telegram para que se gestione con el cliente. Si Telegram falla, el costo queda guardado igual.
+  if (servicio.contrato_mantenimiento_id) {
+    try {
+      const cli = servicio.cliente_id ? (await pool.query('select nombre from clientes where id=$1', [servicio.cliente_id])).rows[0] : null;
+      const monto = Math.round((Number(cantidad) || 1) * Number(precio));
+      enviarTelegram(`🔧 <b>Costo cargado en un mantenimiento</b>\nCliente: ${escapeHtmlSrv(cli ? cli.nombre : 'Cliente')}\nServicio: ${escapeHtmlSrv(servicio.titulo)}\nDetalle: ${escapeHtmlSrv(desc.trim())} x${Number(cantidad) || 1} — ${(mon === 'USD') ? 'USD' : 'UYU'} ${monto} (sin IVA)\nRevisar con el cliente.`).catch(e => console.error('No se pudo avisar el costo de mantenimiento por Telegram:', e.message));
+    } catch (e) { console.error('Aviso de costo de mantenimiento:', e.message); }
+  }
   ok(res, r.rows[0]);
 });
 app.delete('/api/costos-servicio/:id', requireStaff, async (req, res) => {
