@@ -227,7 +227,7 @@ async function loadStaffData() {
   ]);
   cache.tickets = tickets.map(mapTicket);
   cache.usuarios = usuarios;
-  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+  cache.clientes = clientes.map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento, tieneApiKey: c.tiene_api_key }));
   cache.respuestas = respuestas;
   cache.automatizaciones = automatizaciones.map(mapAutomatizacion);
   cache.configuracion = configuracion;
@@ -597,7 +597,7 @@ async function submitGrupo(ev) {
   try {
     if (state.modal === 'editar-grupo') await api('PUT', '/api/clientes/' + state.editGrupoId, payload);
     else await api('POST', '/api/clientes', payload);
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento, tieneApiKey: c.tiene_api_key }));
     state.modal = null;
     render();
   } catch (e) { showToast(e.message); }
@@ -4307,9 +4307,12 @@ function renderReservaCalendario(t) {
 // Al tildar "Todo el día" se ocultan hora/duración, ya que no aplican a un evento de día completo
 // (así queda igual que la opción "Todo el día" de One Calendar / Windows Calendar / Outlook).
 function toggleTodoElDiaIcs(prefijo) {
-  const marcado = document.getElementById(`${prefijo}-ics-todo-el-dia`).checked;
-  const horaWrap = document.getElementById(`${prefijo}-ics-hora-wrap`);
-  const duracionWrap = document.getElementById(`${prefijo}-ics-duracion-wrap`);
+  // Algunos formularios usan ids con "-ics-" (editar servicio, ICS) y el de "Nuevo turno" no.
+  const check = document.getElementById(`${prefijo}-ics-todo-el-dia`) || document.getElementById(`${prefijo}-todo-el-dia`);
+  if (!check) return;
+  const marcado = check.checked;
+  const horaWrap = document.getElementById(`${prefijo}-ics-hora-wrap`) || document.getElementById(`${prefijo}-hora-wrap`);
+  const duracionWrap = document.getElementById(`${prefijo}-ics-duracion-wrap`) || document.getElementById(`${prefijo}-duracion-wrap`);
   if (horaWrap) horaWrap.style.display = marcado ? 'none' : '';
   if (duracionWrap) duracionWrap.style.display = marcado ? 'none' : '';
 }
@@ -6962,7 +6965,7 @@ async function submitImportarClientes(ev) {
     });
     const resultado = await api('POST', '/api/clientes/importar', { archivo: dataUrl });
     state.importarClientesResultado = resultado;
-    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento }));
+    cache.clientes = (await api('GET', '/api/clientes')).map(c => ({ id: c.id, nombre: c.nombre, direccion: c.direccion, telefono: c.telefono, correo: c.correo, correoInformes: c.correo_informes, rol: c.rol, contactoNombre: c.contacto_nombre, rolCliente: c.rol_cliente, tienePortal: c.tiene_portal, administradoPorId: c.administrado_por_id, administradoPorNombre: c.administrado_por_nombre, esMantenimiento: c.es_mantenimiento, tieneApiKey: c.tiene_api_key }));
   } catch (e) { showToast(e.message); }
   state.importarClientesCargando = false;
   render();
@@ -6996,6 +6999,66 @@ function renderImportarClientesModal() {
     `}
   </div></div>`;
 }
+// ---- Clave API (integración con Convive): solo lectura, se pide al servidor recién al tocar Mostrar/Copiar ----
+const apiKeyTmp = {};
+function apiKeyBloqueHtml(g) {
+  const id = escapeHtml(g.id);
+  const titulo = '<div style="font-weight:700;font-size:13px;margin-bottom:8px;">🔑 Clave API (integración con Convive)</div>';
+  if (!g.tieneApiKey) {
+    return `${titulo}<div class="hint-text" style="margin-bottom:10px;">Este cliente todavía no tiene clave API.</div>
+      <button type="button" class="btn btn-primary" id="apikey-generar-btn" onclick="apiKeyGenerar('${id}')">✨ Generar clave</button>`;
+  }
+  return `${titulo}<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <div id="apikey-valor" style="flex:1;min-width:160px;font-family:'IBM Plex Mono',monospace;font-size:14px;border:1px solid var(--line-strong);border-radius:10px;padding:10px 12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;letter-spacing:1px;">••••••••••••••••••••</div>
+      <button type="button" class="btn btn-ghost" id="apikey-mostrar-btn" onclick="apiKeyMostrar('${id}')">👁 Mostrar</button>
+      <button type="button" class="btn btn-primary" id="apikey-copiar-btn" onclick="apiKeyCopiar('${id}')">📋 Copiar</button></div>
+    <div class="hint-text" style="margin-top:8px;">Solo lectura. Copiala y pegala en Convive al dar de alta esta Administración. Tratala como una contraseña.</div>`;
+}
+async function apiKeyObtener(id) {
+  if (apiKeyTmp[id]) return apiKeyTmp[id];
+  const r = await api('GET', `/api/clientes/${id}/api-key`);
+  if (!r.apiKey) throw new Error('Este cliente no tiene clave API.');
+  apiKeyTmp[id] = r.apiKey;
+  return r.apiKey;
+}
+async function apiKeyMostrar(id) {
+  const valor = document.getElementById('apikey-valor');
+  const btn = document.getElementById('apikey-mostrar-btn');
+  if (!valor || !btn) return;
+  try {
+    if (btn.dataset.visible === '1') {
+      valor.textContent = '••••••••••••••••••••';
+      btn.dataset.visible = '0'; btn.textContent = '👁 Mostrar';
+      return;
+    }
+    valor.textContent = await apiKeyObtener(id);
+    btn.dataset.visible = '1'; btn.textContent = '🙈 Ocultar';
+  } catch (e) { valor.textContent = e.message; }
+}
+async function apiKeyCopiar(id) {
+  const btn = document.getElementById('apikey-copiar-btn');
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(await apiKeyObtener(id));
+    btn.textContent = '✅ Copiada';
+  } catch (e) { btn.textContent = '⚠️ No se pudo copiar'; }
+  setTimeout(() => { if (btn.isConnected) btn.textContent = '📋 Copiar'; }, 2000);
+}
+async function apiKeyGenerar(id) {
+  const btn = document.getElementById('apikey-generar-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
+  try {
+    const r = await api('POST', `/api/clientes/${id}/api-key`);
+    apiKeyTmp[id] = r.apiKey;
+    const g = cache.clientes.find(x => x.id === id);
+    if (g) g.tieneApiKey = true;
+    const bloque = document.getElementById('apikey-bloque');
+    if (bloque && g) bloque.innerHTML = apiKeyBloqueHtml(g);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Generar clave'; }
+    alert(e.message);
+  }
+}
 function renderGrupoModal() {
   const editing = state.modal === 'editar-grupo';
   const g = editing ? cache.clientes.find(x => x.id === state.editGrupoId) : null;
@@ -7017,6 +7080,7 @@ function renderGrupoModal() {
       <div class="field" style="margin-top:6px;padding-top:14px;border-top:1px dashed var(--line-strong);"><label>Acceso al portal (contraseña)</label>
         <input name="portalPassword" type="password" placeholder="${editing ? 'Dejar en blanco para no cambiarla' : 'Definí una contraseña de acceso'}" autocomplete="new-password">
         <div class="hint-text">Con el correo de arriba y esta contraseña, el cliente entra al portal a ver sus tickets.</div></div>
+      ${editing && g && g.rolCliente === 'Administración' ? `<div id="apikey-bloque" style="margin-top:16px;padding:14px;border:1px dashed var(--line-strong);border-radius:12px;">${apiKeyBloqueHtml(g)}</div>` : ''}
       <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">${editing ? 'Guardar cambios' : 'Crear cliente'}</button></div>
     </form></div></div>`;
 }
