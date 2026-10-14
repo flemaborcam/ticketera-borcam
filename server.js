@@ -1741,10 +1741,32 @@ app.get('/api/clientes', requireStaff, async (req, res) => {
   const clientes = (await pool.query(
     `select c.id,c.nombre,c.direccion,c.telefono,c.correo,c.correo_informes,c.rol,c.rol_cliente,c.contacto_nombre,
             (c.portal_password_hash is not null) as tiene_portal, c.administrado_por_id, c.es_mantenimiento,
+            (c.api_key is not null) as tiene_api_key,
             a.nombre as administrado_por_nombre
      from clientes c left join clientes a on a.id = c.administrado_por_id order by c.nombre`
   )).rows;
   ok(res, clientes);
+});
+// Clave API de una Administración (para integrar con Convive). Solo lectura desde el panel: la clave
+// NO viaja en el listado general de clientes, se pide puntualmente (Mostrar/Copiar) y solo al personal.
+app.get('/api/clientes/:id/api-key', requireStaff, async (req, res) => {
+  const c = (await pool.query('select api_key from clientes where id=$1', [req.params.id])).rows[0];
+  if (!c) return bad(res, 'Cliente no encontrado.', 404);
+  res.set('Cache-Control', 'no-store');
+  ok(res, { apiKey: c.api_key || null });
+});
+// Genera una clave SOLO si el cliente es una Administración y todavía no tiene: nunca pisa una existente
+// (la actualización exige api_key is null), así no se rompe una integración que ya funciona.
+app.post('/api/clientes/:id/api-key', requireStaff, async (req, res) => {
+  const c = (await pool.query('select id, rol_cliente from clientes where id=$1', [req.params.id])).rows[0];
+  if (!c) return bad(res, 'Cliente no encontrado.', 404);
+  if (c.rol_cliente !== 'Administración') return bad(res, 'La clave API solo se genera para clientes con rol Administración.');
+  const nueva = crypto.randomBytes(32).toString('hex');
+  const r = await pool.query('update clientes set api_key=$1 where id=$2 and api_key is null returning api_key', [nueva, c.id]);
+  res.set('Cache-Control', 'no-store');
+  if (r.rows[0]) return ok(res, { apiKey: r.rows[0].api_key, generada: true });
+  const existente = (await pool.query('select api_key from clientes where id=$1', [c.id])).rows[0];
+  ok(res, { apiKey: existente.api_key, generada: false });
 });
 app.get('/api/clientes/:id/tickets', requireStaff, async (req, res) => {
   const tickets = (await pool.query('select * from tickets where cliente_id=$1 order by actualizado desc', [req.params.id])).rows;
