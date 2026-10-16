@@ -5183,14 +5183,30 @@ async function revisarCasillaReal() {
     const lock = await client.getMailboxLock('INBOX');
     let maxUid = cfg.imap_ultimo_uid || 0;
     try {
-      const desde = maxUid + 1;
-      for await (const msg of client.fetch(`${desde}:*`, { source: true, uid: true }, { uid: true })) {
-        if (msg.uid <= maxUid) continue;
-        try {
-          const parsed = await simpleParser(msg.source);
-          await procesarCorreoEntrante(parsed);
-        } catch (e) { console.error('Error procesando un correo:', e.message); }
-        if (msg.uid > maxUid) maxUid = msg.uid;
+      // Ojo: en IMAP, pedir "N:*" cuando N es mayor que el último UID NO devuelve vacío: devuelve igual
+      // el último mensaje de la casilla. Con source:true eso lo descargaba completo (con adjuntos) cada
+      // minuto aunque no hubiera nada nuevo. Por eso primero se consulta el último UID del servidor y
+      // solo se hace el fetch si realmente hay correos más nuevos que el último procesado.
+      const uidNext = client.mailbox && client.mailbox.uidNext;
+      const ultimoEnServidor = uidNext ? uidNext - 1 : null; // null = el servidor no lo informó: se hace el fetch como antes
+      if (ultimoEnServidor !== null && ultimoEnServidor < maxUid) {
+        console.warn(`IMAP: el último UID del servidor (${ultimoEnServidor}) es menor que el guardado (${maxUid}). ¿Se reinició la casilla?`);
+      }
+      if (ultimoEnServidor === null || ultimoEnServidor > maxUid) {
+        const desde = maxUid + 1;
+        for await (const msg of client.fetch(`${desde}:*`, { source: true, uid: true }, { uid: true })) {
+          if (msg.uid <= maxUid) continue;
+          try {
+            const parsed = await simpleParser(msg.source);
+            await procesarCorreoEntrante(parsed);
+          } catch (e) { console.error('Error procesando un correo:', e.message); }
+          if (msg.uid > maxUid) maxUid = msg.uid;
+          // Se guarda el avance después de CADA correo (y nunca hacia atrás): si algo se corta a mitad de
+          // la vuelta, la siguiente no vuelve a bajar ni a reprocesar lo que ya se hizo.
+          try {
+            await pool.query('update configuracion set imap_ultimo_uid=$1 where id=1 and (imap_ultimo_uid is null or imap_ultimo_uid < $1)', [maxUid]);
+          } catch (e) { console.error('No se pudo guardar el avance de IMAP:', e.message); }
+        }
       }
     } finally {
       lock.release();
