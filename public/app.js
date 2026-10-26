@@ -22,7 +22,8 @@ let state = {
   newsletterDestinatarios: [], newsletterAdjuntos: [],
   reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
   reportesDesde: '', reportesHasta: '',
-  configMenuAbierto: false
+  configMenuAbierto: false,
+  stMenuAbierto: false
 };
 
 /* ---------------- Menú lateral colapsado (solo iconos) ---------------- */
@@ -1033,7 +1034,7 @@ function renderCalendarioHtml() {
 
   const subTab = state.calendarioSubTab || 'domotica';
   const subTabsHtml = [
-    { v: 'domotica', label: '🏠 Domótica' },
+    { v: 'domotica', label: '🏠 Agenda' },
     { v: 'config', label: 'Configuración' }
   ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
 
@@ -1071,7 +1072,7 @@ function renderCalendarioHtml() {
   }
 
   return `
-    <div class="page-head"><div><h1>Calendario</h1><div class="sub">Configuración general y agenda de instalaciones (domótica). El servicio técnico ahora tiene su propia sección.</div></div></div>
+    <div class="page-head"><div><h1>Domótica</h1><div class="sub">Configuración general y agenda de instalaciones de domótica.</div></div></div>
     <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
     ${contenido}`;
 }
@@ -1127,7 +1128,7 @@ function renderServicioTecnicoTab() {
     <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('calendario')">📅 Calendario</button>
   </div>`;
   return `${servicioTecnicoListaStyleTag()}
-    <div class="page-head"><div><h1>Servicio Técnico</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
+    <div class="page-head"><div><h1>Servicios Técnicos</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div class="page-head-actions">
         ${vista === 'lista' && tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
       </div>
@@ -3949,18 +3950,34 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
+const NAV_ST_SUBVISTAS = ['servicio-tecnico', 'calendario'];
+function toggleStMenu() {
+  if (sidebarColapsado) { go('servicio-tecnico'); return; }
+  state.stMenuAbierto = !state.stMenuAbierto; render();
+}
 function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
-    { v: 'calendario', label: 'Calendario', ico: '&#128197;' }, { v: 'servicio-tecnico', label: 'Servicio Técnico', ico: '&#128295;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
-  const botonesPrincipales = items.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('');
+  const btnNav = it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`;
+  // "Dep. Técnico" es un desplegable (como Configuración) que va justo después de "Documentos edificio".
+  const stAbierto = state.stMenuAbierto || NAV_ST_SUBVISTAS.includes(activeView);
+  const stSub = [
+    { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: '&#128295;' },
+    { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
+  ];
+  const stBtn = `<button class="nav-btn nav-btn-config ${stAbierto ? 'open' : ''} ${NAV_ST_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleStMenu()" title="Dep. Técnico"><span class="ico">&#128295;</span><span class="nav-btn-label">Dep. Técnico</span><span class="nav-btn-chev">&#9654;</span></button>
+    <div class="nav-submenu ${stAbierto ? 'open' : ''}">
+      ${stSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
+    </div>`;
+  const idxDoc = items.findIndex(it => it.v === 'documentos-edificio');
+  const botonesPrincipales = items.slice(0, idxDoc + 1).map(btnNav).join('') + stBtn + items.slice(idxDoc + 1).map(btnNav).join('');
 
   // "Configuración" se abre solo si ya estás parado en alguna de sus subvistas, o si lo abriste a mano.
   const abierto = state.configMenuAbierto || NAV_CONFIG_SUBVISTAS.includes(activeView);
@@ -3980,21 +3997,21 @@ function navItems(activeView) {
 // Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
 // 13+ botones apretados en una sola fila ilegible. El resto del menú completo vive en el modal
 // "menu-movil" (ver renderMenuMovilModal).
-const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario'];
+const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario', 'reservas'];
 function navItemsBottom(activeView) {
   const todos = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'servicio-tecnico', label: 'S. Técnico', ico: '&#128295;' }, { v: 'calendario', label: 'Calendario', ico: '&#128197;' },
+    { v: 'servicio-tecnico', label: 'Dep. Técnico', ico: '&#128295;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
   ];
   const enMenuMovil = NAV_ITEMS_BOTTOM_PRINCIPALES.includes(activeView) ? false : true;
-  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && activeView === 'calendario')) ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
   return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
 }
 function openMenuMovil() { state.modal = 'menu-movil'; render(); }
 function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
-    { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
+    { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
     { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' }, { v: 'tags', label: 'Tags', ico: '&#127991;' },
