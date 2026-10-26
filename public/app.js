@@ -3943,7 +3943,7 @@ function logoSvg(variant) {
 }
 // Vistas que ahora viven adentro del desplegable "Configuración" en vez de tener renglón propio
 // en el menú principal.
-const NAV_CONFIG_SUBVISTAS = ['configuracion', 'usuarios', 'perfil', 'automatizaciones'];
+const NAV_CONFIG_SUBVISTAS = ['configuracion', 'usuarios', 'perfil', 'automatizaciones', 'respuestas'];
 // Con el menú colapsado a solo iconos no hay lugar para desplegar el submenú angosto, así que ahí
 // tocar "Configuración" navega directo a esa sección en vez de abrir el desplegable.
 function toggleConfigMenu() {
@@ -3959,7 +3959,7 @@ function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
+    { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
@@ -3986,6 +3986,7 @@ function navItems(activeView) {
     { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
     { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
     { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
+    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' },
   ];
   const configBtn = `<button class="nav-btn nav-btn-config ${abierto ? 'open' : ''} ${NAV_CONFIG_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleConfigMenu()" title="Configuración"><span class="ico">&#9881;</span><span class="nav-btn-label">Configuración</span><span class="nav-btn-chev">&#9654;</span></button>
     <div class="nav-submenu ${abierto ? 'open' : ''}">
@@ -4012,14 +4013,14 @@ function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
     { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
-    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }, { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
+    { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' }, { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
   items.push(
     { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
-    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }
+    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }, { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }
   );
   const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
@@ -4095,7 +4096,7 @@ function renderShell(inner) {
     .nav-btn-chev{margin-left:auto;font-size:9px;opacity:.65;transition:transform .15s ease;flex:none;}
     .nav-btn-config.open .nav-btn-chev{transform:rotate(90deg);}
     .nav-submenu{overflow:hidden;max-height:0;transition:max-height .2s ease;}
-    .nav-submenu.open{max-height:220px;}
+    .nav-submenu.open{max-height:260px;}
     .nav-subbtn{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;border-radius:8px;padding:7px 12px 7px 34px;font-size:12.5px;font-weight:600;color:#AEC0DE;transition:background .15s ease,color .15s ease;margin-bottom:2px;cursor:pointer;text-align:left;}
     .nav-subbtn:hover{background:rgba(255,255,255,.07);color:#fff;}
     .nav-subbtn.active{background:rgba(61,126,240,.28);color:#fff;}
