@@ -23,7 +23,8 @@ let state = {
   reportes: null, reportesCargando: false, reportesUsuario: 'todos', reportesRango: 'este-mes',
   reportesDesde: '', reportesHasta: '',
   configMenuAbierto: false,
-  stMenuAbierto: false
+  stMenuAbierto: false,
+  docMenuAbierto: false
 };
 
 /* ---------------- Menú lateral colapsado (solo iconos) ---------------- */
@@ -680,7 +681,7 @@ function renderDocumentos() {
       </div>
     </div>`).join('');
   const list = cache.documentosLegales.length ? rows : `<div class="empty-state"><div class="big">Todavía no hay documentos cargados</div></div>`;
-  return `<div class="page-head"><div><h1>Documentos</h1><div class="sub">Descargos u otros textos que el cliente puede leer y aceptar con firma electrónica al responder un ticket</div></div><button class="btn btn-primary" onclick="openNuevoDocumentoModal()">+ Nuevo documento</button></div>${list}`;
+  return `<div class="page-head"><div><h1>Documentos Tipo</h1><div class="sub">Descargos u otros textos que el cliente puede leer y aceptar con firma electrónica al responder un ticket</div></div><button class="btn btn-primary" onclick="openNuevoDocumentoModal()">+ Nuevo documento</button></div>${list}`;
 }
 
 /* ---------------- Documentos del edificio (actas, manuales, contratos) ---------------- */
@@ -3955,18 +3956,32 @@ function toggleStMenu() {
   if (sidebarColapsado) { go('servicio-tecnico'); return; }
   state.stMenuAbierto = !state.stMenuAbierto; render();
 }
+const NAV_DOC_SUBVISTAS = ['documentos', 'documentos-edificio'];
+function toggleDocMenu() {
+  if (sidebarColapsado) { go('documentos'); return; }
+  state.docMenuAbierto = !state.docMenuAbierto; render();
+}
 function navItems(activeView) {
   const items = [
     { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
     { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
-    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
+    { v: '__docs' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
     { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
-  const btnNav = it => `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`;
-  // "Dep. Técnico" es un desplegable (como Configuración) que va justo después de "Documentos edificio".
+  // "Documentos" es un desplegable con "Documentos Tipo" y "Documentos edificio".
+  const docAbierto = state.docMenuAbierto || NAV_DOC_SUBVISTAS.includes(activeView);
+  const docSub = [
+    { v: 'documentos', label: 'Documentos Tipo', ico: '&#128220;' },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
+  ];
+  const docBtn = `<button class="nav-btn nav-btn-config ${docAbierto ? 'open' : ''} ${NAV_DOC_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleDocMenu()" title="Documentos"><span class="ico">&#128220;</span><span class="nav-btn-label">Documentos</span><span class="nav-btn-chev">&#9654;</span></button>
+    <div class="nav-submenu ${docAbierto ? 'open' : ''}">
+      ${docSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
+    </div>`;
+  const btnNav = it => it.v === '__docs' ? docBtn : `<button class="nav-btn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`;
+  // "Dep. Técnico" es un desplegable (como Configuración) que va justo después de "Documentos".
   const stAbierto = state.stMenuAbierto || NAV_ST_SUBVISTAS.includes(activeView);
   const stSub = [
     { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: '&#128295;' },
@@ -3976,7 +3991,7 @@ function navItems(activeView) {
     <div class="nav-submenu ${stAbierto ? 'open' : ''}">
       ${stSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
     </div>`;
-  const idxDoc = items.findIndex(it => it.v === 'documentos-edificio');
+  const idxDoc = items.findIndex(it => it.v === '__docs');
   const botonesPrincipales = items.slice(0, idxDoc + 1).map(btnNav).join('') + stBtn + items.slice(idxDoc + 1).map(btnNav).join('');
 
   // "Configuración" se abre solo si ya estás parado en alguna de sus subvistas, o si lo abriste a mano.
@@ -4013,7 +4028,7 @@ function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
     { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
-    { v: 'documentos', label: 'Documentos', ico: '&#128220;' },
+    { v: 'documentos', label: 'Documentos Tipo', ico: '&#128220;' },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
     { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' }, { v: 'tags', label: 'Tags', ico: '&#127991;' },
   ];
