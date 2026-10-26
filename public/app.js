@@ -1981,6 +1981,11 @@ function autocompletarCostoDesdeCatalogo(prefijo) {
   const descInput = document.getElementById(ids.desc);
   const precioInput = document.getElementById(ids.precio);
   const monedaInput = document.getElementById(ids.moneda);
+  if (prefijo !== 'pendiente') {
+    // El precio del catálogo siempre es sin IVA: se desmarca "ya incluye IVA" para no dividirlo dos veces.
+    const incl = document.getElementById('costo-incluye-iva');
+    if (incl && incl.checked) { incl.checked = false; toggleIvaIncluidoCosto(); }
+  }
   if (!catalogoItemId) { descInput.value = ''; precioInput.value = ''; monedaInput.value = 'UYU'; return; }
   const item = (cache.catalogoCostos || []).find(c => String(c.id) === String(catalogoItemId));
   if (!item) return;
@@ -2565,7 +2570,7 @@ function renderDetalleServicioTecnicoModal() {
       </label>`}
       ${sinCostoEf ? `<div class="hint-text">Marcado como sin costo. Para cargar costos, destildá esta opción.</div>` : `
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
-        <input type="checkbox" ${s.aplica_iva !== false ? 'checked' : ''} onchange="toggleAplicaIvaServicio('${s.id}', this.checked)"> Aplicar IVA (22%)
+        <input type="checkbox" id="costo-aplica-iva-chk" ${s.aplica_iva !== false ? 'checked' : ''} onchange="toggleAplicaIvaServicio('${s.id}', this.checked)"> Aplicar IVA (22%)
       </label>
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
         ${costos.length ? costos.map(c => `
@@ -2582,13 +2587,15 @@ function renderDetalleServicioTecnicoModal() {
       </div>` : ''}
       <div class="field-row" style="align-items:flex-end;flex-wrap:wrap;">
         <div class="field" style="flex:1.4;min-width:180px;"><label>Del catálogo</label><select id="costo-catalogo-select" onchange="autocompletarCostoDesdeCatalogo('costo')"><option value="">— Costo puntual (libre) —</option>${catalogoOptions}</select></div>
-        <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01"></div>
+        <div class="field" style="flex:0.7;min-width:90px;"><label>Cant.</label><input type="number" id="costo-cantidad" value="1" min="0.01" step="0.01" oninput="actualizarVistaPreviaIvaIncluido()"></div>
       </div>
       <div class="field-row" style="flex-wrap:wrap;">
         <div class="field" style="flex:1.6;min-width:160px;"><label style="display:block;min-height:28px;">Descripción</label><input type="text" id="costo-descripcion" placeholder="Ej: Mano de obra"></div>
-        <div class="field" style="flex:1;min-width:120px;"><label style="display:block;min-height:28px;">Precio (sin IVA)</label><input type="number" id="costo-precio" min="0" step="0.01"></div>
-        <div class="field" style="flex:0.6;min-width:100px;"><label style="display:block;min-height:28px;">Moneda</label><select id="costo-moneda"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
+        <div class="field" style="flex:1;min-width:120px;"><label id="costo-precio-label" style="display:block;min-height:28px;">Precio (sin IVA)</label><input type="number" id="costo-precio" min="0" step="0.01" oninput="actualizarVistaPreviaIvaIncluido()"></div>
+        <div class="field" style="flex:0.6;min-width:100px;"><label style="display:block;min-height:28px;">Moneda</label><select id="costo-moneda" onchange="actualizarVistaPreviaIvaIncluido()"><option value="UYU">$ UYU</option><option value="USD">US$</option></select></div>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:13px;color:var(--ink-soft);"><input type="checkbox" id="costo-incluye-iva" onchange="toggleIvaIncluidoCosto()"> Este precio ya incluye IVA</label>
+      <div id="costo-iva-preview" class="hint-text" style="display:none;margin-bottom:10px;"></div>
       <button type="button" class="btn btn-ghost" onclick="agregarCostoServicioTecnico('${s.id}')">+ Agregar costo</button>`}
     </div>
 
@@ -2744,15 +2751,60 @@ async function revertirPagoServicio(id) {
     render();
   } catch (e) { showToast(e.message); }
 }
+// Costos con "el precio ya incluye IVA": el sistema guarda siempre el precio neto (sin IVA) y calcula
+// el IVA encima. Si el importe que se tipea ya trae IVA, se divide por 1 + IVA_RATE.
+// OJO: nada de render() acá — reconstruiría el formulario y se perderían los campos tipeados.
+function calcularIvaIncluido(cantidad, precioConIva) {
+  const cant = Number(cantidad) || 1;
+  const esperado = Math.round(cant * Number(precioConIva));
+  // Se busca el subtotal entero que, con el IVA redondeado encima, dé exactamente el importe tipeado
+  // (si no existe ninguno, queda el más cercano y la vista previa avisa de la diferencia).
+  const base = Math.round(esperado / (1 + IVA_RATE));
+  let sub = base;
+  for (const d of [0, -1, 1, -2, 2]) { if (base + d + Math.round((base + d) * IVA_RATE) === esperado) { sub = base + d; break; } }
+  const iva = Math.round(sub * IVA_RATE);
+  return { netoUnit: sub / cant, sub, iva, total: sub + iva, esperado };
+}
+function toggleIvaIncluidoCosto() {
+  const chk = document.getElementById('costo-incluye-iva');
+  const lbl = document.getElementById('costo-precio-label');
+  if (lbl) lbl.textContent = chk && chk.checked ? 'Precio (con IVA)' : 'Precio (sin IVA)';
+  // Al decir que el precio incluye IVA, "Aplicar IVA" se tilda solo (sólo visual: se guarda al agregar el costo).
+  const aplica = document.getElementById('costo-aplica-iva-chk');
+  if (chk && chk.checked && aplica) aplica.checked = true;
+  actualizarVistaPreviaIvaIncluido();
+}
+function actualizarVistaPreviaIvaIncluido() {
+  const chk = document.getElementById('costo-incluye-iva');
+  const box = document.getElementById('costo-iva-preview');
+  if (!chk || !box) return;
+  const precio = document.getElementById('costo-precio').value;
+  if (!chk.checked || precio === '' || isNaN(Number(precio))) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const moneda = document.getElementById('costo-moneda').value;
+  const r = calcularIvaIncluido(document.getElementById('costo-cantidad').value, precio);
+  box.style.display = 'block';
+  box.innerHTML = `Se va a guardar como: Subtotal <strong>${moneda} ${r.sub}</strong> + IVA 22% <strong>${moneda} ${r.iva}</strong> = Total <strong>${moneda} ${r.total}</strong>${r.total !== r.esperado ? ` <span style="opacity:.8;">(difiere ${moneda} ${Math.abs(r.total - r.esperado)} de lo tipeado por redondeo)</span>` : ''}`;
+}
 async function agregarCostoServicioTecnico(servicioId) {
   const catalogoItemId = document.getElementById('costo-catalogo-select').value || null;
   const cantidad = document.getElementById('costo-cantidad').value;
   const descripcion = document.getElementById('costo-descripcion').value;
-  const precioUnitario = document.getElementById('costo-precio').value;
+  let precioUnitario = document.getElementById('costo-precio').value;
   const moneda = document.getElementById('costo-moneda').value;
+  const incluyeIva = !!(document.getElementById('costo-incluye-iva') || {}).checked;
   if (!catalogoItemId && (!descripcion || !descripcion.trim())) { showToast('Escribí una descripción, o elegí un costo del catálogo.'); return; }
   if (!catalogoItemId && (precioUnitario === '' || isNaN(Number(precioUnitario)))) { showToast('Escribí un precio.'); return; }
   try {
+    if (incluyeIva && precioUnitario !== '' && !isNaN(Number(precioUnitario))) {
+      // El IVA tiene que estar activado para que el total salga discriminado.
+      const srv = (cache.serviciosTecnicos || []).find(x => String(x.id) === String(servicioId));
+      if (srv && srv.aplica_iva === false) {
+        const act = await api('POST', `/api/servicios-tecnicos/${servicioId}/aplica-iva`, { aplicaIva: true });
+        const i = cache.serviciosTecnicos.findIndex(x => String(x.id) === String(servicioId));
+        if (i >= 0) cache.serviciosTecnicos[i] = act;
+      }
+      precioUnitario = String(Number(calcularIvaIncluido(cantidad, precioUnitario).netoUnit.toFixed(6)));
+    }
     await api('POST', `/api/servicios-tecnicos/${servicioId}/costos`, { catalogoItemId, descripcion, cantidad, precioUnitario: precioUnitario || null, moneda });
     await recargarServicioTecnico(servicioId);
     showToast('Costo agregado.');

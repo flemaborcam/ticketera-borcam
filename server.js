@@ -2234,10 +2234,10 @@ async function generarPdfOrdenMantenimiento(servicio, cliente) {
         doc.y += 6;
         for (const [moneda, sub] of Object.entries(subtotalesOrden)) {
           const subR = Math.round(sub);
-          const iva = Math.round(sub * 0.22);
+          const iva = Math.round(subR * 0.22);
           const linea = aplicaIvaOrden
             ? `Total ${moneda} ${subR} + IVA (${moneda} ${iva}) = ${moneda} ${subR + iva}`
-            : `Total ${moneda} ${subR} (sin IVA)`;
+            : `Total ${moneda} ${subR}`;
           nuevaFranjaSiHaceFalta(20);
           doc.fontSize(10).fillColor(BORCAM_AZUL).font('Helvetica-Bold').text(linea, M, doc.y, { width: contentW, align: 'right' });
           doc.y += 16;
@@ -3673,7 +3673,7 @@ app.get('/aprobar-presupuesto/:token', async (req, res) => {
     <div class="card">
       <h1>${escapeHtmlSrv(s.titulo)}</h1>
       <table>${filasCostos}${filasTotales}</table>
-      <div class="aviso">Precios sin IVA + 22% de IVA (tasa básica en Uruguay).</div>
+      <div class="aviso">${aplicaIva ? 'Precios sin IVA + 22% de IVA (tasa básica en Uruguay).' : 'Importe total a abonar.'}</div>
     </div>
     <div class="card" id="form-card">
       <p style="margin:0 0 8px;color:#20262B;font-size:14px;">Al confirmar, das tu conformidad con este presupuesto y habilitás a Borcam a avanzar con la tarea.</p>
