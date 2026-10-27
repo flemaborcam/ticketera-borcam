@@ -466,6 +466,109 @@ async function eliminarTicket(id) {
     go('dashboard');
   } catch (e) { showToast(e.message); }
 }
+/* ---------------- Subcategorías de Soporte Técnico (editables) ---------------- */
+function onSubcatChange(ticketId, sel) {
+  if (sel.value !== '__nueva__') return updateTicketField(ticketId, 'subcategoria', sel.value);
+  const t = cache.tickets.find(x => x.id === ticketId);
+  sel.value = (t && t.subcategoria) || '';
+  state.modal = 'nueva-subcategoria'; state.subcatTicketId = ticketId; state.subcatNueva = ''; state.subcatError = '';
+  render();
+}
+function renderNuevaSubcategoriaModal() {
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:420px;">
+    <h2>Nueva subcategoría</h2>
+    <p class="sub">Se agrega a la lista de Soporte Técnico para todo el equipo y se elige en este ticket.</p>
+    <form onsubmit="return submitNuevaSubcategoria(event)">
+      <div class="field"><label>Nombre</label><input id="subcat-nueva-input" type="text" maxlength="40" value="${escapeHtml(state.subcatNueva || '')}" oninput="state.subcatNueva=this.value" placeholder="Ej: Cerrajería" autofocus></div>
+      ${state.subcatError ? `<div class="error-text">${escapeHtml(state.subcatError)}</div>` : ''}
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button type="submit" class="btn btn-primary">Agregar y elegir</button></div>
+    </form></div></div>`;
+}
+async function submitNuevaSubcategoria(ev) {
+  ev.preventDefault();
+  const nombre = (state.subcatNueva || '').replace(/\s+/g, ' ').trim();
+  const idTicket = state.subcatTicketId;
+  if (!nombre) { state.subcatError = 'Escribí el nombre de la subcategoría.'; render(); return false; }
+  const existente = (CAT.SUBCATEGORIAS_SOPORTE_TECNICO || []).find(x => x.toLowerCase() === nombre.toLowerCase());
+  try {
+    let elegida = existente;
+    if (!existente) {
+      const r = await api('POST', '/api/subcategorias-soporte', { nombre });
+      CAT.SUBCATEGORIAS_SOPORTE_TECNICO = r.lista; elegida = r.nombre;
+    }
+    closeModal();
+    await updateTicketField(idTicket, 'subcategoria', elegida);
+  } catch (e) { state.subcatError = e.message; render(); }
+  return false;
+}
+async function cargarSubcategoriasConfig() {
+  try {
+    const r = await api('GET', '/api/subcategorias-soporte');
+    CAT.SUBCATEGORIAS_SOPORTE_TECNICO = r.lista; state.subcatUsos = r.usos || {};
+    render();
+  } catch (e) { showToast(e.message); }
+}
+function renderSubcategoriasCard(tab) {
+  const lista = CAT.SUBCATEGORIAS_SOPORTE_TECNICO || [];
+  const usos = state.subcatUsos || {};
+  const ed = state.subcatEditando;
+  return `<div class="card card-narrow" style="max-width:560px;margin-top:18px;${tab === 'subcategorias' ? '' : 'display:none;'}">
+    ${configSectionHead('🗂️', 'Subcategorías de Soporte Técnico', 'Las opciones que aparecen en el desplegable "Subcategoría" de los tickets de Soporte Técnico. Cualquier usuario del equipo puede agregar, renombrar o eliminar.')}
+    <div class="subcat-list">
+      ${lista.map((v, i) => `
+        <div class="subcat-row">
+          ${ed === i ? `
+            <input id="subcat-edit-input" type="text" maxlength="40" value="${escapeHtml(state.subcatEditTexto || '')}" oninput="state.subcatEditTexto=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();subcatGuardarEdicion();}else if(event.key==='Escape'){subcatCancelarEdicion();}" autofocus>
+            <button type="button" class="btn btn-primary btn-sm" onclick="subcatGuardarEdicion()">Guardar</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="subcatCancelarEdicion()">Cancelar</button>` : `
+            <span class="subcat-name">${escapeHtml(v)}</span>
+            <span class="subcat-n">${usos[v] ? usos[v] + (usos[v] === 1 ? ' ticket' : ' tickets') : 'sin usar'}</span>
+            <button type="button" class="subcat-ib" title="Renombrar" onclick="subcatEditar(${i})">${iconoLucide('pencil')}</button>
+            <button type="button" class="subcat-ib subcat-ib-del" title="Eliminar" onclick="subcatEliminar(${i})">${iconoLucide('trash-2')}</button>`}
+        </div>`).join('')}
+    </div>
+    <div class="subcat-add">
+      <input id="subcat-add-input" type="text" maxlength="40" placeholder="Nueva subcategoría (ej: Cerrajería)" value="${escapeHtml(state.subcatNuevaCfg || '')}" oninput="state.subcatNuevaCfg=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();subcatAgregarConfig();}">
+      <button type="button" class="btn btn-primary" onclick="subcatAgregarConfig()">Agregar</button>
+    </div>
+    <div class="hint-text" style="margin-top:10px;">Al renombrar, los tickets que ya la usan se actualizan solos. Al eliminar, los tickets viejos conservan su texto; solo deja de ofrecerse.</div>
+  </div>`;
+}
+async function subcatAgregarConfig() {
+  const nombre = (state.subcatNuevaCfg || '').trim();
+  if (!nombre) return;
+  try {
+    const r = await api('POST', '/api/subcategorias-soporte', { nombre });
+    CAT.SUBCATEGORIAS_SOPORTE_TECNICO = r.lista; state.subcatNuevaCfg = '';
+    showToast('Subcategoría agregada.');
+  } catch (e) { showToast(e.message); }
+}
+function subcatEditar(i) { state.subcatEditando = i; state.subcatEditTexto = CAT.SUBCATEGORIAS_SOPORTE_TECNICO[i]; render(); }
+function subcatCancelarEdicion() { state.subcatEditando = null; render(); }
+async function subcatGuardarEdicion() {
+  const viejo = CAT.SUBCATEGORIAS_SOPORTE_TECNICO[state.subcatEditando];
+  try {
+    const r = await api('PUT', '/api/subcategorias-soporte', { viejo, nuevo: state.subcatEditTexto });
+    CAT.SUBCATEGORIAS_SOPORTE_TECNICO = r.lista; state.subcatEditando = null;
+    await cargarSubcategoriasConfig();
+    cache.tickets = (await api('GET', '/api/tickets')).map(mapTicket);
+    showToast('Subcategoría renombrada.');
+  } catch (e) { showToast(e.message); }
+}
+async function subcatEliminar(i) {
+  const nombre = CAT.SUBCATEGORIAS_SOPORTE_TECNICO[i];
+  const n = (state.subcatUsos || {})[nombre] || 0;
+  const aviso = n ? `"${nombre}" la usan ${n} ticket(s). Esos tickets conservan el texto, pero deja de ofrecerse. ¿Eliminarla?` : `¿Eliminar la subcategoría "${nombre}"?`;
+  if (!confirm(aviso)) return;
+  try {
+    const res = await fetch('/api/subcategorias-soporte', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nombre }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Error de red');
+    CAT.SUBCATEGORIAS_SOPORTE_TECNICO = data.lista;
+    await cargarSubcategoriasConfig();
+    showToast('Subcategoría eliminada.');
+  } catch (e) { showToast(e.message); }
+}
 function openFusionarTicketModal(id) { state.modal = 'fusionar-ticket'; state.fusionarTicketId = id; state.fusionarBusqueda = ''; render(); }
 function refreshFusionarLista() {
   const el = document.getElementById('fusionar-lista');
@@ -518,7 +621,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.insumoForm = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
+function closeModal() { state.modal = null; state.subcatError = ''; state.insumoForm = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -1754,11 +1857,14 @@ function nombreUsuarioPorId(id) { const u = (cache.usuarios || []).find(x => x.i
 // Select de "Técnico asignado", reutilizado en Nuevo turno / Agendar / Editar servicio técnico —
 // para elegir quién va a ir a la visita, y poder cambiarlo después si ese técnico no puede ir.
 // Subcategoría: lista de valores válida solo cuando el ticket es de Categoría "Soporte Técnico".
-// Para agregar una nueva (ej. "Cerrajería"), alcanza con sumarla a SUBCATEGORIAS_SOPORTE_TECNICO
-// en server.js — se refleja acá solo con recargar la página, sin tocar app.js.
+// La lista se edita desde el sistema (Configuración → Subcategorías, o la opción "Agregar nueva" del propio ticket).
 function subcatOptions(selected) {
+  const lista = (CAT.SUBCATEGORIAS_SOPORTE_TECNICO || []).slice();
+  // Si el ticket tiene una subcategoría que ya no está en la lista (se eliminó), se sigue mostrando.
+  if (selected && !lista.includes(selected)) lista.push(selected);
   return `<option value="">Sin especificar</option>` +
-    (CAT.SUBCATEGORIAS_SOPORTE_TECNICO || []).map(v => `<option value="${escapeHtml(v)}" ${v === selected ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('');
+    lista.map(v => `<option value="${escapeHtml(v)}" ${v === selected ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('') +
+    `<option value="__nueva__">＋ Agregar nueva subcategoría…</option>`;
 }
 function opcionesTecnicos(selectedId) {
   return `<option value="" ${!selectedId ? 'selected' : ''}>Sin asignar</option>` +
@@ -4012,7 +4118,7 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
-const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />"};
+const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />"};
 // Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
 function iconoLucide(nombre, cls) {
   return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
@@ -5242,6 +5348,14 @@ function ticketStyleTag() {
     .ticket-num-big{display:inline-block;font-family:var(--font-mono) !important;font-size:13px !important;font-weight:700;letter-spacing:.03em;color:#fff !important;background:linear-gradient(160deg,#0F2A4D 0%,#1B3F73 100%);padding:6px 14px;border-radius:8px;box-shadow:0 4px 10px -4px rgba(15,42,77,.4);margin-bottom:6px;}
   </style>`;
 }
+function toggleTkMenu(ev) {
+  ev.stopPropagation();
+  const m = ev.currentTarget.closest('.tk-more');
+  const abierto = m.classList.contains('open');
+  document.querySelectorAll('.tk-more.open').forEach(x => x.classList.remove('open'));
+  if (!abierto) m.classList.add('open');
+}
+document.addEventListener('click', () => document.querySelectorAll('.tk-more.open').forEach(x => x.classList.remove('open')));
 function renderTicket(id) {
   const t = cache.tickets.find(x => x.id === id);
   if (!t) return `<button class="back-link" onclick="go('dashboard')">&larr; Volver</button><div class="empty-state cargando">Cargando…</div>`;
@@ -5256,37 +5370,61 @@ function renderTicket(id) {
   const u = currentUser();
   return `${ticketStyleTag()}
     <button class="back-link" onclick="volverDesdeTicket()">&larr; ${state.ticketVolverA === 'reservas' ? 'Volver a Reservas' : 'Volver a la bandeja general'}</button>
-    <div class="ticket-head">
-      <div class="ticket-head-top">
-        <div><div class="ticket-num-big">${t.numero}</div><h1>${escapeHtml(t.asunto)}</h1>
-          <div class="ticket-from">De ${escapeHtml(t.remitenteNombre)} · ${escapeHtml(t.remitenteEmail)} · creado ${fmtDateTime(t.creado)}</div>
-          ${lastMsg ? `<div class="ticket-from">Última respuesta: <strong>${escapeHtml(lastMsg.autor)}</strong> · ${fmtDateTime(lastMsg.fecha)}</div>` : ''}</div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
-          ${t.necesitaAtencion ? `<div class="stamp stamp-atencion">🔔 Respondió el cliente</div>` : ''}
-          ${t.satisfaccion === 'si' ? `<div class="stamp stamp-resuelto">😊 Cliente conforme</div>` : ''}
-          ${t.satisfaccion === 'no' ? `<div class="stamp stamp-atencion">😕 Cliente no conforme</div>` : ''}
-          ${t.reservasPendientes > 0 ? `<div class="stamp stamp-resuelto">📅 ${t.reservasPendientes > 1 ? t.reservasPendientes + ' reservas agendadas' : 'Reserva agendada'}</div>` : ''}
-          <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div>
+    <div class="ticket-head tk-head">
+      ${t.necesitaAtencion ? `<div class="tk-alert">${iconoLucide('bell-ring')}Respondió el cliente<span>Requiere tu respuesta</span></div>` : ''}
+      <div class="tk-top">
+        <span class="tk-num">${t.numero}</span>
+        <span class="tk-estado"><i class="tk-dot tk-dot-${slug(t.estado)}"></i>${escapeHtml(t.estado)}</span>
+        ${t.satisfaccion === 'si' ? `<span class="tk-pill tk-pill-ok">${iconoLucide('smile')}Cliente conforme</span>` : ''}
+        ${t.satisfaccion === 'no' ? `<span class="tk-pill tk-pill-bad">${iconoLucide('frown')}Cliente no conforme</span>` : ''}
+        ${t.reservasPendientes > 0 ? `<span class="tk-pill tk-pill-ok">${iconoLucide('calendar')}${t.reservasPendientes > 1 ? t.reservasPendientes + ' reservas agendadas' : 'Reserva agendada'}</span>` : ''}
+      </div>
+      <h1>${escapeHtml(t.asunto)}</h1>
+      <div class="tk-meta">
+        <span>${iconoLucide('user')}<b>${escapeHtml(t.remitenteNombre)}</b></span>
+        <span>${iconoLucide('mail')}${escapeHtml(t.remitenteEmail)}</span>
+        <span>${iconoLucide('calendar')}Creado ${fmtDateTime(t.creado)}</span>
+        ${lastMsg ? `<span>${iconoLucide('corner-up-left')}Última respuesta: <b>${escapeHtml(lastMsg.autor)}</b> · ${fmtDateTime(lastMsg.fecha)}</span>` : ''}
+      </div>
+      <div class="tk-acts">
+        ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-primary tk-btn" onclick="tomarTicket('${t.id}')">${iconoLucide('user-check')}Tomar este ticket</button>` : ''}
+        ${(!esTicketDeReserva(t) && !(t.serviciosTecnicos || []).some(s => s.estado !== 'realizado')) ? `<button type="button" class="btn btn-ghost tk-btn" onclick="openAgendarServicioModal('${t.id}')">${iconoLucide('calendar-plus')}Agendar servicio técnico</button>` : ''}
+        ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost tk-btn" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">${iconoLucide('tags')}Pedido de Tag</button>` : ''}
+        <a class="btn btn-ghost tk-btn btn-ubic" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">${ICONO_PDF} Exportar PDF</a>
+        ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost tk-btn btn-ubic" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">${ICONO_UBICACION} Ver ubicación</a>` : ''}
+        <div class="tk-more">
+          <button type="button" class="btn btn-ghost tk-btn" onclick="toggleTkMenu(event)" aria-haspopup="true">${iconoLucide('ellipsis')}Más</button>
+          <div class="tk-menu">
+            <button type="button" onclick="openFusionarTicketModal('${t.id}')">${iconoLucide('git-merge')}Fusionar con otro ticket</button>
+            <hr>
+            <button type="button" class="tk-del" onclick="eliminarTicket('${t.id}')">${iconoLucide('trash-2')}Eliminar ticket</button>
+          </div>
         </div>
       </div>
-      <div class="ticket-actions-row" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;">
-        ${t.asignadoA !== uid_ ? `<button type="button" class="btn btn-ghost" onclick="tomarTicket('${t.id}')">Tomar este ticket</button>` : ''}
-        ${(!esTicketDeReserva(t) && !(t.serviciosTecnicos || []).some(s => s.estado !== 'realizado')) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
-        ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
-        <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
-        <a class="btn btn-ghost btn-ubic" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">${ICONO_PDF} Exportar PDF</a>
-        ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost btn-ubic" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">${ICONO_UBICACION} Ver ubicación</a>` : ''}
-        <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
-      </div>
-      <div class="meta-grid">
-        <div class="field"><label>Categoría</label><select onchange="updateTicketField('${t.id}','categoria', this.value)">${catOptions}</select></div>
-        ${t.categoria === 'Soporte Técnico' ? `<div class="field" id="subcategoria-field-${t.id}"><label>Subcategoría</label><select onchange="updateTicketField('${t.id}','subcategoria', this.value)">${subcatOptions(t.subcategoria)}</select></div>` : ''}
-        <div class="field"><label>Prioridad</label><select onchange="updateTicketField('${t.id}','prioridad', this.value)">${prioOptions}</select></div>
-        <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
-        <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
-        <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
-        <div class="field"><label>Torre</label><input value="${escapeHtml(t.torre || '')}" placeholder="Ej: Torre 1" onchange="updateTicketField('${t.id}','torre', this.value)"><div class="hint-text">Dato descriptivo, se usa para precargar el Pedido de Tag.</div></div>
-        <div class="field"><label>Apartamento</label><input value="${escapeHtml(t.edificio || '')}" placeholder="Ej: 804" onchange="updateTicketField('${t.id}','edificio', this.value)"><div class="hint-text">Dato descriptivo (unidad/apto), no reemplaza al Cliente asignado arriba.</div></div>
+      <div class="tk-panel">
+        <div class="tk-group tk-g-clas">
+          <p class="tk-grp">Clasificación</p>
+          <div class="tk-fields">
+            <div class="field"><label>Categoría</label><select onchange="updateTicketField('${t.id}','categoria', this.value)">${catOptions}</select></div>
+            ${t.categoria === 'Soporte Técnico' ? `<div class="field" id="subcategoria-field-${t.id}"><label>Subcategoría</label><select onchange="onSubcatChange('${t.id}', this)">${subcatOptions(t.subcategoria)}</select></div>` : ''}
+            <div class="field"><label>Prioridad</label><select onchange="updateTicketField('${t.id}','prioridad', this.value)">${prioOptions}</select></div>
+            <div class="field"><label>Estado</label><select onchange="updateTicketField('${t.id}','estado', this.value)">${estOptions}</select></div>
+          </div>
+        </div>
+        <div class="tk-group">
+          <p class="tk-grp">Responsable</p>
+          <div class="tk-fields">
+            <div class="field"><label>Asignado a</label><select onchange="updateTicketField('${t.id}','asignadoA', this.value)">${asignOptions}</select></div>
+            <div class="field"><label>Cliente</label><select onchange="updateTicketField('${t.id}','clienteId', this.value)">${grupoOptions}</select></div>
+          </div>
+        </div>
+        <div class="tk-group">
+          <p class="tk-grp">Ubicación <span class="tk-info" tabindex="0" title="Datos descriptivos: la Torre se usa para precargar el Pedido de Tag y el Apto. es la unidad. No reemplazan al Cliente asignado.">${iconoLucide('info')}</span></p>
+          <div class="tk-fields">
+            <div class="field"><label>Torre</label><input value="${escapeHtml(t.torre || '')}" placeholder="Ej: Torre 1" onchange="updateTicketField('${t.id}','torre', this.value)"></div>
+            <div class="field"><label>Apto.</label><input value="${escapeHtml(t.edificio || '')}" placeholder="Ej: 804" onchange="updateTicketField('${t.id}','edificio', this.value)"></div>
+          </div>
+        </div>
       </div>
     </div>
     ${esTicketDeReserva(t) ? renderReservaCalendario(t) : ''}
@@ -5979,6 +6117,7 @@ function renderConfigTabs() {
     { v: 'notificaciones', label: '🔔 Notificaciones al cliente' },
     { v: 'respaldo', label: '💾 Respaldo' },
     { v: 'checklists', label: '✅ Checklists' },
+    { v: 'subcategorias', label: '🗂️ Subcategorías' },
   ];
   if (currentUser().es_superadmin) tabs.push({ v: 'peligro', label: '⚠️ Zona de peligro' });
   const activa = state.configTab || 'correo';
@@ -5986,7 +6125,7 @@ function renderConfigTabs() {
     ${tabs.map(t => `<button type="button" class="reply-tab ${activa === t.v ? 'active' : ''}" onclick="setConfigTab('${t.v}')">${t.label}</button>`).join('')}
   </div>`;
 }
-function setConfigTab(v) { state.configTab = v; render(); }
+function setConfigTab(v) { state.configTab = v; render(); if (v === 'subcategorias') cargarSubcategoriasConfig(); }
 
 /* ---------------- Newsletter ---------------- */
 
@@ -7169,7 +7308,7 @@ function renderConfiguracion() {
         </div>` : ''}
       </div>
 
-      <div class="card card-narrow" style="max-width:560px;margin-top:0;">
+      <div class="card card-narrow" style="max-width:560px;margin-top:0;${tab === 'subcategorias' ? 'display:none;' : ''}">
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
         <div class="hint-text" style="margin-top:8px;text-align:center;">Guarda los cambios de todas las pestañas de arriba a la vez.</div>
       </div>
@@ -7197,7 +7336,8 @@ function renderConfiguracion() {
           <textarea id="checklist-cat-${slug(cat)}" style="min-height:90px;">${escapeHtml(((CAT.checklistsCategoria || {})[cat] || []).join('\n'))}</textarea>
         </div>`).join('')}
       <button type="button" class="btn btn-primary btn-block" onclick="guardarChecklistsCategoria()">Guardar checklists</button>
-    </div>`;
+    </div>
+    ${renderSubcategoriasCard(tab)}`;
 }
 async function guardarChecklistsCategoria() {
   const checklists = {};
@@ -7238,6 +7378,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-proveedor') return renderNuevoProveedorModal();
   if (state.modal === 'nuevo-proveedor-cliente') return renderNuevoProveedorClienteModal();
   if (state.modal === 'fusionar-ticket') return renderFusionarTicketModal();
+  if (state.modal === 'nueva-subcategoria') return renderNuevaSubcategoriaModal();
   if (state.modal === 'firma-servicio') return renderModalFirmaServicio();
   if (state.modal === 'reprogramar-servicio') return renderReprogramarServicioModal();
   if (state.modal === 'marcar-pago-servicio') return renderMarcarPagoServicioModal();

@@ -765,6 +765,17 @@ const CATEGORIAS = ['Soporte Técnico', 'Infraestructura', 'Administración', 'R
 // Subcategorías: solo tienen sentido cuando la Categoría elegida es "Soporte Técnico". Para agregar
 // una nueva, alcanza con sumarla a esta lista (no hace falta migración de base de datos).
 const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso', 'Redes', 'Incendio', 'Portería', 'Alarma', 'Otro'];
+// Las subcategorías son editables desde el sistema (se guardan en configuracion.subcategorias_soporte).
+// Si todavía no se editaron, se usa esta lista inicial.
+pool.query(`alter table configuracion add column if not exists subcategorias_soporte jsonb`).catch(e => console.error('No se pudo migrar subcategorias_soporte:', e.message));
+async function getSubcategoriasSoporte() {
+  const r = await pool.query('select subcategorias_soporte from configuracion where id=1');
+  const v = r.rows[0] && r.rows[0].subcategorias_soporte;
+  return Array.isArray(v) && v.length ? v : SUBCATEGORIAS_SOPORTE_TECNICO.slice();
+}
+async function guardarSubcategoriasSoporte(lista) {
+  await pool.query('update configuracion set subcategorias_soporte=$1 where id=1', [JSON.stringify(lista)]);
+}
 const PRIORIDADES = ['Baja', 'Media', 'Alta', 'Urgente'];
 const CARGOS = ['Técnico', 'Encargado', 'Administrativo', 'Director'];
 const ROLES_CLIENTE = ['Administración', 'Integrante de Comisión', 'Intendente', 'Edificio', 'Apartamento', 'Cliente Particular'];
@@ -1170,7 +1181,51 @@ app.get('/api/catalogos', requireStaff, async (req, res) => {
   // (unidad/apartamento), así que ya no se mezcla acá — el edificio real de un ticket es el Cliente
   // que se le asigna.
   const EDIFICIOS = (await pool.query('select edificio from edificios_tags order by edificio')).rows.map(r => r.edificio);
-  ok(res, { ESTADOS, CATEGORIAS, SUBCATEGORIAS_SOPORTE_TECNICO, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
+  const SUBCATEGORIAS = await getSubcategoriasSoporte();
+  ok(res, { ESTADOS, CATEGORIAS, SUBCATEGORIAS_SOPORTE_TECNICO: SUBCATEGORIAS, PRIORIDADES, CARGOS, ROLES_CLIENTE, EDIFICIOS, checklistsCategoria: c.checklist_categorias || {} });
+});
+/* ---------------- Subcategorías de Soporte Técnico (editables) ---------------- */
+function limpiarSubcat(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
+app.get('/api/subcategorias-soporte', requireStaff, async (req, res) => {
+  const lista = await getSubcategoriasSoporte();
+  const usos = (await pool.query(`select subcategoria, count(*)::int as n from tickets where categoria='Soporte Técnico' and subcategoria is not null and subcategoria <> '' group by subcategoria`)).rows;
+  const mapa = {}; usos.forEach(u => { mapa[u.subcategoria] = u.n; });
+  ok(res, { lista, usos: mapa });
+});
+app.post('/api/subcategorias-soporte', requireStaff, async (req, res) => {
+  const nombre = limpiarSubcat(req.body.nombre);
+  if (!nombre) return bad(res, 'Escribí el nombre de la subcategoría.');
+  if (nombre.length > 40) return bad(res, 'El nombre es muy largo (máximo 40 caracteres).');
+  const lista = await getSubcategoriasSoporte();
+  if (lista.some(x => x.toLowerCase() === nombre.toLowerCase())) return bad(res, 'Esa subcategoría ya existe.');
+  const iOtro = lista.findIndex(x => x === 'Otro');
+  if (iOtro >= 0) lista.splice(iOtro, 0, nombre); else lista.push(nombre);
+  await guardarSubcategoriasSoporte(lista);
+  ok(res, { ok: true, lista, nombre });
+});
+app.put('/api/subcategorias-soporte', requireStaff, async (req, res) => {
+  const viejo = limpiarSubcat(req.body.viejo);
+  const nuevo = limpiarSubcat(req.body.nuevo);
+  if (!nuevo) return bad(res, 'Escribí el nuevo nombre.');
+  if (nuevo.length > 40) return bad(res, 'El nombre es muy largo (máximo 40 caracteres).');
+  const lista = await getSubcategoriasSoporte();
+  const i = lista.indexOf(viejo);
+  if (i < 0) return bad(res, 'No se encontró esa subcategoría.', 404);
+  if (lista.some((x, j) => j !== i && x.toLowerCase() === nuevo.toLowerCase())) return bad(res, 'Ya existe otra subcategoría con ese nombre.');
+  lista[i] = nuevo;
+  await guardarSubcategoriasSoporte(lista);
+  if (nuevo !== viejo) await pool.query(`update tickets set subcategoria=$1 where subcategoria=$2`, [nuevo, viejo]);
+  ok(res, { ok: true, lista });
+});
+app.delete('/api/subcategorias-soporte', requireStaff, async (req, res) => {
+  const nombre = limpiarSubcat(req.body.nombre);
+  const lista = await getSubcategoriasSoporte();
+  const i = lista.indexOf(nombre);
+  if (i < 0) return bad(res, 'No se encontró esa subcategoría.', 404);
+  if (lista.length <= 1) return bad(res, 'Tiene que quedar al menos una subcategoría.');
+  lista.splice(i, 1);
+  await guardarSubcategoriasSoporte(lista);
+  ok(res, { ok: true, lista });
 });
 app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
   const checklists = req.body.checklists || {};
