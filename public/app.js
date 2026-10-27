@@ -1204,12 +1204,12 @@ function renderServicioTecnicoTab() {
   const tab = state.servicioTecnicoTab || 'turnos';
   const vista = state.servicioTecnicoVista || 'lista';
   const tabsHtml = [
-    { v: 'turnos', label: 'Próximos turnos' },
-    { v: 'realizados', label: 'Servicios Realizados' },
-    { v: 'reporte', label: '📊 Reporte mensual' },
-    { v: 'catalogo', label: '💲 Costos precargados' },
-    { v: 'mantenimiento', label: '🔧 Mantenimiento' }
-  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.label}</button>`).join('');
+    { v: 'turnos', label: 'Próximos turnos', n: (cache.serviciosTecnicos || []).filter(x => x.estado !== 'realizado' && !x.contrato_mantenimiento_id).length },
+    { v: 'realizados', label: 'Servicios realizados' },
+    { v: 'reporte', ico: 'chart-column', label: 'Reporte mensual' },
+    { v: 'catalogo', ico: 'circle-dollar-sign', label: 'Costos precargados' },
+    { v: 'mantenimiento', ico: 'wrench', label: 'Mantenimiento' }
+  ].map(t => `<button class="cl-seg-b ${tab === t.v ? 'on' : ''}" type="button" onclick="cambiarServicioTecnicoTab('${t.v}')">${t.ico ? iconoLucide(t.ico) : ''}${t.label}${t.n != null ? `<b>${t.n}</b>` : ''}</button>`).join('');
   let contenido;
   if (vista === 'calendario') {
     // Calendario visual: agrupa servicio técnico agendado + mantenimiento, sin importar la sub-tab
@@ -1228,20 +1228,20 @@ function renderServicioTecnicoTab() {
       ? (s => s.estado === 'realizado' && !s.contrato_mantenimiento_id)
       : (s => s.estado !== 'realizado' && !s.contrato_mantenimiento_id);
     const mensajeVacio = tab === 'realizados' ? 'Todavía no hay ningún servicio técnico marcado como realizado.' : 'No hay turnos de servicio técnico próximos ni pendientes.';
-    contenido = renderServicioTecnicoLista(filtro, mensajeVacio, tab === 'realizados');
+    contenido = renderServicioTecnicoLista(filtro, mensajeVacio, tab === 'realizados', tab !== 'realizados');
   }
-  const vistaToggleHtml = `<div class="reply-tabs" style="margin-bottom:10px;">
-    <button class="reply-tab ${vista === 'lista' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('lista')">Lista</button>
-    <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaServicioTecnico('calendario')">📅 Calendario</button>
+  const vistaToggleHtml = `<div class="cl-seg" style="margin:6px 0 10px;">
+    <button class="cl-seg-b ${vista === 'lista' ? 'on' : ''}" type="button" onclick="cambiarVistaServicioTecnico('lista')">${iconoLucide('list')}Lista</button>
+    <button class="cl-seg-b ${vista === 'calendario' ? 'on' : ''}" type="button" onclick="cambiarVistaServicioTecnico('calendario')">${iconoLucide('calendar-days')}Calendario</button>
   </div>`;
   return `${servicioTecnicoListaStyleTag()}
     <div class="page-head"><div><h1>Servicios Técnicos</h1><div class="sub">Agenda de visitas, costos y presupuestos para tareas de servicio técnico.</div></div>
       <div class="page-head-actions">
-        ${vista === 'lista' && tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>` : ''}
+        ${vista === 'lista' && tab !== 'catalogo' && tab !== 'reporte' && tab !== 'mantenimiento' ? `<button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">${iconoLucide('plus')}Nuevo turno</button>` : ''}
       </div>
     </div>
     ${vistaToggleHtml}
-    ${vista === 'lista' ? `<div class="reply-tabs" style="margin-bottom:14px;">${tabsHtml}</div>` : ''}
+    ${vista === 'lista' ? `<div class="cl-seg" style="margin:0 0 14px;">${tabsHtml}</div>` : ''}
     ${contenido}`;
 }
 // Tarjeta de turno con franja lateral de color según el estado de pago (opción 3 del mockup que
@@ -1290,7 +1290,7 @@ function renderMantenimientoSeccion() {
       <option value="">Todos los edificios</option>
       ${clientesMantenimientoFiltro.map(c => `<option value="${c.id}" ${c.id === clienteFiltro ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
     </select>`;
-    contenido = `${filtroClienteHtml}${renderServicioTecnicoLista(filtro, mensajeVacio)}`;
+    contenido = `${filtroClienteHtml}${renderServicioTecnicoLista(filtro, mensajeVacio, false, sub !== 'realizados')}`;
   }
   return `<div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>${contenido}`;
 }
@@ -1661,76 +1661,72 @@ async function descargarPdfReporteMensualDashboard() {
     construirPdfReporteMensualServicios(filas, mes);
   } catch (e) { showToast(e.message); }
 }
+function nombreMesReporte(mes) {
+  const [anio, m] = mes.split('-').map(Number);
+  const n = new Date(anio, m - 1, 1).toLocaleDateString('es-UY', { month: 'long' });
+  return `${n.charAt(0).toUpperCase()}${n.slice(1)} ${anio}`;
+}
+function moverMesReporteMensual(delta) {
+  const mes = state.reporteMensualMes || mesActualDefault();
+  const [anio, m] = mes.split('-').map(Number);
+  const d = new Date(anio, m - 1 + delta, 1);
+  cambiarMesReporteMensualDashboard(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+}
 function renderReporteMensualDashboardTab() {
   const mes = state.reporteMensualMes || mesActualDefault();
   const datos = cache.reporteMensualDatos;
   const cabecera = `
-    <div class="page-head" style="margin-top:6px;align-items:center;">
-      <div>
-        <h1 style="font-size:18px;">Reporte mensual</h1>
-        <div class="sub">Servicios marcados como realizados en el mes elegido, agrupados por cliente/edificio.</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <label class="mes-picker"><span class="mes-icon">📅</span><input type="month" class="input-mes" value="${mes}" onchange="cambiarMesReporteMensualDashboard(this.value)"></label>
+    <div class="rp-top">
+      <div><div class="rp-ttl">Reporte mensual</div><div class="rp-sub">Servicios realizados, agrupados por cliente/edificio.</div></div>
+      <div class="rp-acts">
+        <div class="rp-mes">
+          <button type="button" onclick="moverMesReporteMensual(-1)" aria-label="Mes anterior">${iconoLucide('chevron-left')}</button>
+          <label>${iconoLucide('calendar')}<span>${nombreMesReporte(mes)}</span><input type="month" value="${mes}" onclick="try{this.showPicker()}catch(e){}" onchange="cambiarMesReporteMensualDashboard(this.value)"></label>
+          <button type="button" onclick="moverMesReporteMensual(1)" aria-label="Mes siguiente">${iconoLucide('chevron-right')}</button>
+        </div>
         <button type="button" class="btn btn-ghost btn-ubic" onclick="descargarPdfReporteMensualDashboard()">${ICONO_PDF} Bajar PDF</button>
       </div>
     </div>`;
-
-  if (!datos || datos.mes !== mes) {
-    return `${cabecera}<div class="hint-text">Cargando reporte…</div>`;
-  }
-  if (datos.error) {
-    return `${cabecera}<div class="hint-text">No se pudo cargar el reporte: ${escapeHtml(datos.error)}</div>`;
-  }
+  if (!datos || datos.mes !== mes) return `${cabecera}<div class="hint-text">Cargando reporte…</div>`;
+  if (datos.error) return `${cabecera}<div class="hint-text">No se pudo cargar el reporte: ${escapeHtml(datos.error)}</div>`;
   const filas = datos.filas || [];
-  if (!filas.length) {
-    return `${cabecera}<div class="hint-text">No hubo servicios técnicos marcados como realizados en este mes.</div>`;
-  }
+  if (!filas.length) return `${cabecera}<div class="hint-text">No hubo servicios técnicos marcados como realizados en este mes.</div>`;
   const { porCliente, totalGeneral } = agruparServiciosParaReporte(filas);
   const clientesOrdenados = Object.entries(porCliente).sort((a, b) => b[1].servicios.length - a[1].servicios.length);
-
-  const tarjetasTotales = Object.entries(totalGeneral).map(([m, total]) => `
-    <div class="stat-card">
-      <div class="stat-card-label">Total del mes (${escapeHtml(m)})</div>
-      <div class="stat-card-value">${escapeHtml(m)} ${total}</div>
-    </div>`).join('');
-
+  const maxServ = Math.max(...clientesOrdenados.map(([, d]) => d.servicios.length));
+  const fmt = (v) => Number(v).toLocaleString('es-UY');
+  const nombreMoneda = { UYU: 'Total en pesos', USD: 'Total en dólares' };
+  const kpiMonedas = Object.entries(totalGeneral).map(([m, total]) => `
+    <div class="rp-kpi"><span class="rp-ki ${m === 'USD' ? 'rp-ki-org' : 'rp-ki-grn'}">${iconoLucide(m === 'USD' ? 'circle-dollar-sign' : 'banknote')}</span>
+      <div><small>${escapeHtml(nombreMoneda[m] || 'Total ' + m)}</small><b><i>${escapeHtml(m)}</i>${fmt(total)}</b></div></div>`).join('');
+  const kpis = `<div class="rp-kpis">
+    <div class="rp-kpi"><span class="rp-ki">${iconoLucide('clipboard-check')}</span><div><small>Servicios realizados</small><b>${filas.length}</b></div></div>
+    ${kpiMonedas}</div>`;
   const clienteExpandido = state.reporteMensualClienteExpandido;
-  const filasClientes = clientesOrdenados.map(([nombre, d]) => {
+  const lista = clientesOrdenados.map(([nombre, d], i) => {
     const expandido = clienteExpandido === nombre;
-    const detalleServicios = expandido ? `
-      <div style="display:flex;flex-direction:column;gap:6px;padding:10px 14px 4px 54px;">
-        ${d.servicios.map(s => `
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px dashed var(--line);padding-top:8px;font-size:13px;">
-            <div>
-              <div style="font-weight:600;">${escapeHtml(s.titulo || 'Servicio técnico')}</div>
-              <div class="u-sub">${s.fecha_hora ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Montevideo' }) : '—'}${s.ticket_numero ? ' · ' + escapeHtml(s.ticket_numero) : ''}</div>
-            </div>
-            <div style="text-align:right;color:var(--ink-soft);">
-              ${(() => { const sub = {}; (s.costos || []).forEach(c => { sub[c.moneda] = (sub[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); }); const entradas = Object.entries(sub); return entradas.length ? entradas.map(([m, v]) => `<div>${escapeHtml(m)} ${Math.round(s.aplica_iva !== false ? v * (1 + IVA_RATE) : v)}</div>`).join('') : '<div>Sin costo</div>'; })()}
-            </div>
-          </div>`).join('')}
-      </div>` : '';
-    return `
-    <div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;">
-      <div class="user-row" style="border:none;align-items:flex-start;cursor:pointer;" onclick="toggleClienteReporteMensual('${nombre.replace(/'/g, "\\'")}')">
-        <div class="avatar">🏢</div>
-        <div style="flex:1;">
-          <div class="u-name">${escapeHtml(nombre)}</div>
-          <div class="u-sub">${d.servicios.length} servicio${d.servicios.length === 1 ? '' : 's'} realizado${d.servicios.length === 1 ? '' : 's'} · ${expandido ? 'Ocultar ▲' : 'Ver detalle ▼'}</div>
-        </div>
-        <div style="text-align:right;font-weight:600;">
-          ${Object.entries(d.totales).map(([m, total]) => `<div>${escapeHtml(m)} ${total}</div>`).join('')}
-        </div>
-      </div>
-      ${detalleServicios}
-    </div>`;
+    const nom = nombre.replace(/'/g, "\\'");
+    const detalle = expandido ? `<div class="rp-det">${d.servicios.map(sv => {
+      const f = sv.fecha_hora ? new Date(sv.fecha_hora) : null;
+      const sub = {}; (sv.costos || []).forEach(c => { sub[c.moneda] = (sub[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario); });
+      const entradas = Object.entries(sub);
+      return `<div class="rp-srv">
+        <div class="rp-dt"><b>${f ? f.toLocaleDateString('es-UY', { day: '2-digit', timeZone: 'America/Montevideo' }) : '—'}</b><i>${f ? f.toLocaleDateString('es-UY', { month: 'short', timeZone: 'America/Montevideo' }).replace('.', '') : ''}</i></div>
+        <div class="rp-st">${escapeHtml(sv.titulo || 'Servicio técnico')}<small>${sv.ticket_numero ? escapeHtml(sv.ticket_numero) : 'Sin ticket'}</small></div>
+        <div class="rp-sp">${entradas.length ? entradas.map(([m, v]) => `<div>${escapeHtml(m)} ${fmt(Math.round(sv.aplica_iva !== false ? v * (1 + IVA_RATE) : v))}</div>`).join('') : '<div class="rp-nocosto">Sin costo</div>'}</div>
+      </div>`;
+    }).join('')}</div>` : '';
+    return `<div class="rp-cl">
+      <div class="rp-h" onclick="toggleClienteReporteMensual('${nom}')">
+        <span class="rp-rk ${i === 0 ? 'rp-rk-g' : ''}">${i + 1}</span>
+        <div class="rp-hb"><div class="rp-nm">${escapeHtml(nombre)}</div><div class="rp-sb">${d.servicios.length} servicio${d.servicios.length === 1 ? '' : 's'} realizado${d.servicios.length === 1 ? '' : 's'}</div><div class="rp-bar"><u style="width:${Math.round(d.servicios.length / maxServ * 100)}%"></u></div></div>
+        <div class="rp-mn">${Object.entries(d.totales).map(([m, total]) => `<div><i>${escapeHtml(m)}</i>${fmt(total)}</div>`).join('')}</div>
+        <span class="rp-chev">${iconoLucide(expandido ? 'chevron-down' : 'chevron-right')}</span>
+      </div>${detalle}</div>`;
   }).join('');
-
-  return `${cabecera}
-    <div class="kpi-panel stat-cards" style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 18px;">${tarjetasTotales}</div>
-    <div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:15px;">${filas.length} servicio${filas.length === 1 ? '' : 's'} realizado${filas.length === 1 ? '' : 's'} en ${clientesOrdenados.length} cliente${clientesOrdenados.length === 1 ? '' : 's'}</h1></div></div>
-    <div class="user-list" style="display:flex;flex-direction:column;gap:8px;">${filasClientes}</div>`;
+  return `${cabecera}${kpis}
+    <div class="rp-sec">${clientesOrdenados.length} cliente${clientesOrdenados.length === 1 ? '' : 's'} · ${filas.length} servicio${filas.length === 1 ? '' : 's'}</div>
+    ${lista}`;
 }
 function toggleClienteReporteMensual(nombre) {
   state.reporteMensualClienteExpandido = state.reporteMensualClienteExpandido === nombre ? null : nombre;
@@ -1873,7 +1869,7 @@ function opcionesTecnicos(selectedId) {
 // Un service "tiene costo" cuando lleva al menos un ítem cargado — solo esos entran en la lógica de
 // pago; una visita sin costo no tiene nada que cobrar, así que no muestra badge de pago.
 function servicioTieneCosto(s) { return (s.costos || []).length > 0; }
-function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago) {
+function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago, agrupar) {
   let turnos = (cache.serviciosTecnicos || []).filter(filtro);
   let subTabsHtml = '';
   if (mostrarSubTabsPago) {
@@ -1891,36 +1887,60 @@ function renderServicioTecnicoLista(filtro, mensajeVacio, mostrarSubTabsPago) {
       ].map(t => `<button class="reply-tab ${subTab === t.v ? 'active' : ''}" type="button" onclick="cambiarServiciosRealizadosSubTab('${t.v}')">${t.label}</button>`).join('')}
     </div>`;
   }
-  const html = turnos.length ? turnos.map(s => {
+  const TZ = 'America/Montevideo';
+  const diaDe = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: TZ });
+  const hoyStr = diaDe(new Date().toISOString());
+  const fila = (s) => {
     const tieneCosto = servicioTieneCosto(s);
-    let badgePago = '';
-    // Color de la franja lateral: verde si ya está pagado, naranja si tiene costo pendiente de cobro,
-    // azul (el color neutro de la marca) para los turnos que todavía no tienen costo cargado.
     let franjaColor = 'var(--brand)';
+    let chipPago = '';
     if (tieneCosto) {
-      if (s.pagado) {
-        franjaColor = '#1E9E6B';
-        badgePago = ` <span class="tag tag-resuelto" style="margin-left:6px;">🟢 Pagado${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}</span>`;
-      } else {
-        franjaColor = '#E8622C';
-        badgePago = ` <span class="tag tag-cat" style="margin-left:6px;">🟠 Pendiente de pago</span>`;
-      }
+      if (s.pagado) { franjaColor = '#1E9E6B'; chipPago = `<span class="sv-chip sv-grn">${iconoLucide('circle-check')}Pagado${s.pagado_medio ? ' · ' + escapeHtml(s.pagado_medio) : ''}</span>`; }
+      else { franjaColor = '#E8622C'; chipPago = `<span class="sv-chip sv-org">${iconoLucide('banknote')}Pendiente de pago</span>`; }
     }
+    const f = new Date(s.fecha_hora);
+    const horaTxt = s.todo_el_dia ? 'Todo<small>el día</small>' : `${f.toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ })}<small>${f.toLocaleDateString('es-UY', { day: 'numeric', month: 'short', timeZone: TZ }).replace('.', '')}</small>`;
+    const chips = [
+      s.contrato_mantenimiento_id ? `<span class="sv-chip sv-blue">${iconoLucide('wrench')}Mantenimiento</span>` : '',
+      s.estado === 'realizado' ? `<span class="sv-chip sv-grn">${iconoLucide('circle-check')}Realizado</span>` : s.estado === 'en_curso' ? `<span class="sv-chip sv-pur">${iconoLucide('truck')}En curso</span>` : '',
+      s.presupuesto_enviado ? (s.presupuesto_aprobado ? `<span class="sv-chip sv-grn">${iconoLucide('file-check')}Presupuesto aprobado</span>` : `<span class="sv-chip sv-blue">${iconoLucide('file-clock')}Presupuesto enviado</span>`) : '',
+      chipPago
+    ].filter(Boolean).join('');
     return `
-    <button type="button" class="st-turno" style="width:100%;text-align:left;cursor:pointer;" onclick="abrirDetalleServicioTecnico('${s.id}')">
-      <div class="st-turno-stripe" style="background:${franjaColor};"></div>
-      <div class="st-turno-body">
-        <div class="st-turno-ico">🔧</div>
-        <div style="flex:1;min-width:0;">
-          <div class="u-name">${escapeHtml(s.titulo)}${s.contrato_mantenimiento_id ? ' <span class="tag" style="margin-left:6px;">🔧 Mantenimiento</span>' : ''}${s.estado === 'realizado' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizado</span>' : s.estado === 'en_curso' ? ' <span class="tag tag-cat" style="margin-left:6px;">🚗 En curso</span>' : ''}${s.presupuesto_enviado ? (s.presupuesto_aprobado ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Presupuesto aprobado</span>' : ' <span class="tag tag-cat" style="margin-left:6px;">Presupuesto enviado</span>') : ''}${badgePago}</div>
-          <div class="u-sub">${escapeHtml(nombreClientePorId(s.cliente_id))} · ${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}${s.ticket_numero ? ` · Ticket ${escapeHtml(s.ticket_numero)}` : ''} · 👤 ${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</div>
-        </div>
-      </div>
-    </button>`;
-  }).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
-  return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</h1></div></div>
+    <div class="sv-tl">
+      <div class="sv-hr">${horaTxt}</div>
+      <button type="button" class="sv-row" onclick="abrirDetalleServicioTecnico('${s.id}')">
+        <i class="sv-stripe" style="background:${franjaColor};"></i>
+        <span class="sv-body">
+          <span class="sv-nm">${escapeHtml(s.titulo)}</span>
+          <span class="sv-ln">
+            <span>${iconoLucide('building-2')}<b>${escapeHtml(nombreClientePorId(s.cliente_id))}</b></span>
+            ${s.ticket_numero ? `<span>${iconoLucide('ticket')}${escapeHtml(s.ticket_numero)}</span>` : ''}
+            <span>${iconoLucide('user')}${s.tecnico_asignado_id ? escapeHtml(nombreUsuarioPorId(s.tecnico_asignado_id)) : 'Sin técnico asignado'}</span>
+          </span>
+          ${chips ? `<span class="sv-chips">${chips}</span>` : ''}
+        </span>
+        <span class="sv-chev">${iconoLucide('chevron-right')}</span>
+      </button>
+    </div>`;
+  };
+  let html;
+  if (!turnos.length) {
+    html = `<div class="hint-text">${mensajeVacio}</div>`;
+  } else if (agrupar) {
+    const ordenados = turnos.slice().sort((a, b) => new Date(a.fecha_hora) - new Date(b.fecha_hora));
+    const atrasados = ordenados.filter(s => diaDe(s.fecha_hora) < hoyStr);
+    const hoy = ordenados.filter(s => diaDe(s.fecha_hora) === hoyStr);
+    const proximos = ordenados.filter(s => diaDe(s.fecha_hora) > hoyStr);
+    const grupo = (cls, icono, titulo, lista) => lista.length ? `<div class="sv-grp ${cls}">${iconoLucide(icono)}${titulo}<span class="sv-n">${lista.length}</span></div>${lista.map(fila).join('')}` : '';
+    const hoyTxt = new Date().toLocaleDateString('es-UY', { day: 'numeric', month: 'short', timeZone: TZ }).replace('.', '');
+    html = grupo('sv-grp-red', 'triangle-alert', 'Atrasados', atrasados) + grupo('sv-grp-blue', 'calendar', `Hoy · ${hoyTxt}`, hoy) + grupo('', 'calendar-days', 'Próximos días', proximos);
+  } else {
+    html = turnos.map(fila).join('');
+  }
+  return `<div class="sv-count">${turnos.length} turno${turnos.length === 1 ? '' : 's'}</div>
     ${subTabsHtml}
-    <div class="user-list">${html}</div>`;
+    <div class="sv-list">${html}</div>`;
 }
 function cambiarServiciosRealizadosSubTab(t) { state.serviciosRealizadosSubTab = t; render(); }
 /* ---- Calendario visual — Servicio Técnico (servicio técnico agendado + Mantenimiento) ---- */
@@ -2068,7 +2088,7 @@ function renderServicioTecnicoCalendarioMes() {
         <span><span class="cal-dot" style="background:#c1440e;"></span> Atrasado</span>
         <span><span class="cal-dot" style="background:transparent;border:1.5px dashed #1e8e4f;"></span> Mantenimiento proyectado</span>
       </div>
-      <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">+ Nuevo turno</button>
+      <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">${iconoLucide('plus')}Nuevo turno</button>
     </div>
     <div class="cal-filtros">${chip('todos', 'Todos')}${chip('mantenimiento', '🔧 Solo mantenimiento')}${chip('servicio', '🛠️ Solo servicio técnico')}${edificioSelect}</div>
     ${grid}`;
@@ -4121,7 +4141,7 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
-const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" /> <path d=\"M12 7v5l4 2\" />", "phone": "<path d=\"M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />"};
+const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" /> <path d=\"M12 7v5l4 2\" />", "phone": "<path d=\"M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "ticket": "<path d=\"M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z\" /> <path d=\"M13 5v2\" /> <path d=\"M13 17v2\" /> <path d=\"M13 11v2\" />", "truck": "<path d=\"M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2\" /> <path d=\"M15 18H9\" /> <path d=\"M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14\" /> <circle cx=\"17\" cy=\"18\" r=\"2\" /> <circle cx=\"7\" cy=\"18\" r=\"2\" />", "file-check": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"m9 15 2 2 4-4\" />", "file-clock": "<path d=\"M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M8 14v2.2l1.6 1\" /> <circle cx=\"8\" cy=\"16\" r=\"6\" />", "banknote": "<rect width=\"20\" height=\"12\" x=\"2\" y=\"6\" rx=\"2\" /> <circle cx=\"12\" cy=\"12\" r=\"2\" /> <path d=\"M6 12h.01M18 12h.01\" />", "calendar-days": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"M8 13h.01\" /> <path d=\"M12 13h.01\" /> <path d=\"M16 13h.01\" /> <path d=\"M8 17h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M16 17h.01\" />", "list": "<path d=\"M3 5h.01\" /> <path d=\"M3 12h.01\" /> <path d=\"M3 19h.01\" /> <path d=\"M8 5h13\" /> <path d=\"M8 12h13\" /> <path d=\"M8 19h13\" />", "chevron-left": "<path d=\"m15 18-6-6 6-6\" />", "clipboard-check": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"m9 14 2 2 4-4\" />"};
 // Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
 function iconoLucide(nombre, cls) {
   return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
