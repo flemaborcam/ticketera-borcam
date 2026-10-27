@@ -1113,74 +1113,36 @@ function copiarEnlaceAgenda() {
 
 function renderCalendarioHtml() {
   const c = cache.calendarioConfig || {};
-  const horarios = c.diasHorarios || {};
-  const edificiosDisponibles = cache.calendarioEdificios || [];
-  const filasDias = DIAS_SEMANA.map(([key, label]) => {
-    const h = horarios[key] || {};
-    const asign = h.asignacionOcurrencias || {};
-    const selectsOcurrencia = [1, 2, 3, 4, 5].map(n => `
-      <div>
-        <label style="font-size:10.5px;color:var(--ink-soft);display:block;margin-bottom:2px;">${n}° del mes</label>
-        <select name="oc_${key}_${n}" style="width:100%;padding:6px 4px;font-size:12px;border:1px solid var(--line-strong);border-radius:6px;">
-          <option value="">Sin restricción</option>
-          ${edificiosDisponibles.map(e => `<option value="${escapeHtml(e)}" ${asign[n] === e ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
-        </select>
-      </div>`).join('');
-    return `<div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:10px;">
-      <div class="field-row" style="align-items:center;margin-bottom:8px;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;width:110px;flex:none;text-transform:none;letter-spacing:0;font-weight:500;">
-          <input type="checkbox" name="activo_${key}" ${h.activo ? 'checked' : ''}> ${label}
-        </label>
-        <input type="time" name="inicio_${key}" value="${h.inicio || '09:00'}" style="max-width:110px;">
-        <span style="color:var(--ink-soft);">a</span>
-        <input type="time" name="fin_${key}" value="${h.fin || '18:00'}" style="max-width:110px;">
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;">${selectsOcurrencia}</div>
-    </div>`;
-  }).join('');
-
+  const seg = (items, cur, fn) => `<div class="cl-seg">${items.map(s => `<button type="button" class="cl-seg-b ${cur === s.v ? 'on' : ''}" onclick="${fn}('${s.v}')">${s.ico ? iconoLucide(s.ico) : ''}${s.label}${s.n !== undefined ? ` <b>${s.n}</b>` : ''}</button>`).join('')}</div>`;
   const subTab = state.calendarioSubTab || 'domotica';
-  const subTabsHtml = [
-    { v: 'domotica', label: '🏠 Agenda' },
-    { v: 'config', label: 'Configuración' }
-  ].map(s => `<button class="reply-tab ${subTab === s.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioSubTab('${s.v}')">${s.label}</button>`).join('');
-
+  const subTabsHtml = seg([{ v: 'domotica', label: 'Agenda', ico: 'calendar-check' }, { v: 'config', label: 'Configuración', ico: 'settings' }], subTab, 'cambiarCalendarioSubTab');
   const tab = state.calendarioTab || 'turnos';
-  const tabsHtml = [
-    { v: 'turnos', label: 'Próximos turnos' },
-    { v: 'realizados', label: 'Agenda realizada' }
-  ].map(t => `<button class="reply-tab ${tab === t.v ? 'active' : ''}" type="button" onclick="cambiarCalendarioTab('${t.v}')">${t.label}</button>`).join('');
-
-  // Filtro por edificio en "Agenda realizada": la lista de edificios sale de la misma configuración
-  // de Calendario → Configuración (el textarea "Edificios"), para no mantener una lista aparte.
+  const citas = cache.citas || [];
+  const nProx = citas.filter(ci => ci.estado !== 'realizada' && ci.estado !== 'cancelada').length;
+  const nReal = citas.filter(ci => ci.estado === 'realizada').length;
+  const tabsHtml = seg([{ v: 'turnos', label: 'Próximos turnos', n: nProx }, { v: 'realizados', label: 'Agenda realizada', n: nReal }], tab, 'cambiarCalendarioTab');
   const edificioFiltro = state.calendarioRealizadosEdificio || '';
-  const filtroEdificioHtml = `<select style="max-width:260px;margin-bottom:14px;" onchange="state.calendarioRealizadosEdificio=this.value; render();">
+  const filtroEdificioHtml = `<select style="max-width:260px;margin:0 0 6px;" onchange="state.calendarioRealizadosEdificio=this.value; render();">
     <option value="">Todos los edificios</option>
     ${(cache.calendarioEdificios || []).map(e => `<option value="${escapeHtml(e)}" ${e === edificioFiltro ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}
   </select>`;
-
   let contenido;
   if (subTab === 'config') {
-    contenido = renderCalendarioConfigTab(c, filasDias);
+    contenido = renderCalendarioConfigTab(c);
   } else {
     const vista = state.calendarioDomoticaVista || 'lista';
-    const vistaToggleHtml = `<div class="reply-tabs" style="margin-bottom:10px;">
-      <button class="reply-tab ${vista === 'lista' ? 'active' : ''}" type="button" onclick="cambiarVistaCalendarioDomotica('lista')">Lista</button>
-      <button class="reply-tab ${vista === 'calendario' ? 'active' : ''}" type="button" onclick="cambiarVistaCalendarioDomotica('calendario')">📅 Calendario</button>
-    </div>`;
+    const vistaToggleHtml = seg([{ v: 'lista', label: 'Lista', ico: 'list' }, { v: 'calendario', label: 'Calendario', ico: 'calendar-days' }], vista, 'cambiarVistaCalendarioDomotica');
     if (vista === 'calendario') {
       contenido = `${vistaToggleHtml}${renderCalendarioDomoticaGrid()}`;
     } else {
-      contenido = `${vistaToggleHtml}
-        <div class="reply-tabs">${tabsHtml}</div>
-        ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.') : ''}
-        ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.')}` : ''}`;
+      contenido = `${vistaToggleHtml}<br>${tabsHtml}
+        ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.', true) : ''}
+        ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.', false)}` : ''}`;
     }
   }
-
   return `
     <div class="page-head"><div><h1>Domótica</h1><div class="sub">Configuración general y agenda de instalaciones de domótica.</div></div></div>
-    <div class="reply-tabs" style="margin-bottom:14px;">${subTabsHtml}</div>
+    ${subTabsHtml}
     ${contenido}`;
 }
 function cambiarCalendarioSubTab(t) { state.calendarioSubTab = t; render(); }
@@ -3524,64 +3486,206 @@ async function confirmarMarcarServicioRealizado() {
     render();
   } catch (e) { showToast(e.message); }
 }
-function renderCalendarioConfigTab(c, filasDias) {
-  return `
-    <div class="card card-narrow" style="max-width:640px;margin-bottom:18px;">
-      <div style="font-weight:600;font-size:14.5px;margin-bottom:8px;">Enlace para compartir con clientes</div>
-      <div class="page-head-actions">
-        <input readonly value="${window.location.origin}/agendar" style="flex:1;padding:10px 12px;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);">
-        <button type="button" class="btn btn-ghost" onclick="copiarEnlaceAgenda()">Copiar</button>
-      </div>
-    </div>
-
-    <div class="card card-narrow" style="max-width:640px;">
-      <form id="form-calendario" onsubmit="return submitCalendarioConfig(event)">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:16px;">
-          <input type="checkbox" name="agendaActiva" ${c.activo ? 'checked' : ''}> Activar la agenda pública (si está apagada, el enlace no deja reservar)
-        </label>
-
-        <div style="font-weight:600;font-size:13.5px;margin-bottom:8px;">Duración y anticipación</div>
-        <div class="field-row">
-          <div class="field"><label>Duración de cada turno (min)</label><input type="number" name="duracionMinutos" value="${c.duracionMinutos || 60}" min="15" step="15"></div>
-          <div class="field"><label>Días mínimos de anticipación</label><input type="number" name="minNoticeDays" value="${c.minNoticeDays ?? 1}" min="0"></div>
-          <div class="field"><label>Días hacia adelante a mostrar</label><input type="number" name="diasVisibles" value="${c.diasVisibles || 21}" min="1"></div>
-        </div>
-        <div class="hint-text" style="margin:-6px 0 16px;">Con 1 día de anticipación, un cliente no puede agendar para hoy, recién desde mañana.</div>
-
-        <div style="font-weight:600;font-size:13.5px;margin-bottom:10px;padding-top:12px;border-top:1px dashed var(--line-strong);">Días y horarios disponibles</div>
-        ${filasDias}
-        <div class="hint-text" style="margin-bottom:16px;">Un solo bloque horario por día. Si un edificio comparte ese día con otro, asignale directamente cada repetición del mes (por ejemplo, en un mes con 4 viernes, podés poner "Edificio A" en 1°, 2° y 3°, y "Edificio B" en el 4°). Dejalo en "Sin restricción" si esa repetición está abierta a cualquiera. Una vez que un edificio toma una fecha puntual, esa fecha queda bloqueada para los demás.</div>
-
-        <button type="button" class="btn btn-ghost btn-block" style="margin-bottom:12px;" onclick="generarVistaPreviaCalendario()">🔍 Ver a qué edificio le toca cada fecha real (próximos meses)</button>
-        <div id="vista-previa-calendario" style="margin-bottom:16px;"></div>
-
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Edificios (uno por línea)</div>
-        <div class="field"><textarea name="edificios" style="min-height:90px;">${escapeHtml((cache.calendarioEdificios || []).join('\n'))}</textarea></div>
-
-        <div style="font-weight:600;font-size:13.5px;margin:12px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Google Calendar</div>
-        <div class="hint-text" style="margin-bottom:10px;">
-          ${cache.googleServiceEmail ? `Compartí tu calendario de Google con esta cuenta (permiso "Hacer cambios en los eventos"): <strong>${escapeHtml(cache.googleServiceEmail)}</strong>` : 'Todavía no está configurada la cuenta de servicio de Google en el servidor.'}
-        </div>
-        <div class="field"><label>ID del calendario</label><input name="googleCalendarId" value="${escapeHtml(c.googleCalendarId || '')}" placeholder="tuemail@gmail.com o algo@group.calendar.google.com"></div>
-
-        <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
-      </form>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line-strong);">
-        <button type="button" class="btn btn-ghost btn-block" onclick="probarGoogleCalendar()">Probar conexión con Google Calendar</button>
-        <div id="resultado-google" style="margin-top:8px;"></div>
-      </div>
-    </div>`;
+/* ---------------- Configuración de la agenda de Domótica (tarjetas + asignación por edificio) ---------------- */
+const CAL_PALETA = [['#3D7EF0', '#E3EDFE'], ['#0F8B8D', '#DDF3F3'], ['#7A4FA0', '#F1E7F7'], ['#E8622C', '#FDEBE1'], ['#B3811C', '#F5EAD4'], ['#C43D6E', '#FBE3EC']];
+let calAsig = {};      // borrador: { jueves: { 1: 'Domus', ... }, ... }
+let calEdif = [];      // borrador: lista de edificios
+let calEditando = null;
+function calInitBorrador(c) {
+  calEdif = (cache.calendarioEdificios || []).slice();
+  calAsig = {};
+  const horarios = (c && c.diasHorarios) || {};
+  DIAS_SEMANA.forEach(([key]) => {
+    calAsig[key] = {};
+    const a = (horarios[key] && horarios[key].asignacionOcurrencias) || {};
+    [1, 2, 3, 4, 5].forEach(n => { if (a[n] && calEdif.includes(a[n])) calAsig[key][n] = a[n]; });
+  });
+  calEditando = null;
 }
-function renderCalendarioListaCitas(filtro, mensajeVacio) {
-  const citas = (cache.citas || []).filter(filtro);
-  const citasHtml = citas.length ? citas.map(ci => `
-    <button type="button" class="user-row" style="width:100%;text-align:left;border:1px solid var(--line);cursor:pointer;" onclick="abrirDetalleCita('${ci.id}')">
-      <div class="avatar">📅</div>
-      <div><div class="u-name">${escapeHtml(ci.nombre_cliente)}${ci.estado === 'cancelada' ? ' <span class="tag tag-cerrado" style="margin-left:6px;">Cancelado</span>' : ''}${ci.estado === 'realizada' ? ' <span class="tag tag-resuelto" style="margin-left:6px;">Realizada</span>' : ''}</div>
-      <div class="u-sub">${new Date(ci.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })} · ${escapeHtml(ci.edificio)} UD ${escapeHtml(ci.numero_unidad)} · ${escapeHtml(ci.telefono)}</div></div>
-    </button>`).join('') : `<div class="hint-text">${mensajeVacio}</div>`;
-  return `<div class="page-head" style="margin-top:6px;"><div><h1 style="font-size:18px;">${citas.length} turno${citas.length === 1 ? '' : 's'}</h1></div></div>
-    <div class="user-list">${citasHtml}</div>`;
+function calDiasActivos(c) {
+  const form = document.getElementById('form-calendario');
+  const activos = {};
+  DIAS_SEMANA.forEach(([key]) => {
+    if (form) { const el = form.querySelector(`input[name="activo_${key}"]`); activos[key] = !!(el && el.checked); }
+    else activos[key] = !!(((c && c.diasHorarios) || {})[key] || {}).activo;
+  });
+  return activos;
+}
+function calResumenEdificio(nombre) {
+  const partes = [];
+  let total = 0;
+  DIAS_SEMANA.forEach(([key, label]) => {
+    const ns = [1, 2, 3, 4, 5].filter(n => calAsig[key] && calAsig[key][n] === nombre);
+    if (!ns.length) return;
+    total += ns.length;
+    partes.push(ns.length === 5 ? `${label}, todas las semanas` : `${label} ${ns.map(n => n + '°').join(', ').replace(/, (\d°)$/, ' y $1')}`);
+  });
+  return partes.length ? `${partes.join(' · ')} · ${total} turno${total === 1 ? '' : 's'} al mes` : 'Sin semanas asignadas';
+}
+function renderCalAsignacionHtml(activos) {
+  const diasAct = DIAS_SEMANA.filter(([key]) => activos[key]);
+  const ocultos = DIAS_SEMANA.map(([key]) => [1, 2, 3, 4, 5].map(n => `<input type="hidden" name="oc_${key}_${n}" value="${escapeHtml((calAsig[key] && calAsig[key][n]) || '')}">`).join('')).join('');
+  const tarjetas = calEdif.map((nombre, i) => {
+    const [col, tint] = CAL_PALETA[i % CAL_PALETA.length];
+    const filas = diasAct.map(([key, label]) => `
+      <div class="dm-bd"><span class="dm-bd-n">${label}</span>
+        ${[1, 2, 3, 4, 5].map(n => {
+          const dueno = calAsig[key] && calAsig[key][n];
+          if (dueno === nombre) return `<button type="button" class="dm-oc dm-oc-on" onclick="calToggleSemana('${key}', ${n}, ${i})">${n}°</button>`;
+          if (dueno) return `<span class="dm-oc dm-oc-taken"><b>${n}°</b><small>${escapeHtml(dueno)}</small></span>`;
+          return `<button type="button" class="dm-oc" onclick="calToggleSemana('${key}', ${n}, ${i})">${n}°</button>`;
+        }).join('')}
+      </div>`).join('');
+    const editando = calEditando === i;
+    return `<div class="dm-bcard" style="--c:${col};--ct:${tint};">
+      <div class="dm-bh">
+        <i class="dm-dot"></i>
+        ${editando
+          ? `<input id="cal-edit-input" class="dm-edit" type="text" value="${escapeHtml(nombre)}" maxlength="40" onkeydown="if(event.key==='Enter'){event.preventDefault();calGuardarNombre(${i});}else if(event.key==='Escape'){calCancelarNombre();}"><button type="button" class="btn btn-primary dm-mini" onclick="calGuardarNombre(${i})">Guardar</button><button type="button" class="btn btn-ghost dm-mini" onclick="calCancelarNombre()">Cancelar</button>`
+          : `<b>${escapeHtml(nombre)}</b><span class="dm-res">${escapeHtml(calResumenEdificio(nombre))}</span>
+             <button type="button" class="dm-ib" title="Renombrar" onclick="calEditarNombre(${i})">${iconoLucide('pencil')}</button>
+             <button type="button" class="dm-ib dm-ib-del" title="Eliminar" onclick="calEliminarEdificio(${i})">${iconoLucide('trash-2')}</button>`}
+      </div>
+      ${diasAct.length ? filas : `<div class="hint-text" style="margin:6px 0 0;">Activá algún día arriba para poder asignarle semanas.</div>`}
+    </div>`;
+  }).join('');
+  return `${ocultos}<textarea name="edificios" hidden>${escapeHtml(calEdif.join('\n'))}</textarea>
+    ${tarjetas || `<div class="hint-text">Todavía no hay edificios. Agregá el primero abajo.</div>`}
+    <div class="dm-add"><input id="cal-nuevo-edif" type="text" maxlength="40" placeholder="Nombre del edificio" onkeydown="if(event.key==='Enter'){event.preventDefault();calAgregarEdificio();}"><button type="button" class="btn btn-ghost" onclick="calAgregarEdificio()">${iconoLucide('plus')}Agregar edificio</button></div>`;
+}
+function calRefrescarAsignacion() {
+  const el = document.getElementById('cal-asignacion');
+  if (el) el.innerHTML = renderCalAsignacionHtml(calDiasActivos(cache.calendarioConfig));
+}
+function calToggleSemana(key, n, i) {
+  const nombre = calEdif[i];
+  if (!calAsig[key]) calAsig[key] = {};
+  const dueno = calAsig[key][n];
+  if (dueno && dueno !== nombre) return;
+  if (dueno === nombre) delete calAsig[key][n]; else calAsig[key][n] = nombre;
+  calRefrescarAsignacion();
+}
+function calAgregarEdificio() {
+  const inp = document.getElementById('cal-nuevo-edif');
+  const nombre = ((inp && inp.value) || '').replace(/\s+/g, ' ').trim();
+  if (!nombre) return;
+  if (calEdif.some(e => e.toLowerCase() === nombre.toLowerCase())) { showToast('Ese edificio ya está en la lista.'); return; }
+  calEdif.push(nombre);
+  calRefrescarAsignacion();
+  const nuevo = document.getElementById('cal-nuevo-edif'); if (nuevo) nuevo.focus();
+}
+function calEditarNombre(i) { calEditando = i; calRefrescarAsignacion(); const e = document.getElementById('cal-edit-input'); if (e) { e.focus(); e.select(); } }
+function calCancelarNombre() { calEditando = null; calRefrescarAsignacion(); }
+function calGuardarNombre(i) {
+  const e = document.getElementById('cal-edit-input');
+  const nuevo = ((e && e.value) || '').replace(/\s+/g, ' ').trim();
+  const viejo = calEdif[i];
+  if (!nuevo) return;
+  if (calEdif.some((x, j) => j !== i && x.toLowerCase() === nuevo.toLowerCase())) { showToast('Ya existe un edificio con ese nombre.'); return; }
+  calEdif[i] = nuevo;
+  Object.values(calAsig).forEach(d => Object.keys(d).forEach(n => { if (d[n] === viejo) d[n] = nuevo; }));
+  calEditando = null;
+  calRefrescarAsignacion();
+}
+function calEliminarEdificio(i) {
+  const nombre = calEdif[i];
+  if (!confirm(`¿Quitar "${nombre}" de la agenda? Se liberan las semanas que tenía asignadas. Los turnos ya reservados no se borran.`)) return;
+  calEdif.splice(i, 1);
+  Object.values(calAsig).forEach(d => Object.keys(d).forEach(n => { if (d[n] === nombre) delete d[n]; }));
+  calRefrescarAsignacion();
+}
+function renderCalendarioConfigTab(c, filasDias) {
+  calInitBorrador(c);
+  const horarios = c.diasHorarios || {};
+  const activos = calDiasActivos(c);
+  const cab = (ico, titulo, sub, extra) => `<div class="dm-ch"><span class="dm-ci">${iconoLucide(ico)}</span><div style="flex:1;min-width:0;"><b>${titulo}</b><small>${sub}</small></div>${extra || ''}</div>`;
+  const filasDiasHtml = DIAS_SEMANA.map(([key, label]) => {
+    const h = horarios[key] || {};
+    return `<div class="dm-day"><label class="dm-sw"><input type="checkbox" name="activo_${key}" ${h.activo ? 'checked' : ''} onchange="calRefrescarAsignacion()"><span></span></label><span class="dm-dn">${label}</span>
+      <input type="time" name="inicio_${key}" value="${h.inicio || '09:00'}"><span class="dm-a">a</span><input type="time" name="fin_${key}" value="${h.fin || '18:00'}"></div>`;
+  }).join('');
+  return `<form id="form-calendario" class="dm-cfg" onsubmit="return submitCalendarioConfig(event)">
+    <div class="dm-card">
+      ${cab('link', 'Enlace para compartir con clientes', 'Desde acá reservan su turno de domótica.', `<label class="dm-sw-lbl"><span>Agenda activa</span><span class="dm-sw"><input type="checkbox" name="agendaActiva" ${c.activo ? 'checked' : ''}><span></span></span></label>`)}
+      <div class="dm-link">${iconoLucide('globe')}<span>${window.location.origin}/agendar</span><button type="button" class="btn btn-ghost dm-mini" onclick="copiarEnlaceAgenda()">${iconoLucide('copy')}Copiar</button></div>
+      <div class="hint-text" style="margin-top:8px;">Si la agenda está apagada, el enlace no deja reservar.</div>
+    </div>
+    <div class="dm-card">
+      ${cab('timer', 'Duración y anticipación', 'Cuánto dura cada turno y con cuánto tiempo se puede reservar.')}
+      <div class="dm-f3">
+        <div><label>Duración del turno</label><div class="dm-inp"><input type="number" name="duracionMinutos" value="${c.duracionMinutos || 60}" min="15" step="15"><em>min</em></div></div>
+        <div><label>Anticipación mínima</label><div class="dm-inp"><input type="number" name="minNoticeDays" value="${c.minNoticeDays ?? 1}" min="0"><em>días</em></div></div>
+        <div><label>Días a mostrar</label><div class="dm-inp"><input type="number" name="diasVisibles" value="${c.diasVisibles || 21}" min="1"><em>días</em></div></div>
+      </div>
+      <div class="hint-text" style="margin-top:8px;">Con 1 día de anticipación, un cliente no puede agendar para hoy, recién desde mañana.</div>
+    </div>
+    <div class="dm-card">
+      ${cab('clock', 'Días y horarios disponibles', 'Qué días se puede reservar y en qué horario (un bloque por día).')}
+      ${filasDiasHtml}
+    </div>
+    <div class="dm-card">
+      ${cab('building-2', 'Asignación de edificios', 'Cada edificio elige las semanas del mes que le tocan. Lo que ya es de otro aparece bloqueado.')}
+      <div class="hint-text" style="margin-bottom:12px;">Las semanas que no asignes a nadie quedan abiertas para cualquier edificio. Si un edificio toma una fecha puntual, esa fecha queda bloqueada para los demás.</div>
+      <div id="cal-asignacion">${renderCalAsignacionHtml(activos)}</div>
+      <button type="button" class="btn btn-ghost btn-block" style="margin-top:14px;" onclick="generarVistaPreviaCalendario()">${iconoLucide('calendar-days')}Ver a qué edificio le toca cada fecha real (próximos meses)</button>
+      <div id="vista-previa-calendario" style="margin-top:12px;"></div>
+    </div>
+    <div class="dm-card">
+      ${cab('calendar', 'Google Calendar', 'Los turnos se copian a tu calendario.')}
+      <div class="hint-text" style="margin-bottom:10px;">${cache.googleServiceEmail ? `Compartí tu calendario de Google con esta cuenta (permiso "Hacer cambios en los eventos"): <strong>${escapeHtml(cache.googleServiceEmail)}</strong>` : 'Todavía no está configurada la cuenta de servicio de Google.'}</div>
+      <div class="field"><label>ID del calendario</label><input name="googleCalendarId" value="${escapeHtml(c.googleCalendarId || '')}" placeholder="tuemail@gmail.com o algo@group.calendar.google.com"></div>
+      <button type="button" class="btn btn-ghost btn-block" onclick="probarGoogleCalendar()">Probar conexión con Google Calendar</button>
+      <div id="resultado-google" style="margin-top:8px;"></div>
+    </div>
+    <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
+  </form>`;
+}
+function renderCalendarioListaCitas(filtro, mensajeVacio, agrupar) {
+  const TZ = 'America/Montevideo';
+  const citas = (cache.citas || []).filter(filtro).slice().sort((x, y) => agrupar ? new Date(x.fecha_hora) - new Date(y.fecha_hora) : new Date(y.fecha_hora) - new Date(x.fecha_hora));
+  const diaDe = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: TZ });
+  const hoyStr = diaDe(new Date().toISOString());
+  const fila = (ci) => {
+    const f = new Date(ci.fecha_hora);
+    const dia = diaDe(ci.fecha_hora);
+    const atrasada = ci.estado !== 'realizada' && ci.estado !== 'cancelada' && dia < hoyStr;
+    const diasAtraso = atrasada ? Math.round((new Date(hoyStr) - new Date(dia)) / 86400000) : 0;
+    const franja = ci.estado === 'realizada' ? '#1E9E6B' : ci.estado === 'cancelada' ? 'var(--gray)' : atrasada ? 'var(--stamp-red)' : 'var(--brand)';
+    const hora = f.toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ });
+    const fecha = f.toLocaleDateString('es-UY', { day: 'numeric', month: 'short', timeZone: TZ }).replace('.', '');
+    const chip = ci.estado === 'realizada' ? `<span class="sv-chip sv-grn">${iconoLucide('circle-check')}Realizada</span>`
+      : ci.estado === 'cancelada' ? `<span class="sv-chip" style="background:var(--gray-tint);color:var(--ink-soft);">${iconoLucide('circle-x')}Cancelado</span>`
+      : atrasada ? `<span class="sv-chip" style="background:var(--stamp-red-tint);color:var(--stamp-red);">${iconoLucide('triangle-alert')}Atrasado ${diasAtraso} día${diasAtraso === 1 ? '' : 's'}</span>`
+      : `<span class="sv-chip sv-blue">${iconoLucide('clock')}Pendiente</span>`;
+    return `<div class="sv-tl">
+      <div class="sv-hr">${hora}<small>${fecha}</small></div>
+      <button type="button" class="sv-row" onclick="abrirDetalleCita('${ci.id}')">
+        <i class="sv-stripe" style="background:${franja};"></i>
+        <span class="sv-body">
+          <span class="sv-nm">${escapeHtml(ci.nombre_cliente)}</span>
+          <span class="sv-ln">
+            <span>${iconoLucide('building-2')}<b>${escapeHtml(ci.edificio)}</b> · UD ${escapeHtml(ci.numero_unidad)}</span>
+            <span>${iconoLucide('phone')}${escapeHtml(ci.telefono)}</span>
+          </span>
+          <span class="sv-chips">${chip}</span>
+        </span>
+        <span class="sv-chev">${iconoLucide('chevron-right')}</span>
+      </button>
+    </div>`;
+  };
+  let html;
+  if (!citas.length) html = `<div class="hint-text">${mensajeVacio}</div>`;
+  else if (agrupar) {
+    const esPend = (ci) => ci.estado !== 'realizada' && ci.estado !== 'cancelada';
+    const atrasados = citas.filter(ci => esPend(ci) && diaDe(ci.fecha_hora) < hoyStr);
+    const hoy = citas.filter(ci => diaDe(ci.fecha_hora) === hoyStr);
+    const resto = citas.filter(ci => diaDe(ci.fecha_hora) > hoyStr);
+    const previas = citas.filter(ci => !esPend(ci) && diaDe(ci.fecha_hora) < hoyStr);
+    const grupo = (cls, icono, titulo, lista) => lista.length ? `<div class="sv-grp ${cls}">${iconoLucide(icono)}${titulo}<span class="sv-n">${lista.length}</span></div>${lista.map(fila).join('')}` : '';
+    const hoyTxt = new Date().toLocaleDateString('es-UY', { day: 'numeric', month: 'short', timeZone: TZ }).replace('.', '');
+    html = grupo('sv-grp-red', 'triangle-alert', 'Atrasados', atrasados) + grupo('sv-grp-blue', 'calendar', `Hoy · ${hoyTxt}`, hoy) + grupo('', 'calendar-days', 'Próximos días', resto) + grupo('', 'history', 'Anteriores', previas);
+  } else html = citas.map(fila).join('');
+  return `<div class="sv-count">${citas.length} turno${citas.length === 1 ? '' : 's'}</div><div class="sv-list">${html}</div>`;
 }
 function abrirDetalleCita(id) {
   state.modal = 'detalle-cita';
@@ -4141,7 +4245,7 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
-const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" /> <path d=\"M12 7v5l4 2\" />", "phone": "<path d=\"M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "ticket": "<path d=\"M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z\" /> <path d=\"M13 5v2\" /> <path d=\"M13 17v2\" /> <path d=\"M13 11v2\" />", "truck": "<path d=\"M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2\" /> <path d=\"M15 18H9\" /> <path d=\"M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14\" /> <circle cx=\"17\" cy=\"18\" r=\"2\" /> <circle cx=\"7\" cy=\"18\" r=\"2\" />", "file-check": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"m9 15 2 2 4-4\" />", "file-clock": "<path d=\"M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M8 14v2.2l1.6 1\" /> <circle cx=\"8\" cy=\"16\" r=\"6\" />", "banknote": "<rect width=\"20\" height=\"12\" x=\"2\" y=\"6\" rx=\"2\" /> <circle cx=\"12\" cy=\"12\" r=\"2\" /> <path d=\"M6 12h.01M18 12h.01\" />", "calendar-days": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"M8 13h.01\" /> <path d=\"M12 13h.01\" /> <path d=\"M16 13h.01\" /> <path d=\"M8 17h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M16 17h.01\" />", "list": "<path d=\"M3 5h.01\" /> <path d=\"M3 12h.01\" /> <path d=\"M3 19h.01\" /> <path d=\"M8 5h13\" /> <path d=\"M8 12h13\" /> <path d=\"M8 19h13\" />", "chevron-left": "<path d=\"m15 18-6-6 6-6\" />", "clipboard-check": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"m9 14 2 2 4-4\" />"};
+const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" /> <path d=\"M12 7v5l4 2\" />", "phone": "<path d=\"M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "ticket": "<path d=\"M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z\" /> <path d=\"M13 5v2\" /> <path d=\"M13 17v2\" /> <path d=\"M13 11v2\" />", "truck": "<path d=\"M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2\" /> <path d=\"M15 18H9\" /> <path d=\"M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14\" /> <circle cx=\"17\" cy=\"18\" r=\"2\" /> <circle cx=\"7\" cy=\"18\" r=\"2\" />", "file-check": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"m9 15 2 2 4-4\" />", "file-clock": "<path d=\"M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M8 14v2.2l1.6 1\" /> <circle cx=\"8\" cy=\"16\" r=\"6\" />", "banknote": "<rect width=\"20\" height=\"12\" x=\"2\" y=\"6\" rx=\"2\" /> <circle cx=\"12\" cy=\"12\" r=\"2\" /> <path d=\"M6 12h.01M18 12h.01\" />", "calendar-days": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"M8 13h.01\" /> <path d=\"M12 13h.01\" /> <path d=\"M16 13h.01\" /> <path d=\"M8 17h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M16 17h.01\" />", "list": "<path d=\"M3 5h.01\" /> <path d=\"M3 12h.01\" /> <path d=\"M3 19h.01\" /> <path d=\"M8 5h13\" /> <path d=\"M8 12h13\" /> <path d=\"M8 19h13\" />", "chevron-left": "<path d=\"m15 18-6-6 6-6\" />", "clipboard-check": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"m9 14 2 2 4-4\" />", "link": "<path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\" /> <path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\" />", "timer": "<line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\" /> <line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\" /> <circle cx=\"12\" cy=\"14\" r=\"8\" />", "globe": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\" /> <path d=\"M2 12h20\" />", "copy": "<rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\" /> <path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\" />"};
 // Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
 function iconoLucide(nombre, cls) {
   return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
