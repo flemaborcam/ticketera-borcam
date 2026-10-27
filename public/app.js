@@ -1115,7 +1115,9 @@ function renderCalendarioHtml() {
   const c = cache.calendarioConfig || {};
   const seg = (items, cur, fn) => `<div class="cl-seg">${items.map(s => `<button type="button" class="cl-seg-b ${cur === s.v ? 'on' : ''}" onclick="${fn}('${s.v}')">${s.ico ? iconoLucide(s.ico) : ''}${s.label}${s.n !== undefined ? ` <b>${s.n}</b>` : ''}</button>`).join('')}</div>`;
   const subTab = state.calendarioSubTab || 'domotica';
-  const subTabsHtml = seg([{ v: 'domotica', label: 'Agenda', ico: 'calendar-check' }, { v: 'config', label: 'Configuración', ico: 'settings' }], subTab, 'cambiarCalendarioSubTab');
+  const vista = state.calendarioDomoticaVista || 'lista';
+  const vistaActual = subTab === 'config' ? 'config' : vista;
+  const subTabsHtml = seg([{ v: 'lista', label: 'Lista', ico: 'list' }, { v: 'calendario', label: 'Calendario', ico: 'calendar-days' }, { v: 'config', label: 'Configuración', ico: 'settings' }], vistaActual, 'cambiarVistaDomotica');
   const tab = state.calendarioTab || 'turnos';
   const citas = cache.citas || [];
   const nProx = citas.filter(ci => ci.estado !== 'realizada' && ci.estado !== 'cancelada').length;
@@ -1130,12 +1132,10 @@ function renderCalendarioHtml() {
   if (subTab === 'config') {
     contenido = renderCalendarioConfigTab(c);
   } else {
-    const vista = state.calendarioDomoticaVista || 'lista';
-    const vistaToggleHtml = seg([{ v: 'lista', label: 'Lista', ico: 'list' }, { v: 'calendario', label: 'Calendario', ico: 'calendar-days' }], vista, 'cambiarVistaCalendarioDomotica');
     if (vista === 'calendario') {
-      contenido = `${vistaToggleHtml}${renderCalendarioDomoticaGrid()}`;
+      contenido = renderCalendarioDomoticaGrid();
     } else {
-      contenido = `${vistaToggleHtml}<br>${tabsHtml}
+      contenido = `<br>${tabsHtml}
         ${tab === 'turnos' ? renderCalendarioListaCitas(ci => ci.estado !== 'realizada', 'No hay turnos próximos ni pendientes.', true) : ''}
         ${tab === 'realizados' ? `${filtroEdificioHtml}${renderCalendarioListaCitas(ci => ci.estado === 'realizada' && (!edificioFiltro || ci.edificio === edificioFiltro), edificioFiltro ? `No hay instalaciones realizadas en "${escapeHtml(edificioFiltro)}".` : 'Todavía no hay ninguna instalación marcada como realizada.', false)}` : ''}`;
     }
@@ -1145,6 +1145,7 @@ function renderCalendarioHtml() {
     ${subTabsHtml}
     ${contenido}`;
 }
+function cambiarVistaDomotica(v) { if (v === 'config') { state.calendarioSubTab = 'config'; } else { state.calendarioSubTab = 'domotica'; state.calendarioDomoticaVista = v; } render(); }
 function cambiarCalendarioSubTab(t) { state.calendarioSubTab = t; render(); }
 function cambiarCalendarioTab(t) { state.calendarioTab = t; render(); }
 /* ---------------- Servicio Técnico (módulo propio del panel lateral) ----------------
