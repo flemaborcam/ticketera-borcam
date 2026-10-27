@@ -1940,19 +1940,25 @@ function claseYLabelServicioTecnico(s, ahora) {
   }
   return { clase: 'servicio', label: `${nombre}${hora}` };
 }
+const CAL_COLOR = { b: 'var(--brand)', g: '#1E9E6B', d: '#1a1a1a', o: '#E8622C', m: '#1E9E6B' };
+function horaCalendario(fechaHora, todoDia) {
+  return todoDia ? '' : new Date(fechaHora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Montevideo' });
+}
 function eventosServicioTecnicoPorFecha() {
   const ahora = new Date();
   const mapa = {};
   for (const s of eventosServicioTecnicoFiltrados()) {
     const key = fechaLocalISO(s.fecha_hora);
-    const { clase, label } = claseYLabelServicioTecnico(s, ahora);
-    (mapa[key] = mapa[key] || []).push(`<div class="cal-evento ${clase}" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleServicioTecnico('${s.id}')">${escapeHtml(label)}</div>`);
+    const { clase } = claseYLabelServicioTecnico(s, ahora);
+    const cls = { 'servicio': 'b', 'servicio-atrasado': 'o', 'servicio-realizado': 'g', 'servicio-pago-pendiente': 'd', 'mant': 'g', 'mant-vencido': 'o' }[clase] || 'b';
+    const esMant = !!s.contrato_mantenimiento_id;
+    const chip = esMant ? (cls === 'o' ? 'Mantenimiento vencido' : 'Mantenimiento') : { b: 'Agendado', g: 'Realizado', d: 'Pendiente de pago', o: 'Atrasado' }[cls];
+    (mapa[key] = mapa[key] || []).push({ cls, nombre: nombreClientePorId(s.cliente_id), hora: horaCalendario(s.fecha_hora, s.todo_el_dia), sub: s.titulo || '', chip, ico: esMant ? 'wrench' : 'building-2', onclick: `abrirDetalleServicioTecnico('${s.id}')` });
   }
   const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
   if (tipoFiltro !== 'servicio') {
     for (const p of (cache.mantenimientosProyectados || [])) {
-      const nombre = `🔧 ${p.clienteNombre}`;
-      (mapa[p.fecha] = mapa[p.fecha] || []).push(`<div class="cal-evento proyectado" title="Proyectado: ${escapeHtml(nombre)}" onclick="event.stopPropagation();abrirDetalleMantenimientoProyectado('${p.contratoId}','${p.fecha}')">${escapeHtml(nombre)} (proyectado)</div>`);
+      (mapa[p.fecha] = mapa[p.fecha] || []).push({ cls: 'm', nombre: p.clienteNombre, hora: '', sub: 'Visita de mantenimiento proyectada', chip: 'Mantenimiento proyectado', ico: 'wrench', onclick: `abrirDetalleMantenimientoProyectado('${p.contratoId}','${p.fecha}')` });
     }
   }
   return mapa;
@@ -2028,33 +2034,22 @@ function renderServicioTecnicoCalendarioMes() {
   const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
   const edificioFiltro = state.stCalendarioEdificioFiltro || '';
   asegurarMantenimientosProyectadosCargados(anio, mes);
-  const grid = renderGrillaCalendarioMes(anio, mes, eventosServicioTecnicoPorFecha(), {
-    maxPorDia: 3,
-    onAddDia: fechaStr => `openNuevoServicioTecnicoModal('${fechaStr}')`,
-    onVerMas: fechaStr => `abrirDiaCalendario('${fechaStr}','servicio')`
-  });
-  const chip = (v, label) => `<div class="cal-chip ${tipoFiltro === v ? 'active' : ''}" onclick="cambiarFiltroTipoCalendarioServicio('${v}')">${label}</div>`;
-  // El filtro por edificio muestra TODOS los clientes (no solo los que ya tienen un turno cargado
-  // en este mes), igual que el filtro de la lista de Mantenimiento — así no falta ninguno.
+  const chip = (v, label, ico) => `<div class="cal-chip ${tipoFiltro === v ? 'active' : ''}" onclick="cambiarFiltroTipoCalendarioServicio('${v}')">${ico ? iconoLucide(ico) : ''}${label}</div>`;
   const clientesOrdenados = [...(cache.clientes || [])].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-  const edificioSelect = `<select class="cal-chip" style="border-radius:8px;padding:5px 10px;" onchange="state.stCalendarioEdificioFiltro=this.value; render();">
-    <option value="">Por edificio ▾ (todos)</option>
+  const edificioSelect = `<select class="cal-chip" style="padding:6px 12px;" onchange="state.stCalendarioEdificioFiltro=this.value; render();">
+    <option value="">Por edificio (todos)</option>
     ${clientesOrdenados.map(c => `<option value="${c.id}" ${String(c.id) === String(edificioFiltro) ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`).join('')}
   </select>`;
+  const leyenda = [['b', 'Agendado'], ['g', 'Realizado'], ['d', 'Pendiente de pago'], ['o', 'Atrasado'], ['m', 'Mantenimiento proyectado']];
   return `
-    <div class="cal-toolbar">
-      <div class="cal-nav"><button type="button" onclick="cambiarMesCalendarioServicio(-1)">‹</button><div class="cal-mes">${MESES_LABEL_CAL[mes]} ${anio}</div><button type="button" onclick="cambiarMesCalendarioServicio(1)">›</button></div>
-      <div class="cal-legend">
-        <span><span class="cal-dot" style="background:#3355ee;"></span> Servicio técnico agendado</span>
-        <span><span class="cal-dot" style="background:#1e8e4f;"></span> Realizado</span>
-        <span><span class="cal-dot" style="background:#1a1a1a;"></span> Pendiente de pago</span>
-        <span><span class="cal-dot" style="background:#c1440e;"></span> Atrasado</span>
-        <span><span class="cal-dot" style="background:transparent;border:1.5px dashed #1e8e4f;"></span> Mantenimiento proyectado</span>
-      </div>
+    <div class="cd-bar">
+      ${calNavHtml('cambiarMesCalendarioServicio', anio, mes)}
+      <div class="cd-sp"></div>
       <button type="button" class="btn btn-primary" onclick="openNuevoServicioTecnicoModal()">${iconoLucide('plus')}Nuevo turno</button>
     </div>
-    <div class="cal-filtros">${chip('todos', 'Todos')}${chip('mantenimiento', '🔧 Solo mantenimiento')}${chip('servicio', '🛠️ Solo servicio técnico')}${edificioSelect}</div>
-    ${grid}`;
+    <div class="cal-filtros">${chip('todos', 'Todos')}${chip('mantenimiento', 'Solo mantenimiento', 'wrench')}${chip('servicio', 'Solo servicio técnico')}${edificioSelect}</div>
+    ${calLeyendaHtml(leyenda)}
+    ${renderCalendarioMesConPanel('servicio', anio, mes, eventosServicioTecnicoPorFecha(), fechaStr => `openNuevoServicioTecnicoModal('${fechaStr}')`)}`;
 }
 /* ---- Nuevo turno sin partir de un ticket (siempre pide cliente/edificio) ---- */
 // Editor de costos reutilizado en los modales de "Nuevo turno" (con o sin ticket): permite dejar
@@ -3709,31 +3704,56 @@ function fechaISOCalendario(anio, mes, dia) {
 function fechaLocalISO(fechaHora) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Montevideo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(fechaHora));
 }
-function renderGrillaCalendarioMes(anio, mes, eventosPorFecha, opts) {
-  opts = opts || {};
-  const maxPorDia = opts.maxPorDia || 3;
-  const onAddDia = opts.onAddDia || null; // fn(fechaStr) => string con la llamada JS del onclick
-  const onVerMas = opts.onVerMas || null; // fn(fechaStr) => string con la llamada JS del onclick
+function calNavHtml(fn, anio, mes) {
+  return `<div class="cd-nav"><button type="button" onclick="${fn}(-1)">${iconoLucide('chevron-left')}</button><span>${MESES_LABEL_CAL[mes]} ${anio}</span><button type="button" onclick="${fn}(1)">${iconoLucide('chevron-right')}</button></div>`;
+}
+function calLeyendaHtml(items) {
+  return `<div class="cd-lg">${items.map(([c, t]) => `<span class="cd-t-${c}"><i></i>${t}</span>`).join('')}</div>`;
+}
+function calSeleccionarDia(tipo, fechaStr) {
+  state.calSel = state.calSel || {};
+  state.calSel[tipo] = fechaStr;
+  if (tipo === 'servicio') refrescarVistaServicioTecnico();
+  else { const el = document.getElementById('cal-wrap-domotica'); if (el) el.innerHTML = renderCalendarioDomoticaInner(); }
+}
+// Calendario mensual con panel del día: la grilla muestra de un vistazo qué hay cada día (en pantalla
+// ancha, pastillas con el nombre; en celular, puntitos de color) y debajo se despliega la agenda
+// completa del día elegido (por defecto, hoy).
+function renderCalendarioMesConPanel(tipo, anio, mes, eventosPorFecha, onAddDia) {
+  const hoyStr = fechaLocalISO(new Date());
   const primerDia = new Date(anio, mes, 1);
-  const inicioOffset = (primerDia.getDay() + 6) % 7; // 0=lunes … 6=domingo
+  const inicioOffset = (primerDia.getDay() + 6) % 7;
   const diasEnMes = new Date(anio, mes + 1, 0).getDate();
   const totalCeldas = Math.ceil((inicioOffset + diasEnMes) / 7) * 7;
-  const hoyStr = fechaLocalISO(new Date());
-  let celdasHtml = '';
+  const prefijoMes = `${anio}-${String(mes + 1).padStart(2, '0')}`;
+  let sel = (state.calSel || {})[tipo];
+  if (!sel || sel.slice(0, 7) !== prefijoMes) sel = hoyStr.slice(0, 7) === prefijoMes ? hoyStr : `${prefijoMes}-01`;
+  let celdas = '';
   for (let i = 0; i < totalCeldas; i++) {
     const diaNum = i - inicioOffset + 1;
     const fechaStr = fechaISOCalendario(anio, mes, diaNum);
     const otroMes = diaNum < 1 || diaNum > diasEnMes;
-    const esHoy = fechaStr === hoyStr;
-    const diaMostrar = Number(fechaStr.split('-')[2]);
     const eventos = eventosPorFecha[fechaStr] || [];
-    const visibles = eventos.slice(0, maxPorDia);
-    const restantes = eventos.length - visibles.length;
-    const addBtn = (!otroMes && onAddDia) ? `<div class="cal-add-day" onclick="${onAddDia(fechaStr)}">+</div>` : '';
-    const masBtn = restantes > 0 ? `<div class="cal-mas"${onVerMas ? ` onclick="${onVerMas(fechaStr)}"` : ''}>+${restantes} más</div>` : '';
-    celdasHtml += `<div class="cal-day${otroMes ? ' otro-mes' : ''}${esHoy ? ' hoy' : ''}"><span class="cal-num">${diaMostrar}</span>${visibles.join('')}${masBtn}${addBtn}</div>`;
+    const diaMostrar = Number(fechaStr.split('-')[2]);
+    const pastillas = eventos.slice(0, 3).map(e => `<div class="cd-pl cd-${e.cls}" title="${escapeHtml((e.hora ? e.hora + ' · ' : '') + e.nombre)}"><s>${escapeHtml(e.nombre)}</s></div>`).join('');
+    const mas = eventos.length > 3 ? `<div class="cd-mas">+${eventos.length - 3} más</div>` : '';
+    const puntos = eventos.slice(0, 3).map(e => `<i style="background:${CAL_COLOR[e.cls]}"></i>`).join('') + (eventos.length > 3 ? '<small>+</small>' : '');
+    celdas += `<div class="cd-day${otroMes ? ' otro' : ''}${fechaStr === hoyStr ? ' hoy' : ''}${fechaStr === sel ? ' sel' : ''}" onclick="calSeleccionarDia('${tipo}','${fechaStr}')"><span class="cd-num">${diaMostrar}</span><div class="cd-pls">${pastillas}${mas}</div><div class="cd-dots">${puntos}</div></div>`;
   }
-  return `<div class="cal-grid">${DOW_LABEL_CAL.map(d => `<div class="cal-dow">${d}</div>`).join('')}${celdasHtml}</div>`;
+  const grid = `<div class="cd-dow">${DOW_LABEL_CAL.map(d => `<div><span class="cd-dl">${d}</span><span class="cd-ds">${d[0]}</span></div>`).join('')}</div><div class="cd-grid">${celdas}</div>`;
+  // Panel del día elegido
+  const evs = (eventosPorFecha[sel] || []).slice().sort((a, b) => (a.hora || '99').localeCompare(b.hora || '99'));
+  const fechaLegible = new Date(sel + 'T12:00:00-03:00').toLocaleDateString('es-UY', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Montevideo' });
+  const fila = e => `<div class="sv-tl"><div class="sv-hr">${e.hora || 'Todo<small>el día</small>'}</div>
+    <button type="button" class="sv-row" onclick="${e.onclick}"><i class="sv-stripe" style="background:${CAL_COLOR[e.cls]};"></i>
+      <span class="sv-body"><span class="sv-nm">${escapeHtml(e.nombre)}</span>
+        ${e.sub ? `<span class="sv-ln"><span>${iconoLucide(e.ico || 'building-2')}${escapeHtml(e.sub)}</span>${e.sub2 ? `<span>${iconoLucide('phone')}${escapeHtml(e.sub2)}</span>` : ''}</span>` : ''}
+        <span class="sv-chips"><span class="sv-chip cd-chip-${e.cls}">${escapeHtml(e.chip)}</span></span></span>
+      <span class="sv-chev">${iconoLucide('chevron-right')}</span></button></div>`;
+  const btnAgregar = onAddDia ? `<button type="button" class="btn btn-primary" onclick="${onAddDia(sel)}">${iconoLucide('plus')}Agendar este día</button>` : '';
+  const panel = `<div class="cd-panel"><div class="cd-ph"><div><b>${fechaLegible.charAt(0).toUpperCase() + fechaLegible.slice(1)}${sel === hoyStr ? ' · hoy' : ''}</b><small>${evs.length ? `${evs.length} turno${evs.length === 1 ? '' : 's'} · tocá otro día para ver su agenda` : 'Sin turnos este día'}</small></div>${btnAgregar}</div>
+    ${evs.length ? `<div class="cd-pl-list">${evs.map(fila).join('')}</div>` : ''}</div>`;
+  return grid + panel;
 }
 function abrirDiaCalendario(fechaStr, tipo) { state.modal = 'dia-calendario'; state.diaCalendarioFecha = fechaStr; state.diaCalendarioTipo = tipo; render(); }
 function renderDiaCalendarioModal() {
@@ -3770,11 +3790,12 @@ function renderDiaCalendarioModal() {
 /* ---- Calendario visual — Domótica ---- */
 function eventosDomoticaPorFecha() {
   const mapa = {};
+  const hoyStr = fechaLocalISO(new Date());
   for (const ci of (cache.citas || [])) {
     if (ci.estado === 'cancelada') continue;
     const key = fechaLocalISO(ci.fecha_hora);
-    const label = `${ci.edificio || ci.nombre_cliente} · ${new Date(ci.fecha_hora).toLocaleTimeString('es-UY', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Montevideo' })}`;
-    (mapa[key] = mapa[key] || []).push(`<div class="cal-evento domotica" title="${escapeHtml(label)}" onclick="event.stopPropagation();abrirDetalleCita('${ci.id}')">${escapeHtml(label)}</div>`);
+    const cls = ci.estado === 'realizada' ? 'g' : (key < hoyStr ? 'o' : 'b');
+    (mapa[key] = mapa[key] || []).push({ cls, nombre: ci.nombre_cliente, hora: horaCalendario(ci.fecha_hora, false), sub: `${ci.edificio || ''}${ci.numero_unidad ? ' · UD ' + ci.numero_unidad : ''}`, sub2: ci.telefono || '', chip: cls === 'g' ? 'Realizada' : cls === 'o' ? 'Atrasado' : 'Pendiente', ico: 'building-2', onclick: `abrirDetalleCita('${ci.id}')` });
   }
   return mapa;
 }
@@ -3794,21 +3815,15 @@ function agendarDomoticaDesdeCalendario(fechaStr) {
   showToast('Los turnos de domótica se agendan desde el enlace público de reserva — todavía no hay una carga manual desde acá.');
   copiarEnlaceAgenda();
 }
-function renderCalendarioDomoticaGrid() {
+function renderCalendarioDomoticaInner() {
   const anio = state.calDomoticaAnio != null ? state.calDomoticaAnio : new Date().getFullYear();
   const mes = state.calDomoticaMes != null ? state.calDomoticaMes : new Date().getMonth();
-  const grid = renderGrillaCalendarioMes(anio, mes, eventosDomoticaPorFecha(), {
-    maxPorDia: 3,
-    onAddDia: fechaStr => `agendarDomoticaDesdeCalendario('${fechaStr}')`,
-    onVerMas: fechaStr => `abrirDiaCalendario('${fechaStr}','domotica')`
-  });
   return `
-    <div class="cal-toolbar">
-      <div class="cal-nav"><button type="button" onclick="cambiarMesCalendarioDomotica(-1)">‹</button><div class="cal-mes">${MESES_LABEL_CAL[mes]} ${anio}</div><button type="button" onclick="cambiarMesCalendarioDomotica(1)">›</button></div>
-      <div class="cal-legend"><span><span class="cal-dot" style="background:#3355ee;"></span> Turno de domótica</span></div>
-    </div>
-    ${grid}`;
+    <div class="cd-bar">${calNavHtml('cambiarMesCalendarioDomotica', anio, mes)}</div>
+    ${calLeyendaHtml([['b', 'Pendiente'], ['g', 'Realizada'], ['o', 'Atrasado']])}
+    ${renderCalendarioMesConPanel('domotica', anio, mes, eventosDomoticaPorFecha(), null)}`;
 }
+function renderCalendarioDomoticaGrid() { return `<div id="cal-wrap-domotica">${renderCalendarioDomoticaInner()}</div>`; }
 function renderDetalleCitaModal() {
   const ci = (cache.citas || []).find(x => String(x.id) === String(state.citaDetalleId));
   if (!ci) return '';
