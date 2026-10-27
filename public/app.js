@@ -1569,7 +1569,7 @@ function renderReporteMensualDashboardTab() {
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <label class="mes-picker"><span class="mes-icon">📅</span><input type="month" class="input-mes" value="${mes}" onchange="cambiarMesReporteMensualDashboard(this.value)"></label>
-        <button type="button" class="btn btn-ghost" onclick="descargarPdfReporteMensualDashboard()">📄 Bajar PDF</button>
+        <button type="button" class="btn btn-ghost btn-ubic" onclick="descargarPdfReporteMensualDashboard()">${ICONO_PDF} Bajar PDF</button>
       </div>
     </div>`;
 
@@ -1646,7 +1646,7 @@ function renderReporteMensualServiciosModal() {
     <div class="hint-text">Incluye los servicios marcados como realizados en ese mes, agrupados por cliente/edificio.</div>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-      <button type="button" class="btn btn-primary" onclick="generarReporteMensualServicios()">📄 Generar PDF</button>
+      <button type="button" class="btn btn-primary btn-ubic" onclick="generarReporteMensualServicios()">${ICONO_PDF} Generar PDF</button>
     </div>
   </div></div>`;
 }
@@ -1737,6 +1737,8 @@ function construirPdfReporteMensualServicios(filas, mes) {
   doc.save(`Reporte servicio tecnico ${mes}.pdf`);
 }
 function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
+// Ilustración propia (hoja PDF con flecha de descarga) para los botones de PDF.
+const ICONO_PDF = `<svg class="il-pdf" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M11 5h17l9 9v24a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3z" fill="#fff" stroke="#9FB4D3" stroke-width="1.4"/><path d="M28 5v6a3 3 0 0 0 3 3h6z" fill="#DCE7F5" stroke="#9FB4D3" stroke-width="1.4" stroke-linejoin="round"/><rect x="12" y="17" width="20" height="10" rx="2.2" fill="#D93A3A"/><text x="22" y="24.6" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="7.2" fill="#fff">PDF</text><path d="M13 31h16M13 35h11" stroke="#C3D2E8" stroke-width="1.6" stroke-linecap="round"/><circle cx="36" cy="36" r="9" fill="#fff" stroke="#DCE7F5" stroke-width="1.2"/><circle cx="36" cy="36" r="7.2" fill="#1E56C7"/><path d="M36 31.6v7M32.8 36.2 36 39.4l3.2-3.2" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 // Ilustración propia (pin sobre mapa plegado) para el botón "Ver ubicación".
 const ICONO_UBICACION = `<svg class="il-ubic" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="gpUbic" x1="0" x2="1"><stop offset="0" stop-color="#F26A5E"/><stop offset="1" stop-color="#D93A3A"/></linearGradient></defs><polygon points="3,31 16,27 19,44 6,46" fill="#9EC1F2" stroke="#6C8FC4" stroke-width=".6"/><polygon points="16,27 32,31 35,46 19,44" fill="#F7EBCB" stroke="#C9B27A" stroke-width=".6"/><polygon points="32,31 45,27 42,46 35,46" fill="#A7D9A0" stroke="#6FAE68" stroke-width=".6"/><path d="M16 27 19 44" stroke="#fff" stroke-width=".8" opacity=".7"/><path d="M32 31 35 46" stroke="#fff" stroke-width=".8" opacity=".7"/><path d="M7 40 19 36 31 39 41 35" fill="none" stroke="#F2B544" stroke-width="1.3" stroke-linecap="round"/><ellipse cx="24" cy="32.5" rx="5.5" ry="1.6" fill="#0F2A4D" opacity=".22"/><path d="M24 3.5c-6.6 0-11 4.9-11 10.7 0 7.6 11 18.3 11 18.3s11-10.7 11-18.3C35 8.4 30.6 3.5 24 3.5z" fill="url(#gpUbic)"/><circle cx="24" cy="14.2" r="4.3" fill="#fff"/></svg>`;
 // Link de "Ver ubicación": arma una búsqueda de Google Maps con la dirección tal cual está cargada en
@@ -2438,7 +2440,7 @@ async function enviarOrdenMantenimientoServicio(id) {
 }
 function renderEnvioOrdenMantenimiento(s) {
   if (s.estado !== 'realizado') return `<div class="hint-text" style="margin-bottom:14px;">La orden se puede mandar por correo una vez que el turno quede marcado como realizado.</div>`;
-  const botonDescargar = `<a class="btn btn-ghost" href="/api/servicios-tecnicos/${s.id}/orden-mantenimiento-pdf" target="_blank" rel="noopener">📄 Descargar PDF</a>`;
+  const botonDescargar = `<a class="btn btn-ghost btn-ubic" href="/api/servicios-tecnicos/${s.id}/orden-mantenimiento-pdf" target="_blank" rel="noopener">${ICONO_PDF} Descargar PDF</a>`;
   if (s.orden_mantenimiento_enviada) {
     return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <div class="hint-text" style="margin:0;">✅ Orden enviada al cliente el ${fmtDateTime(s.orden_mantenimiento_enviada_fecha)}.</div>
@@ -5272,7 +5274,7 @@ function renderTicket(id) {
         ${(!esTicketDeReserva(t) && !(t.serviciosTecnicos || []).some(s => s.estado !== 'realizado')) ? `<button type="button" class="btn btn-ghost" onclick="openAgendarServicioModal('${t.id}')">📅 Agendar servicio técnico</button>` : ''}
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
         <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
-        <a class="btn btn-ghost" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">📄 Exportar PDF</a>
+        <a class="btn btn-ghost btn-ubic" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">${ICONO_PDF} Exportar PDF</a>
         ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost btn-ubic" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">${ICONO_UBICACION} Ver ubicación</a>` : ''}
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
       </div>
@@ -6919,7 +6921,7 @@ function renderEstadisticas() {
         <button class="btn btn-ghost" onclick="cargarReportes()">Aplicar</button>` : ''}
       <select onchange="setReportesUsuario(this.value)">${usuarioOpts}</select>
       <button class="btn btn-ghost" onclick="descargarReporteExcel()">📊 Exportar Excel</button>
-      <button class="btn btn-primary" onclick="window.print()">🖨️ Exportar PDF</button>
+      <button class="btn btn-primary btn-ubic" onclick="window.print()">${ICONO_PDF} Exportar PDF</button>
     </div>`;
   const estilos = `<style>
       @media print {
