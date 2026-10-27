@@ -156,6 +156,7 @@ function iniciarSondeoDeNotificaciones() {
   notifSondeoIniciado = true;
   notifTicketsConocidos = new Map(cache.tickets.filter(t => !esTicketDeReserva(t)).map(t => [t.id, t.necesitaAtencion]));
   setInterval(verificarTicketsNuevos, 60000);
+  cargarContadorInsumos(); setInterval(cargarContadorInsumos, 60000);
 }
 // Evita pisar lo que el agente está escribiendo (una respuesta, un formulario) si justo en ese
 // momento se dispara el chequeo automático: en ese caso los datos igual se actualizan, pero la
@@ -326,6 +327,7 @@ function go(view) {
   if ((state.view === 'dashboard' || state.view === 'reservas') && view !== state.view) state.selectedTickets.clear();
   if (view === 'tags' && state.view !== 'tags') state.tagsPrecarga = null; // al entrar por el menú normal, sin datos precargados de un ticket
   state.view = view;
+  if (view === 'pedidos-insumos') { state.insumosCargado = false; state.insumoSelId = null; state.insumoRechazando = null; }
   render();
   if (view === 'estadisticas' && !state.reportes && !state.reportesCargando) cargarReportes();
 }
@@ -516,7 +518,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
+function closeModal() { state.modal = null; state.insumoForm = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -2564,6 +2566,8 @@ function renderDetalleServicioTecnicoModal() {
     ${s.checklist_sistemas ? renderFotosVisitaServicio(s) : ''}
     ${s.checklist_sistemas ? renderEnvioOrdenMantenimiento(s) : ''}
 
+    ${renderInsumosServicio(s)}
+
     <div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
       <div style="font-weight:600;font-size:14px;margin-bottom:8px;">💲 Costos</div>
       ${esMantModal ? `<div class="hint-text" style="margin-bottom:10px;">Si durante el mantenimiento se detecta un equipo dañado que requiere cambio inmediato, cargalo acá. Va a aparecer en la orden de mantenimiento que se le manda al cliente y se avisa al grupo de Telegram.</div>` : `<label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:13px;color:var(--ink-soft);">
@@ -4004,12 +4008,224 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
-const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />"};
+const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />"};
 // Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
 function iconoLucide(nombre, cls) {
   return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
 }
-const NAV_ST_SUBVISTAS = ['servicio-tecnico', 'calendario'];
+/* ---------------- Pedidos de insumos ----------------
+   El técnico pide un insumo desde el servicio técnico; administración aprueba (Telegram, correo o acá),
+   carga dónde se compra / costo / si está pago, y el técnico retira. El costo es solo de referencia:
+   NO se convierte solo en costo del servicio (para no perder el margen). */
+const INSUMO_ESTADOS = {
+  pendiente: { label: 'Pendiente', cls: 'pe', ico: 'clock' },
+  aprobado: { label: 'Aprobado', cls: 'ap', ico: 'circle-check' },
+  listo_retirar: { label: 'Para retirar', cls: 'li', ico: 'map-pin' },
+  retirado: { label: 'Retirado', cls: 're', ico: 'package' },
+  rechazado: { label: 'Rechazado', cls: 'rz', ico: 'circle-x' },
+};
+const INSUMOS_CSS = `<style>
+.ins-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap}.ins-chip .lu{width:13px;height:13px}
+.ins-chip.pe{background:var(--stamp-amber-tint);color:var(--stamp-amber)}.ins-chip.ap{background:var(--stamp-green-tint);color:var(--stamp-green)}
+.ins-chip.li{background:var(--brand-tint);color:var(--brand)}.ins-chip.re{background:var(--gray-tint);color:var(--ink-soft)}.ins-chip.rz{background:var(--stamp-red-tint);color:var(--stamp-red)}
+.ins-urg{display:inline-flex;align-items:center;gap:4px;color:var(--stamp-red);font-size:12px;font-weight:700}.ins-urg .lu{width:13px;height:13px}
+.ins-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--card);margin-bottom:8px}
+.ins-box{background:var(--brand-tint);border-radius:8px;padding:10px 12px;margin-top:8px;font-size:13px}
+.ins-seg{display:flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden}.ins-seg button{flex:1;border:0;background:transparent;padding:8px;font:inherit;font-weight:700;font-size:13px;color:var(--ink-soft);cursor:pointer}
+.ins-seg button.on{background:var(--ink);color:#fff}.ins-seg button.on.rojo{background:var(--stamp-red)}
+.ins-lbl{display:block;font-size:11.5px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:12px 0 4px}
+.ins-two{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+.ins-tr{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 70px 112px 50px;gap:10px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+.ins-tr:last-child{border-bottom:0}.ins-tr.h{cursor:default;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);font-weight:700;background:var(--paper)}
+.ins-tr.sel{background:var(--brand-tint)}.ins-tr .t{font-weight:700;font-size:13.5px}.ins-tr .s{font-size:12.5px;color:var(--ink-soft)}
+.ins-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 14px}.ins-tabs button{border:1px solid var(--line-strong);background:var(--card);color:var(--ink-soft);border-radius:20px;padding:7px 13px;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+.ins-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}.ins-tabs b{background:var(--stamp-red);color:#fff;border-radius:10px;font-size:11px;padding:1px 6px;margin-left:5px}
+.ins-badge{background:var(--stamp-red);color:#fff;border-radius:10px;font-size:10.5px;font-weight:800;padding:1px 6px;margin-left:6px;line-height:1.4}
+.ins-in{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line-strong);border-radius:8px;background:var(--card);color:var(--ink)}.ins-in:focus{outline:2px solid var(--brand-tint);border-color:var(--brand)}
+@media(max-width:900px){.ins-two{grid-template-columns:1fr}.ins-tr{grid-template-columns:minmax(0,1fr) 108px}.ins-tr>:nth-child(3),.ins-tr>:nth-child(5),.ins-tr>:nth-child(2){display:none}}
+</style>`;
+function insumoMontoTxt(moneda, n) { return (moneda === 'USD' ? 'U$S ' : '$ ') + Number(n).toLocaleString('es-UY', { maximumFractionDigits: 2 }); }
+function insumoHace(iso) {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 60) return `${m} min`;
+  if (m < 60 * 24) return `${Math.round(m / 60)} h`;
+  return `${Math.round(m / 1440)} d`;
+}
+function insumoChip(est) { const e = INSUMO_ESTADOS[est] || INSUMO_ESTADOS.pendiente; return `<span class="ins-chip ${e.cls}">${iconoLucide(e.ico)}${e.label}</span>`; }
+function insumoBadgeHtml() { const n = state.insumosContador || 0; return `<span class="ins-badge" style="${n ? '' : 'display:none'}">${n}</span>`; }
+async function cargarContadorInsumos() {
+  try {
+    const d = await api('GET', '/api/pedidos-insumos/contador');
+    state.insumosContador = d.n;
+    document.querySelectorAll('.ins-badge').forEach(el => { el.textContent = d.n; el.style.display = d.n ? '' : 'none'; });
+  } catch (e) { /* el globito es solo un aviso: si falla, no molestamos */ }
+}
+async function cargarInsumos() {
+  if (state.insumosCargando) return;
+  state.insumosCargando = true;
+  try {
+    const d = await api('GET', '/api/pedidos-insumos');
+    state.insumos = d.pedidos; state.insumosPuedeAprobar = d.puede_aprobar; state.insumosUsuarioId = d.usuario_id;
+  } catch (e) { state.insumos = state.insumos || []; }
+  state.insumosCargado = true; state.insumosCargando = false;
+  const a = document.activeElement;
+  if (!(a && ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName))) render();
+  cargarContadorInsumos();
+}
+/* --- Desde el servicio técnico (celular del técnico) --- */
+function renderInsumosServicio(s) {
+  if (!state.insumosCargado) { cargarInsumos(); return `${INSUMOS_CSS}<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;"><div style="font-weight:600;font-size:14px;">📦 Insumos pedidos</div><div class="hint-text">Cargando…</div></div>`; }
+  const mios = (state.insumos || []).filter(p => String(p.servicio_id) === String(s.id)).sort((a, b) => new Date(b.creado) - new Date(a.creado));
+  const f = state.insumoForm && String(state.insumoForm.servicioId) === String(s.id) ? state.insumoForm : null;
+  const tarjetas = mios.map(p => {
+    let detalle = '';
+    if (p.estado === 'pendiente') detalle = `<div class="hint-text" style="margin-top:4px;">Esperando que lo apruebe administración · <a href="#" onclick="insumoCancelar(${p.id});return false;" style="color:var(--stamp-red);">Cancelar pedido</a></div>`;
+    else if (p.estado === 'aprobado') detalle = `<div class="hint-text" style="margin-top:4px;">Aprobado por ${escapeHtml(p.decidido_por_nombre || '')}. Administración está gestionando la compra; te avisamos cuando esté listo para retirar.</div>`;
+    else if (p.estado === 'listo_retirar') detalle = `<div class="ins-box"><div style="color:var(--ink-soft)">Retirar en</div><div style="font-weight:800;font-size:14.5px;">${escapeHtml(p.compra_lugar || '—')}</div>${p.compra_direccion ? `<div style="color:var(--ink-soft)">${escapeHtml(p.compra_direccion)}</div>` : ''}${p.compra_costo != null ? `<div style="margin-top:6px;color:var(--ink-soft)">Monto pagado</div><div style="font-weight:800;font-size:18px;">${escapeHtml(insumoMontoTxt(p.compra_moneda, p.compra_costo))}</div>` : ''}<div class="ins-chip ap" style="margin-top:6px;">${iconoLucide('circle-check')}Pagado por administración</div></div>
+      <button type="button" class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="insumoRetirado(${p.id})">${iconoLucide('package')} Ya lo retiré</button>`;
+    else if (p.estado === 'rechazado') detalle = `<div class="hint-text" style="margin-top:4px;color:var(--stamp-red);">Rechazado por ${escapeHtml(p.decidido_por_nombre || '')}${p.motivo_rechazo ? ': ' + escapeHtml(p.motivo_rechazo) : ''}</div>`;
+    else if (p.estado === 'retirado') detalle = `<div class="hint-text" style="margin-top:4px;">Retirado${p.retirado_fecha ? ' · ' + fmtDateTime(p.retirado_fecha) : ''}</div>`;
+    return `<div class="ins-card" ${p.estado === 'rechazado' ? 'style="background:var(--stamp-red-tint)"' : ''}><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;"><div style="font-weight:700;font-size:14px;">${escapeHtml(p.insumo)} × ${Number(p.cantidad)}</div>${insumoChip(p.estado)}</div>${p.urgencia === 'bloquea' ? `<div class="ins-urg">${iconoLucide('triangle-alert')}Bloquea el trabajo</div>` : ''}${detalle}</div>`;
+  }).join('');
+  const form = f ? `<div class="ins-card" style="border-color:var(--line-strong);">
+    <label class="ins-lbl" style="margin-top:0;">¿Qué necesitás?</label><input type="text" class="ins-in" maxlength="200" placeholder="Ej: Teléfono IP Akuvox" value="${escapeHtml(f.insumo)}" oninput="insumoCampo('insumo', this.value)">
+    <label class="ins-lbl">Cantidad</label><input type="number" class="ins-in" min="1" step="1" value="${escapeHtml(String(f.cantidad))}" oninput="insumoCampo('cantidad', this.value)">
+    <label class="ins-lbl">Motivo (opcional)</label><textarea class="ins-in" rows="2" maxlength="500" placeholder="Ej: se quemó la fuente, no enciende" oninput="insumoCampo('motivo', this.value)">${escapeHtml(f.motivo)}</textarea>
+    <label class="ins-lbl">Urgencia</label><div class="ins-seg"><button type="button" class="${f.urgencia === 'normal' ? 'on' : ''}" onclick="insumoUrgencia('normal')">Normal</button><button type="button" class="${f.urgencia === 'bloquea' ? 'on rojo' : ''}" onclick="insumoUrgencia('bloquea')">Bloquea el trabajo</button></div>
+    <label class="ins-lbl">Foto (opcional)</label>
+    ${f.foto ? `<img src="${f.foto}" alt="Foto del insumo" style="width:100%;max-height:200px;object-fit:contain;border-radius:8px;display:block;margin-bottom:6px;"><button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="insumoQuitarFoto()">Quitar foto</button>`
+      : `<label class="btn btn-ghost" style="display:flex;justify-content:center;gap:6px;cursor:pointer;border-style:dashed;">${iconoLucide('camera')} Sacar o elegir foto<input type="file" accept="image/*" style="display:none;" onchange="insumoElegirFoto(this)"></label>`}
+    <div style="display:flex;gap:8px;margin-top:14px;"><button type="button" class="btn btn-primary" style="flex:1;" onclick="insumoEnviar()">${iconoLucide('send')} Enviar pedido</button><button type="button" class="btn btn-ghost" onclick="insumoCerrarForm()">Cancelar</button></div>
+    <div class="hint-text" style="text-align:center;margin-top:6px;">Se avisa a administración por Telegram y correo.</div></div>`
+    : `<button type="button" class="btn btn-primary" style="width:100%;" onclick="insumoAbrirForm('${s.id}')">${iconoLucide('package')} Pedir insumo</button>`;
+  return `${INSUMOS_CSS}<div style="border-top:1px solid var(--line);padding-top:14px;margin-bottom:14px;">
+    <div style="font-weight:600;font-size:14px;margin-bottom:8px;">📦 Insumos pedidos</div>
+    ${tarjetas || '<div class="hint-text" style="margin-bottom:8px;">Todavía no se pidió ningún insumo para este servicio.</div>'}${form}</div>`;
+}
+function insumoAbrirForm(servicioId) { state.insumoForm = { servicioId, insumo: '', cantidad: 1, motivo: '', urgencia: 'normal', foto: null }; render(); }
+function insumoCerrarForm() { state.insumoForm = null; render(); }
+function insumoCampo(k, v) { if (state.insumoForm) state.insumoForm[k] = v; }
+function insumoUrgencia(u) { if (state.insumoForm) { state.insumoForm.urgencia = u; render(); } }
+function insumoQuitarFoto() { if (state.insumoForm) { state.insumoForm.foto = null; render(); } }
+function insumoFotoADataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image(); const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la foto.')); };
+    img.src = url;
+  });
+}
+async function insumoElegirFoto(input) {
+  const file = input.files && input.files[0]; if (!file || !state.insumoForm) return;
+  try { state.insumoForm.foto = await insumoFotoADataUrl(file); render(); } catch (e) { showToast(e.message); }
+}
+async function insumoEnviar() {
+  const f = state.insumoForm; if (!f) return;
+  if (!String(f.insumo || '').trim()) { showToast('Escribí qué insumo necesitás.'); return; }
+  try {
+    await api('POST', `/api/servicios-tecnicos/${f.servicioId}/insumos`, { insumo: f.insumo, cantidad: f.cantidad, motivo: f.motivo, urgencia: f.urgencia, fotoDataUrl: f.foto });
+    state.insumoForm = null; state.insumosCargado = false;
+    await cargarInsumos();
+    showToast('Pedido enviado a administración.');
+  } catch (e) { showToast(e.message); }
+}
+async function insumoRetirado(id) {
+  try { await api('POST', `/api/pedidos-insumos/${id}/retirado`); await cargarInsumos(); showToast('Marcado como retirado.'); } catch (e) { showToast(e.message); }
+}
+async function insumoCancelar(id) {
+  if (!confirm('¿Cancelar este pedido de insumo?')) return;
+  try { await api('DELETE', `/api/pedidos-insumos/${id}`); await cargarInsumos(); showToast('Pedido cancelado.'); } catch (e) { showToast(e.message); }
+}
+/* --- Pantalla "Pedidos de insumos" (administración y técnicos) --- */
+const INSUMO_TABS = [['pendiente', 'Pendientes'], ['aprobado', 'Aprobados (para comprar)'], ['listo_retirar', 'Listos para retirar'], ['retirado', 'Retirados'], ['rechazado', 'Rechazados']];
+function insumoTab(t) { state.insumoTab = t; state.insumoSelId = null; state.insumoRechazando = null; render(); }
+function insumoSel(id) { state.insumoSelId = id; state.insumoRechazando = null; render(); }
+function insumoCompraDe(p) {
+  if (!state.insumoCompra || state.insumoCompra.id !== p.id) {
+    state.insumoCompra = { id: p.id, lugar: p.compra_lugar || '', direccion: p.compra_direccion || '', costo: p.compra_costo != null ? String(Number(p.compra_costo)) : '', moneda: p.compra_moneda || 'UYU', pagado: !!p.compra_pagado };
+  }
+  return state.insumoCompra;
+}
+function insumoCompraCampo(k, v) { if (state.insumoCompra) state.insumoCompra[k] = v; }
+function insumoCompraPago(v) { if (state.insumoCompra) { state.insumoCompra.pagado = v; render(); } }
+async function insumoGuardarCompra(id) {
+  const c = state.insumoCompra; if (!c || c.id !== id) return;
+  try {
+    await api('PUT', `/api/pedidos-insumos/${id}/compra`, { lugar: c.lugar, direccion: c.direccion, costo: c.costo, moneda: c.moneda, pagado: c.pagado });
+    state.insumoCompra = null; await cargarInsumos();
+    showToast(c.pagado ? 'Guardado. Se avisó al técnico para que retire.' : 'Datos de compra guardados.');
+  } catch (e) { showToast(e.message); }
+}
+async function insumoResolver(id, accion) {
+  if (accion === 'rechazar' && state.insumoRechazando !== id) { state.insumoRechazando = id; state.insumoMotivoRech = ''; render(); return; }
+  try {
+    await api('POST', `/api/pedidos-insumos/${id}/decidir`, { accion, motivo: accion === 'rechazar' ? state.insumoMotivoRech : '' });
+    state.insumoRechazando = null; await cargarInsumos();
+    showToast(accion === 'aprobar' ? 'Aprobado. Cargá ahora los datos de compra.' : 'Rechazado. Se avisó al técnico.');
+  } catch (e) { showToast(e.message); await cargarInsumos(); }
+}
+function renderInsumosModulo() {
+  if (!state.insumosCargado) { cargarInsumos(); return `${INSUMOS_CSS}<div class="page-head"><div><h1>Pedidos de insumos</h1></div></div><div class="empty-state cargando">Cargando…</div>`; }
+  const lista = (state.insumos || []);
+  const tab = state.insumoTab || 'pendiente';
+  const cuenta = e => lista.filter(p => p.estado === e).length;
+  const filas = lista.filter(p => p.estado === tab);
+  const sel = filas.find(p => p.id === state.insumoSelId) || filas[0] || null;
+  const tabs = INSUMO_TABS.map(([k, n]) => `<button type="button" class="${tab === k ? 'on' : ''}" onclick="insumoTab('${k}')">${n}${(k === 'pendiente' && cuenta(k)) ? `<b>${cuenta(k)}</b>` : ''}</button>`).join('');
+  const tabla = filas.length ? `<div class="ins-tr h"><div>Insumo</div><div>Cliente / servicio</div><div>Pidió</div><div>Estado</div><div style="text-align:right">Hace</div></div>
+    ${filas.map(p => `<div class="ins-tr ${sel && sel.id === p.id ? 'sel' : ''}" onclick="insumoSel(${p.id})"><div><div class="t">${escapeHtml(p.insumo)} × ${Number(p.cantidad)}</div>${p.urgencia === 'bloquea' ? `<div class="ins-urg">${iconoLucide('triangle-alert')}Bloquea el trabajo</div>` : ''}</div>
+      <div><div class="t" style="font-size:13px;">${escapeHtml(p.cliente_nombre || '—')}</div><div class="s">${escapeHtml(p.servicio_titulo || '')}</div></div>
+      <div style="font-size:13px;">${escapeHtml(String(p.pedido_por_nombre || '').split(' ')[0])}</div><div>${insumoChip(p.estado)}</div><div class="s" style="text-align:right;">${insumoHace(p.creado)}</div></div>`).join('')}`
+    : `<div class="empty-state" style="padding:30px;">No hay pedidos en esta pestaña.</div>`;
+  return `${INSUMOS_CSS}<div class="page-head"><div><h1>Pedidos de insumos</h1><div class="sub">Lo que piden los técnicos y qué falta comprar o retirar</div></div></div>
+    <div class="ins-tabs">${tabs}</div>
+    <div class="ins-two"><div class="card" style="padding:0;overflow:hidden;">${tabla}</div>${sel ? renderInsumoDetalle(sel) : ''}</div>`;
+}
+function renderInsumoDetalle(p) {
+  const puede = !!state.insumosPuedeAprobar;
+  const linea = (t, n) => n ? `<div style="font-size:12.5px;color:var(--ink-soft);margin-top:3px;">${t}: <b style="color:var(--ink)">${escapeHtml(n)}</b></div>` : '';
+  let accion = '';
+  if (p.estado === 'pendiente') {
+    if (!puede) accion = `<div class="hint-text" style="margin-top:12px;">Esperando que lo apruebe administración.</div>`;
+    else if (state.insumoRechazando === p.id) accion = `<label class="ins-lbl">Motivo del rechazo (opcional)</label><input type="text" class="ins-in" maxlength="300" placeholder="Ej: ya hay uno en el depósito" value="${escapeHtml(state.insumoMotivoRech || '')}" oninput="state.insumoMotivoRech=this.value">
+      <div style="display:flex;gap:8px;margin-top:10px;"><button type="button" class="btn btn-danger" style="flex:1;" onclick="insumoResolver(${p.id},'rechazar')">${iconoLucide('x')} Confirmar rechazo</button><button type="button" class="btn btn-ghost" onclick="state.insumoRechazando=null;render()">Volver</button></div>`;
+    else accion = `<div style="display:flex;gap:8px;margin-top:14px;"><button type="button" class="btn btn-primary" style="flex:1;background:var(--stamp-green);" onclick="insumoResolver(${p.id},'aprobar')">${iconoLucide('check')} Aprobar</button><button type="button" class="btn btn-danger" style="flex:1;" onclick="insumoResolver(${p.id},'rechazar')">${iconoLucide('x')} Rechazar</button></div>`;
+  } else if ((p.estado === 'aprobado' || p.estado === 'listo_retirar') && puede) {
+    const c = insumoCompraDe(p);
+    accion = `<div style="border-top:1px solid var(--line);margin-top:14px;padding-top:4px;"><div style="font-weight:700;margin-top:10px;">Datos de compra</div>
+      <label class="ins-lbl">Dónde se compra</label><input type="text" class="ins-in" maxlength="200" placeholder="Ej: Telecom Uruguay" value="${escapeHtml(c.lugar)}" oninput="insumoCompraCampo('lugar', this.value)">
+      <label class="ins-lbl">Dirección / cómo retirar</label><input type="text" class="ins-in" maxlength="300" placeholder="Dirección, a quién preguntar, horario" value="${escapeHtml(c.direccion)}" oninput="insumoCompraCampo('direccion', this.value)">
+      <div style="display:flex;gap:8px;"><div style="flex:1;"><label class="ins-lbl">Costo</label><input type="number" class="ins-in" min="0" step="0.01" value="${escapeHtml(c.costo)}" oninput="insumoCompraCampo('costo', this.value)"></div>
+      <div style="width:96px;"><label class="ins-lbl">Moneda</label><select class="ins-in" onchange="insumoCompraCampo('moneda', this.value)"><option value="UYU" ${c.moneda === 'UYU' ? 'selected' : ''}>$ UYU</option><option value="USD" ${c.moneda === 'USD' ? 'selected' : ''}>U$S</option></select></div></div>
+      <label class="ins-lbl">Pago</label><div class="ins-seg"><button type="button" class="${!c.pagado ? 'on rojo' : ''}" onclick="insumoCompraPago(false)">Pendiente</button><button type="button" class="${c.pagado ? 'on' : ''}" onclick="insumoCompraPago(true)">Pagado</button></div>
+      <button type="button" class="btn btn-primary" style="width:100%;margin-top:12px;" onclick="insumoGuardarCompra(${p.id})">${iconoLucide('send')} ${c.pagado ? 'Guardar y avisar al técnico' : 'Guardar'}</button>
+      <div class="hint-text" style="margin-top:6px;">El monto es solo de referencia: <b>no se carga como costo del servicio</b>. Lo usás al armar el presupuesto con tu margen.</div></div>`;
+  } else if (p.estado === 'aprobado' || p.estado === 'listo_retirar') {
+    accion = p.estado === 'listo_retirar'
+      ? `<div class="ins-box"><div style="font-weight:800">${escapeHtml(p.compra_lugar || '')}</div>${p.compra_direccion ? `<div>${escapeHtml(p.compra_direccion)}</div>` : ''}${p.compra_costo != null ? `<div style="margin-top:4px;font-weight:800">${escapeHtml(insumoMontoTxt(p.compra_moneda, p.compra_costo))}</div>` : ''}</div>${(p.pedido_por === state.insumosUsuarioId) ? `<button type="button" class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="insumoRetirado(${p.id})">${iconoLucide('package')} Ya lo retiré</button>` : ''}`
+      : `<div class="hint-text" style="margin-top:12px;">Administración está gestionando la compra.</div>`;
+  } else if (p.estado === 'rechazado') {
+    accion = `<div class="hint-text" style="margin-top:12px;color:var(--stamp-red);">Rechazado por ${escapeHtml(p.decidido_por_nombre || '')}${p.motivo_rechazo ? ': ' + escapeHtml(p.motivo_rechazo) : ''}</div>`;
+  } else if (p.estado === 'retirado') {
+    accion = `<div class="ins-box">${p.compra_lugar ? escapeHtml(p.compra_lugar) : ''}${p.compra_costo != null ? ` · <b>${escapeHtml(insumoMontoTxt(p.compra_moneda, p.compra_costo))}</b>` : ''}</div>`;
+  }
+  const cronologia = `<div style="margin-top:12px;font-size:12.5px;color:var(--ink-soft);">
+    <div>Pedido · ${fmtDateTime(p.creado)}</div>${p.decidido_fecha ? `<div>${p.estado === 'rechazado' ? 'Rechazado' : 'Aprobado'} · ${fmtDateTime(p.decidido_fecha)} · ${escapeHtml(p.decidido_por_nombre || '')}</div>` : ''}${p.listo_fecha ? `<div>Listo para retirar · ${fmtDateTime(p.listo_fecha)}</div>` : ''}${p.retirado_fecha ? `<div>Retirado · ${fmtDateTime(p.retirado_fecha)}</div>` : ''}</div>`;
+  return `<div class="card" style="padding:16px;"><div style="font-weight:800;font-size:16px;">${escapeHtml(p.insumo)} × ${Number(p.cantidad)}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);">Pedido #P-${String(p.id).padStart(4, '0')} · ${escapeHtml(p.pedido_por_nombre || '')}</div>
+    <label class="ins-lbl">Cliente / servicio</label><div style="font-weight:700">${escapeHtml(p.cliente_nombre || '—')}</div><div style="font-size:12.5px;color:var(--ink-soft);">${escapeHtml(p.servicio_titulo || '')}</div>
+    ${p.motivo ? `<label class="ins-lbl">Motivo</label><div>${escapeHtml(p.motivo)}</div>` : ''}
+    ${p.urgencia === 'bloquea' ? `<div class="ins-urg" style="margin-top:8px;">${iconoLucide('triangle-alert')}Bloquea el trabajo</div>` : ''}
+    ${p.tiene_foto ? `<label class="ins-lbl">Foto</label><a href="/api/pedidos-insumos/${p.id}/foto" target="_blank" rel="noopener"><img src="/api/pedidos-insumos/${p.id}/foto" alt="Foto del insumo" style="width:100%;max-height:200px;object-fit:cover;border-radius:8px;display:block;"></a>` : ''}
+    ${accion}${cronologia}</div>`;
+}
+
+const NAV_ST_SUBVISTAS = ['servicio-tecnico', 'calendario', 'pedidos-insumos'];
 function toggleStMenu() {
   if (sidebarColapsado) { go('servicio-tecnico'); return; }
   state.stMenuAbierto = !state.stMenuAbierto; render();
@@ -4044,10 +4260,11 @@ function navItems(activeView) {
   const stSub = [
     { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: iconoLucide('wrench') },
     { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
+    { v: 'pedidos-insumos', label: 'Pedidos de insumos', ico: iconoLucide('package'), badge: true },
   ];
-  const stBtn = `<button class="nav-btn nav-btn-config ${stAbierto ? 'open' : ''} ${NAV_ST_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleStMenu()" title="Dep. Técnico"><span class="ico">${iconoLucide('wrench')}</span><span class="nav-btn-label">Dep. Técnico</span><span class="nav-btn-chev">${iconoLucide('chevron-right')}</span></button>
+  const stBtn = `<button class="nav-btn nav-btn-config ${stAbierto ? 'open' : ''} ${NAV_ST_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleStMenu()" title="Dep. Técnico"><span class="ico">${iconoLucide('wrench')}</span><span class="nav-btn-label">Dep. Técnico</span>${insumoBadgeHtml()}<span class="nav-btn-chev">${iconoLucide('chevron-right')}</span></button>
     <div class="nav-submenu ${stAbierto ? 'open' : ''}">
-      ${stSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
+      ${stSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span>${it.badge ? insumoBadgeHtml() : ''}</button>`).join('')}
     </div>`;
   const idxDoc = items.findIndex(it => it.v === '__docs');
   const botonesPrincipales = items.slice(0, idxDoc + 1).map(btnNav).join('') + stBtn + items.slice(idxDoc + 1).map(btnNav).join('');
@@ -4071,14 +4288,14 @@ function navItems(activeView) {
 // Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
 // 13+ botones apretados en una sola fila ilegible. El resto del menú completo vive en el modal
 // "menu-movil" (ver renderMenuMovilModal).
-const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario', 'reservas'];
+const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario', 'pedidos-insumos', 'reservas'];
 function navItemsBottom(activeView) {
   const todos = [
     { v: 'dashboard', label: 'Tickets', ico: iconoLucide('inbox') }, { v: 'grupos', label: 'Clientes', ico: iconoLucide('users') },
     { v: 'servicio-tecnico', label: 'Dep. Técnico', ico: iconoLucide('wrench') }, { v: 'reservas', label: 'Reservas', ico: iconoLucide('calendar-check') },
   ];
   const enMenuMovil = NAV_ITEMS_BOTTOM_PRINCIPALES.includes(activeView) ? false : true;
-  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && activeView === 'calendario')) ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && (activeView === 'calendario' || activeView === 'pedidos-insumos'))) ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
   return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
 }
 function openMenuMovil() { state.modal = 'menu-movil'; render(); }
@@ -4086,6 +4303,7 @@ function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
     { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
+    { v: 'pedidos-insumos', label: 'Pedidos de insumos', ico: iconoLucide('package') },
     { v: 'documentos', label: 'Documentos Tipo', ico: iconoLucide('file-text') },
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') }, { v: 'automatizaciones', label: 'Automatizaciones', ico: iconoLucide('zap') },
     { v: 'newsletter', label: 'Newsletter', ico: iconoLucide('newspaper') }, { v: 'tags', label: 'Tags', ico: iconoLucide('tag') },
@@ -7636,6 +7854,7 @@ function renderInterno() {
   else if (state.view === 'grupo') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderGrupoDetailAsync(state.grupoId).then(html => { const el = document.querySelector('.content'); if (el && state.view === 'grupo') el.innerHTML = html; }); }
   else if (state.view === 'calendario') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderCalendarioAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'calendario') el.innerHTML = html; }); }
   else if (state.view === 'servicio-tecnico') { inner = '<div class="empty-state cargando">Cargando…</div>'; renderServicioTecnicoModuloAsync().then(html => { const el = document.querySelector('.content'); if (el && state.view === 'servicio-tecnico') el.innerHTML = html; }); }
+  else if (state.view === 'pedidos-insumos') inner = renderInsumosModulo();
   else if (state.view === 'automatizaciones') inner = renderAutomatizaciones();
   else if (state.view === 'newsletter') inner = renderNewsletter();
   else if (state.view === 'estadisticas') inner = renderEstadisticas();

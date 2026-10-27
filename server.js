@@ -4434,6 +4434,334 @@ app.delete('/api/reservas-calendario/:id', requireStaff, async (req, res) => {
   if (!r.rows[0]) return bad(res, 'Reserva no encontrada.', 404);
   ok(res, { ok: true });
 });
+/* ---------------- Pedidos de insumos ----------------
+   El técnico pide un insumo desde el servicio técnico; los aprobadores (usuarios con aprueba_insumos)
+   reciben Telegram con botones y correo con enlace; el primero que responde decide. Después administración
+   carga dónde se compra, cuánto cuesta y si ya está pago; recién ahí el técnico recibe el aviso para retirar.
+   IMPORTANTE: el costo del pedido es solo de referencia, NO se convierte solo en costo del servicio (para no
+   perder el margen). */
+pool.query(`create table if not exists pedidos_insumos (
+  id serial primary key,
+  servicio_id integer,
+  ticket_id uuid,
+  cliente_id uuid,
+  insumo text not null,
+  cantidad numeric not null default 1,
+  motivo text,
+  urgencia text not null default 'normal',
+  foto_path text,
+  foto_mime text,
+  estado text not null default 'pendiente',
+  pedido_por uuid,
+  pedido_por_nombre text,
+  creado timestamptz not null default now(),
+  decidido_por uuid,
+  decidido_por_nombre text,
+  decidido_fecha timestamptz,
+  motivo_rechazo text,
+  compra_lugar text,
+  compra_direccion text,
+  compra_costo numeric,
+  compra_moneda text not null default 'UYU',
+  compra_pagado boolean not null default false,
+  listo_fecha timestamptz,
+  retirado_fecha timestamptz
+)`).then(() => pool.query(`create table if not exists pedido_insumo_avisos (
+  token uuid primary key,
+  pedido_id integer not null,
+  usuario_id uuid not null,
+  chat_id text,
+  message_id bigint,
+  texto text
+)`)).then(() => pool.query('alter table usuarios add column if not exists aprueba_insumos boolean not null default false'))
+  .then(() => pool.query(`update usuarios set aprueba_insumos=true
+     where lower(email) in ('administracion@borcam.com.uy','dbbritos@gmail.com','f.lema@borcam.com.uy')
+       and not exists (select 1 from usuarios where aprueba_insumos)`))
+  .catch(e => console.error('No se pudo migrar pedidos_insumos:', e.message));
+
+function insumoMonto(moneda, n) {
+  return (moneda === 'USD' ? 'U$S ' : '$ ') + Number(n).toLocaleString('es-UY', { maximumFractionDigits: 2 });
+}
+function insumoBaseUrl() { return process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || ''; }
+async function insumoUsuario(req) {
+  return (await pool.query('select id, nombre, apellido, telegram_chat_id, aprueba_insumos from usuarios where id=$1', [req.session.userId])).rows[0];
+}
+async function insumoPedido(id) {
+  return (await pool.query(
+    `select p.*, s.titulo as servicio_titulo, s.ticket_numero, c.nombre as cliente_nombre
+       from pedidos_insumos p
+       left join servicios_tecnicos s on s.id = p.servicio_id
+       left join clientes c on c.id = p.cliente_id
+      where p.id=$1`, [id])).rows[0];
+}
+function insumoTextoTelegram(p) {
+  const e = escapeHtmlSrv;
+  return `📦 <b>Pedido de insumo</b>\n<i>Pidió: ${e(p.pedido_por_nombre || 'técnico')}</i>\n\n<b>${e(p.insumo)}</b> × ${Number(p.cantidad)}\nCliente: ${e(p.cliente_nombre || '—')}\nServicio: ${e(p.servicio_titulo || '—')}${p.motivo ? `\nMotivo: ${e(p.motivo)}` : ''}${p.urgencia === 'bloquea' ? '\n⚠️ <b>Bloquea el trabajo</b>' : ''}${p.foto_path ? '\n📎 1 foto (se ve en la ticketera)' : ''}`;
+}
+async function tgSeguro(chatId, texto, replyMarkup) {
+  try { return await enviarTelegramForzado(chatId, texto, null, replyMarkup); }
+  catch (e) { console.error('[insumos] Telegram:', e.message); return null; }
+}
+async function tgEditarMensaje(chatId, messageId, texto) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId || !messageId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, message_id: Number(messageId), text: texto, parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: { inline_keyboard: [] } })
+    });
+  } catch (e) { console.error('[insumos] editar Telegram:', e.message); }
+}
+// Avisa a los aprobadores (Telegram con botones si tienen Telegram vinculado + correo con enlace seguro).
+async function insumoNotificarNuevo(p) {
+  const aprobadores = (await pool.query('select id, nombre, email, telegram_chat_id from usuarios where aprueba_insumos')).rows;
+  const base = insumoBaseUrl();
+  const texto = insumoTextoTelegram(p);
+  for (const a of aprobadores) {
+    if (String(a.id) === String(p.pedido_por)) continue; // si el que pide también aprueba, no se avisa a sí mismo
+    const token = crypto.randomUUID();
+    let chatId = null, msgId = null;
+    if (a.telegram_chat_id) {
+      const botones = [[{ text: '✅ Aprobar', callback_data: `ins:a:${p.id}` }, { text: '❌ Rechazar', callback_data: `ins:r:${p.id}` }]];
+      if (/^https:\/\//.test(base)) botones.push([{ text: 'Ver en la ticketera', url: base + '/' }]);
+      const d = await tgSeguro(a.telegram_chat_id, texto, { inline_keyboard: botones });
+      if (d && d.result) { chatId = String(a.telegram_chat_id); msgId = d.result.message_id; }
+    }
+    await pool.query('insert into pedido_insumo_avisos (token, pedido_id, usuario_id, chat_id, message_id, texto) values ($1,$2,$3,$4,$5,$6)', [token, p.id, a.id, chatId, msgId, texto]);
+    if (a.email) {
+      const link = `${base}/insumo/${token}`;
+      const cuerpo = `${p.pedido_por_nombre || 'Un técnico'} pidió un insumo${p.urgencia === 'bloquea' ? ' (BLOQUEA EL TRABAJO)' : ''}:\n\n${p.insumo} x ${Number(p.cantidad)}\nCliente: ${p.cliente_nombre || '-'}\nServicio: ${p.servicio_titulo || '-'}${p.motivo ? `\nMotivo: ${p.motivo}` : ''}\n\nPara aprobar o rechazar entrá acá (no hace falta loguearse):\n${link}\n\nEl primero que responde decide; los demás reciben el aviso.`;
+      enviarEmailReal({ to: a.email, subject: `Pedido de insumo: ${p.insumo}`, text: cuerpo, esAutomatico: true }).catch(e => console.error('[insumos] correo:', e.message));
+    }
+  }
+}
+async function insumoAvisarTecnico(p, tipo) {
+  const t = (await pool.query('select telegram_chat_id from usuarios where id=$1', [p.pedido_por])).rows[0];
+  if (!t || !t.telegram_chat_id) return;
+  const e = escapeHtmlSrv;
+  const item = `${e(p.insumo)} × ${Number(p.cantidad)}`;
+  if (tipo === 'aprobado') await tgSeguro(t.telegram_chat_id, `✅ <b>Te aprobaron el insumo</b>\n${item}\n<i>Aprobó ${e(p.decidido_por_nombre)}</i>\nServicio: ${e(p.servicio_titulo || '—')}\n\nCuando esté pago y listo te aviso para retirarlo.`);
+  else if (tipo === 'rechazado') await tgSeguro(t.telegram_chat_id, `❌ <b>Te rechazaron el insumo</b>\n${item}\n<i>Rechazó ${e(p.decidido_por_nombre)}</i>${p.motivo_rechazo ? `\nMotivo: ${e(p.motivo_rechazo)}` : ''}`);
+  else if (tipo === 'motivo') await tgSeguro(t.telegram_chat_id, `ℹ️ <b>Motivo del rechazo</b>\n${item}\n${e(p.motivo_rechazo)}`);
+  else if (tipo === 'listo') {
+    const base = insumoBaseUrl();
+    const botones = [[{ text: '📦 Ya lo retiré', callback_data: `ins:ret:${p.id}` }]];
+    if (/^https:\/\//.test(base)) botones.push([{ text: 'Ver en la ticketera', url: base + '/' }]);
+    await tgSeguro(t.telegram_chat_id, `📍 <b>Listo para retirar</b>\n\n<b>${e(p.insumo)}</b> × ${Number(p.cantidad)}\nLugar: ${e(p.compra_lugar || '—')}${p.compra_direccion ? `\n${e(p.compra_direccion)}` : ''}${p.compra_costo != null ? `\nMonto pagado: <b>${e(insumoMonto(p.compra_moneda, p.compra_costo))}</b>` : ''}\n<i>Servicio: ${e(p.servicio_titulo || '—')}</i>`, { inline_keyboard: botones });
+  }
+}
+// Decide un pedido (aprobar/rechazar). Solo el primero que responde decide: el UPDATE exige estado 'pendiente'.
+async function insumoDecidir(pedidoId, usuario, accion, motivo) {
+  const nombre = `${usuario.nombre} ${usuario.apellido || ''}`.trim();
+  const nuevo = accion === 'aprobar' ? 'aprobado' : 'rechazado';
+  const r = await pool.query(
+    `update pedidos_insumos set estado=$2, decidido_por=$3, decidido_por_nombre=$4, decidido_fecha=now(), motivo_rechazo=$5
+      where id=$1 and estado='pendiente' returning id`,
+    [pedidoId, nuevo, usuario.id, nombre, accion === 'rechazar' ? (String(motivo || '').trim().slice(0, 300) || null) : null]);
+  if (!r.rows[0]) return { ya: true, pedido: await insumoPedido(pedidoId) };
+  const p = await insumoPedido(pedidoId);
+  const avisos = (await pool.query('select * from pedido_insumo_avisos where pedido_id=$1 and message_id is not null', [pedidoId])).rows;
+  for (const a of avisos) {
+    let pie = nuevo === 'aprobado'
+      ? `\n\n✅ <b>Aprobado por ${escapeHtmlSrv(nombre)}</b>`
+      : `\n\n❌ <b>Rechazado por ${escapeHtmlSrv(nombre)}</b>${p.motivo_rechazo ? `\nMotivo: ${escapeHtmlSrv(p.motivo_rechazo)}` : ''}`;
+    if (String(a.usuario_id) === String(usuario.id)) {
+      if (nuevo === 'aprobado') pie += '\nCargá dónde y a cuánto se compra desde la ticketera (Dep. Técnico → Pedidos de insumos).';
+      else if (!p.motivo_rechazo) pie += '\n<i>Si querés, respondé a este mensaje con el motivo y se lo paso al técnico.</i>';
+    }
+    await tgEditarMensaje(a.chat_id, a.message_id, a.texto + pie);
+  }
+  await insumoAvisarTecnico(p, nuevo);
+  return { ya: false, pedido: p };
+}
+async function procesarCallbackInsumo(cb) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  async function responder(texto, alerta) {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: cb.id, text: texto, show_alert: !!alerta }) });
+    } catch (e) { console.error('[insumos] answerCallbackQuery:', e.message); }
+  }
+  const m = (cb.data || '').match(/^ins:(a|r|ret):(\d+)$/);
+  if (!m) { await responder('Acción no reconocida.'); return; }
+  try {
+    const u = (await pool.query('select id, nombre, apellido, aprueba_insumos from usuarios where telegram_chat_id=$1', [String(cb.from.id)])).rows[0];
+    if (!u) { await responder('Tu Telegram no está vinculado a ningún usuario.', true); return; }
+    if (m[1] === 'ret') {
+      const r = await pool.query(`update pedidos_insumos set estado='retirado', retirado_fecha=now() where id=$1 and estado='listo_retirar' and (pedido_por=$2 or $3) returning id`, [m[2], u.id, !!u.aprueba_insumos]);
+      if (!r.rows[0]) { await responder('Este pedido ya no está para retirar.', true); return; }
+      if (cb.message) await tgEditarMensaje(cb.message.chat.id, cb.message.message_id, `📦 <b>Retirado</b> por ${escapeHtmlSrv(u.nombre)} ✔️`);
+      await responder('📦 Marcado como retirado.');
+      return;
+    }
+    if (!u.aprueba_insumos) { await responder('No tenés permiso para aprobar insumos.', true); return; }
+    const res = await insumoDecidir(m[2], u, m[1] === 'a' ? 'aprobar' : 'rechazar', null);
+    if (res.ya) { await responder(`Ya lo resolvió ${res.pedido ? res.pedido.decidido_por_nombre : 'otra persona'}.`, true); return; }
+    await responder(m[1] === 'a' ? '✅ Aprobado' : '❌ Rechazado');
+  } catch (e) {
+    console.error('[insumos] callback:', e.message);
+    await responder('Ocurrió un error. Probá desde la ticketera.', true);
+  }
+}
+// Si el aprobador responde (citando) el aviso de un pedido que él rechazó, ese texto queda como motivo.
+async function insumoProcesarMotivoPorTelegram(msg, staffId) {
+  if (!msg.reply_to_message) return false;
+  const row = (await pool.query(
+    `select p.id from pedido_insumo_avisos a join pedidos_insumos p on p.id=a.pedido_id
+      where a.chat_id=$1 and a.message_id=$2 and p.estado='rechazado' and p.decidido_por=$3 and coalesce(p.motivo_rechazo,'')=''`,
+    [String(msg.chat.id), msg.reply_to_message.message_id, staffId])).rows[0];
+  if (!row) return false;
+  await pool.query('update pedidos_insumos set motivo_rechazo=$2 where id=$1', [row.id, String(msg.text || '').trim().slice(0, 300)]);
+  const p = await insumoPedido(row.id);
+  await insumoAvisarTecnico(p, 'motivo');
+  await enviarTelegramA(msg.chat.id, '✅ Listo, le pasé el motivo al técnico.');
+  return true;
+}
+function insumoPublico(p) { const { foto_path, ...resto } = p; return { ...resto, tiene_foto: !!foto_path }; }
+
+app.get('/api/pedidos-insumos', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  const params = [];
+  let where = '';
+  if (req.query.servicio_id) { params.push(req.query.servicio_id); where = 'where p.servicio_id=$1'; }
+  const r = await pool.query(
+    `select p.*, s.titulo as servicio_titulo, s.ticket_numero, c.nombre as cliente_nombre
+       from pedidos_insumos p
+       left join servicios_tecnicos s on s.id = p.servicio_id
+       left join clientes c on c.id = p.cliente_id
+       ${where} order by p.creado desc limit 500`, params);
+  ok(res, { puede_aprobar: !!(u && u.aprueba_insumos), usuario_id: u && u.id, pedidos: r.rows.map(insumoPublico) });
+});
+// Número que va en el globito del menú: a los aprobadores les marca lo que espera decisión o compra;
+// al resto, sus propios pedidos que ya están para retirar.
+app.get('/api/pedidos-insumos/contador', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  const r = u && u.aprueba_insumos
+    ? await pool.query(`select count(*)::int as n from pedidos_insumos where estado in ('pendiente','aprobado')`)
+    : await pool.query(`select count(*)::int as n from pedidos_insumos where estado='listo_retirar' and pedido_por=$1`, [req.session.userId]);
+  ok(res, { n: r.rows[0].n });
+});
+app.post('/api/servicios-tecnicos/:id/insumos', requireStaff, async (req, res) => {
+  const servicio = (await pool.query('select * from servicios_tecnicos where id=$1', [req.params.id])).rows[0];
+  if (!servicio) return bad(res, 'Servicio técnico no encontrado.', 404);
+  const b = req.body || {};
+  const insumo = String(b.insumo || '').trim().slice(0, 200);
+  if (!insumo) return bad(res, 'Escribí qué insumo necesitás.');
+  const cantidad = Number(b.cantidad) > 0 ? Number(b.cantidad) : 1;
+  const urgencia = b.urgencia === 'bloquea' ? 'bloquea' : 'normal';
+  const u = await insumoUsuario(req);
+  let fotoBuffer = null, fotoMime = null;
+  if (b.fotoDataUrl) {
+    const m = String(b.fotoDataUrl).match(/^data:(image\/(?:jpeg|png));base64,(.+)$/);
+    if (!m) return bad(res, 'La foto tiene que ser JPG o PNG.');
+    fotoBuffer = Buffer.from(m[2], 'base64'); fotoMime = m[1];
+    if (!fotoBuffer.length || fotoBuffer.length > 5 * 1024 * 1024) return bad(res, 'La foto está vacía o pesa demasiado.');
+  }
+  const ins = await pool.query(
+    `insert into pedidos_insumos (servicio_id, ticket_id, cliente_id, insumo, cantidad, motivo, urgencia, pedido_por, pedido_por_nombre)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`,
+    [servicio.id, servicio.ticket_id || null, servicio.cliente_id || null, insumo, cantidad, String(b.motivo || '').trim().slice(0, 500) || null, urgencia, u.id, `${u.nombre} ${u.apellido || ''}`.trim()]);
+  const id = ins.rows[0].id;
+  if (fotoBuffer) {
+    const path = `insumos/${id}/${crypto.randomUUID()}.${fotoMime === 'image/png' ? 'png' : 'jpg'}`;
+    try { await subirArchivoStorage(path, fotoBuffer, fotoMime); await pool.query('update pedidos_insumos set foto_path=$2, foto_mime=$3 where id=$1', [id, path, fotoMime]); }
+    catch (e) { console.error('[insumos] no se pudo guardar la foto:', e.message); }
+  }
+  const p = await insumoPedido(id);
+  insumoNotificarNuevo(p).catch(e => console.error('[insumos] notificar:', e.message));
+  ok(res, insumoPublico(p));
+});
+app.post('/api/pedidos-insumos/:id/decidir', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  if (!u || !u.aprueba_insumos) return bad(res, 'No tenés permiso para aprobar o rechazar pedidos de insumos.', 403);
+  const accion = (req.body || {}).accion === 'rechazar' ? 'rechazar' : 'aprobar';
+  const r = await insumoDecidir(req.params.id, u, accion, (req.body || {}).motivo);
+  if (r.ya) return bad(res, `Este pedido ya lo resolvió ${r.pedido ? r.pedido.decidido_por_nombre : 'otra persona'}.`, 409);
+  ok(res, insumoPublico(r.pedido));
+});
+app.put('/api/pedidos-insumos/:id/compra', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  if (!u || !u.aprueba_insumos) return bad(res, 'No tenés permiso para cargar los datos de compra.', 403);
+  const p0 = await insumoPedido(req.params.id);
+  if (!p0) return bad(res, 'Pedido no encontrado.', 404);
+  if (!['aprobado', 'listo_retirar'].includes(p0.estado)) return bad(res, 'Solo se cargan datos de compra en pedidos aprobados que todavía no se retiraron.');
+  const b = req.body || {};
+  const lugar = String(b.lugar || '').trim().slice(0, 200);
+  const costo = (b.costo === '' || b.costo == null || isNaN(Number(b.costo))) ? null : Number(b.costo);
+  const moneda = b.moneda === 'USD' ? 'USD' : 'UYU';
+  const pagado = !!b.pagado;
+  if (pagado && !lugar) return bad(res, 'Para marcarlo como pagado y avisar al técnico, indicá dónde se retira.');
+  if (pagado && costo == null) return bad(res, 'Para marcarlo como pagado, cargá el costo (así el técnico puede verificar lo que le cobran).');
+  const nuevoEstado = pagado ? 'listo_retirar' : 'aprobado';
+  await pool.query(
+    `update pedidos_insumos set compra_lugar=$2, compra_direccion=$3, compra_costo=$4, compra_moneda=$5, compra_pagado=$6, estado=$7,
+       listo_fecha = case when $7='listo_retirar' then coalesce(listo_fecha, now()) else null end where id=$1`,
+    [p0.id, lugar || null, String(b.direccion || '').trim().slice(0, 300) || null, costo, moneda, pagado, nuevoEstado]);
+  const p = await insumoPedido(p0.id);
+  if (p0.estado !== 'listo_retirar' && nuevoEstado === 'listo_retirar') insumoAvisarTecnico(p, 'listo').catch(e => console.error('[insumos] aviso listo:', e.message));
+  ok(res, insumoPublico(p));
+});
+app.post('/api/pedidos-insumos/:id/retirado', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  const r = await pool.query(`update pedidos_insumos set estado='retirado', retirado_fecha=now() where id=$1 and estado='listo_retirar' and (pedido_por=$2 or $3) returning id`, [req.params.id, u.id, !!u.aprueba_insumos]);
+  if (!r.rows[0]) return bad(res, 'Este pedido no está para retirar (o no es tuyo).');
+  ok(res, insumoPublico(await insumoPedido(req.params.id)));
+});
+app.delete('/api/pedidos-insumos/:id', requireStaff, async (req, res) => {
+  const u = await insumoUsuario(req);
+  const p = await insumoPedido(req.params.id);
+  if (!p) return bad(res, 'Pedido no encontrado.', 404);
+  if (p.estado !== 'pendiente') return bad(res, 'Solo se puede cancelar un pedido que todavía no se resolvió.');
+  if (String(p.pedido_por) !== String(u.id) && !u.aprueba_insumos) return bad(res, 'Solo quien lo pidió puede cancelarlo.', 403);
+  const avisos = (await pool.query('select * from pedido_insumo_avisos where pedido_id=$1 and message_id is not null', [p.id])).rows;
+  for (const a of avisos) await tgEditarMensaje(a.chat_id, a.message_id, a.texto + '\n\n🚫 <b>El pedido fue cancelado</b>');
+  if (p.foto_path) await eliminarArchivosStorage([p.foto_path]).catch(() => {});
+  await pool.query('delete from pedido_insumo_avisos where pedido_id=$1', [p.id]);
+  await pool.query('delete from pedidos_insumos where id=$1', [p.id]);
+  ok(res, { ok: true });
+});
+app.get('/api/pedidos-insumos/:id/foto', requireStaff, async (req, res) => {
+  const p = (await pool.query('select foto_path, foto_mime from pedidos_insumos where id=$1', [req.params.id])).rows[0];
+  if (!p || !p.foto_path) return bad(res, 'Sin foto.', 404);
+  try {
+    const up = await descargarArchivoStorage(p.foto_path);
+    res.setHeader('Content-Type', p.foto_mime || 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.send(Buffer.from(await up.arrayBuffer()));
+  } catch (e) { bad(res, 'No se pudo cargar la foto.', 500); }
+});
+// Página pública (enlace del correo): decide como el usuario dueño de ese enlace, sin necesidad de loguearse.
+function insumoPaginaPublica(titulo, cuerpo) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtmlSrv(titulo)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
+<style>body{font-family:'Manrope',Arial,sans-serif;background:#F3F7FC;color:#0F2A4D;margin:0;padding:20px}.c{max-width:520px;margin:30px auto;background:#fff;border:1px solid #DCE7F5;border-radius:14px;padding:22px;box-shadow:0 2px 10px rgba(15,42,77,.08)}h1{font-size:20px;margin:0 0 6px}.r{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #EEF3FB;font-size:14px}.r span{color:#48607F}.r b{text-align:right}.b{display:block;width:100%;border:0;border-radius:10px;padding:13px;font:700 15px Manrope,Arial;cursor:pointer;margin-top:10px}.ok{background:#127A4B;color:#fff}.no{background:#fff;color:#C4281C;border:1px solid #F3C3BD}textarea{width:100%;box-sizing:border-box;border:1px solid #DCE7F5;border-radius:10px;padding:10px;font:500 14px Manrope,Arial;margin-top:10px}.m{font-size:14px;color:#48607F;margin-top:12px}</style></head><body><div class="c">${cuerpo}</div></body></html>`;
+}
+app.get('/insumo/:token', async (req, res) => {
+  const a = /^[0-9a-f-]{36}$/i.test(req.params.token) ? (await pool.query('select * from pedido_insumo_avisos where token=$1', [req.params.token])).rows[0] : null;
+  const p = a ? await insumoPedido(a.pedido_id) : null;
+  if (!p) return res.status(404).send(insumoPaginaPublica('No encontrado', '<h1>Pedido no encontrado</h1><p class="m">Puede que se haya cancelado.</p>'));
+  const e = escapeHtmlSrv;
+  const filas = `<div class="r"><span>Insumo</span><b>${e(p.insumo)}</b></div><div class="r"><span>Cantidad</span><b>${Number(p.cantidad)}</b></div><div class="r"><span>Cliente</span><b>${e(p.cliente_nombre || '—')}</b></div><div class="r"><span>Servicio</span><b>${e(p.servicio_titulo || '—')}</b></div>${p.motivo ? `<div class="r"><span>Motivo</span><b>${e(p.motivo)}</b></div>` : ''}`;
+  const cab = `<h1>Pedido de insumo</h1><div class="m" style="margin:0 0 10px">Pidió ${e(p.pedido_por_nombre || '')}${p.urgencia === 'bloquea' ? ' · <b style="color:#C4281C">Bloquea el trabajo</b>' : ''}</div>`;
+  if (p.estado !== 'pendiente') {
+    const txt = p.estado === 'rechazado' ? 'rechazado' : 'aprobado';
+    return res.send(insumoPaginaPublica('Pedido de insumo', `${cab}${filas}<p class="m"><b>Ya fue ${txt}</b> por ${e(p.decidido_por_nombre || 'otra persona')}.${p.estado === 'aprobado' ? ' Los datos de compra se cargan desde la ticketera.' : ''}</p>`));
+  }
+  res.send(insumoPaginaPublica('Pedido de insumo', `${cab}${filas}
+<button class="b ok" onclick="dec('aprobar')">✔ Aprobar</button>
+<textarea id="mot" rows="2" placeholder="Si rechazás, escribí un motivo corto (opcional)"></textarea>
+<button class="b no" onclick="dec('rechazar')">✖ Rechazar</button><div class="m" id="msg"></div>
+<script>async function dec(a){const m=document.getElementById('msg');m.textContent='Enviando…';try{const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accion:a,motivo:document.getElementById('mot').value})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Error');location.reload()}catch(e){m.textContent=e.message}}</script>`));
+});
+app.post('/insumo/:token', async (req, res) => {
+  const a = /^[0-9a-f-]{36}$/i.test(req.params.token) ? (await pool.query('select * from pedido_insumo_avisos where token=$1', [req.params.token])).rows[0] : null;
+  if (!a) return bad(res, 'Enlace inválido.', 404);
+  const u = (await pool.query('select id, nombre, apellido, aprueba_insumos from usuarios where id=$1', [a.usuario_id])).rows[0];
+  if (!u || !u.aprueba_insumos) return bad(res, 'No tenés permiso para resolver este pedido.', 403);
+  const r = await insumoDecidir(a.pedido_id, u, (req.body || {}).accion === 'rechazar' ? 'rechazar' : 'aprobar', (req.body || {}).motivo);
+  if (r.ya) return bad(res, `Ya lo resolvió ${r.pedido ? r.pedido.decidido_por_nombre : 'otra persona'}.`, 409);
+  ok(res, { ok: true });
+});
+
 /* ---------------- Notificaciones a Telegram ---------------- */
 async function enviarTelegramForzado(chatId, texto, threadId, replyMarkup) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -4662,7 +4990,8 @@ async function revisarTelegramUpdates() {
       await pool.query('update configuracion set telegram_ultimo_update_id=$1 where id=1', [maxId]);
       try {
         if (update.callback_query) {
-          await procesarCallbackTomarTicket(update.callback_query);
+          if (/^ins:/.test(update.callback_query.data || '')) await procesarCallbackInsumo(update.callback_query);
+          else await procesarCallbackTomarTicket(update.callback_query);
           continue;
         }
         const msg = update.message;
@@ -4680,6 +5009,8 @@ async function revisarTelegramUpdates() {
           await enviarTelegramA(msg.chat.id, '⚠️ Tu Telegram todavía no está vinculado a ningún usuario del sistema. Generá tu código desde "Mi perfil" primero.');
           continue;
         }
+        // 1b) ¿Es el motivo de un pedido de insumo que este usuario rechazó desde Telegram?
+        if (await insumoProcesarMotivoPorTelegram(msg, staffRow.id)) continue;
         // 2) ¿Está respondiendo (citando) el aviso de un ticket puntual?
         let ticketId = null;
         let cuerpoRespuesta = texto;
