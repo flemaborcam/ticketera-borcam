@@ -4548,8 +4548,23 @@ function navItemsBottom(activeView) {
     { v: 'servicio-tecnico', label: 'Dep. Técnico', ico: iconoLucide('wrench') }, { v: 'reservas', label: 'Reservas', ico: iconoLucide('calendar-check') },
   ];
   const enMenuMovil = NAV_ITEMS_BOTTOM_PRINCIPALES.includes(activeView) ? false : true;
-  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && (activeView === 'calendario' || activeView === 'pedidos-insumos'))) ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
+  const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && (activeView === 'calendario' || activeView === 'pedidos-insumos'))) ? 'active' : ''}" onclick="${it.v === 'servicio-tecnico' ? 'openMenuDepTecnico()' : `go('${it.v}')`}"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
   return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
+}
+function openMenuDepTecnico() { state.modal = 'menu-dep-tecnico'; render(); }
+function renderMenuDepTecnicoModal() {
+  const view = state.view;
+  const items = [
+    { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: iconoLucide('wrench') },
+    { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
+    { v: 'pedidos-insumos', label: 'Pedidos de insumos', ico: iconoLucide('package') }
+  ];
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
+    <h2>Dep. Técnico</h2>
+    <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+      ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
+    </div>
+  </div></div>`;
 }
 function openMenuMovil() { state.modal = 'menu-movil'; render(); }
 function irDesdeMenuMovil(view) { state.modal = null; go(view); }
@@ -7529,6 +7544,7 @@ function renderActiveModal() {
   if (state.modal === 'nuevo-grupo' || state.modal === 'editar-grupo') return renderGrupoModal();
   if (state.modal === 'importar-clientes') return renderImportarClientesModal();
   if (state.modal === 'menu-movil') return renderMenuMovilModal();
+  if (state.modal === 'menu-dep-tecnico') return renderMenuDepTecnicoModal();
   if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
   if (state.modal === 'plantilla-mantenimiento') return renderPlantillaMantenimientoModal();
   if (state.modal === 'nueva-automatizacion' || state.modal === 'editar-automatizacion') return renderAutomatizacionModal();
