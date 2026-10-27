@@ -3472,6 +3472,156 @@ app.get('/cancelar-cita/:token', async (req, res) => {
     </script>`}
   </div></body></html>`);
 });
+/* ---------------- Widgets de clima y dólar (bandeja de entrada) ----------------
+   Clima: MET Norway (api.met.no), gratuito y con uso comercial permitido citando la fuente; pide un
+   User-Agent que identifique la aplicación. Dólar: datosUruguay.com (BCU diario + BROU cada 10 min,
+   licencia CC BY 4.0, también hay que citar la fuente). Todo se pide desde el servidor y se guarda en
+   memoria unos minutos: el navegador nunca llama a esas APIs y no se las satura. Si alguna falla, ese
+   widget simplemente no se muestra y el resto del sistema sigue igual. */
+const WIDGET_LAT = -34.9011, WIDGET_LON = -56.1645; // Montevideo
+const WIDGET_UA = 'BorcamTickets/1.0 (+https://ticketera-borcam.onrender.com)';
+const widgetsCache = { clima: { t: 0, data: null, falloT: 0 }, dolar: { t: 0, data: null, falloT: 0 } };
+const widgetsLogueados = {};
+function widgetLogUnaVez(clave, texto) {
+  if (widgetsLogueados[clave]) return;
+  widgetsLogueados[clave] = true;
+  console.log(`[widgets] ${clave}: ${String(texto).slice(0, 600)}`);
+}
+async function widgetFetchJson(url, headers) {
+  const r = await fetch(url, { headers: { 'User-Agent': WIDGET_UA, Accept: 'application/json', ...(headers || {}) }, signal: AbortSignal.timeout(9000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status} en ${url}`);
+  return await r.json();
+}
+// Busca (en cualquier nivel) el primer valor numérico cuya clave coincida con el patrón.
+function widgetBuscarNumero(obj, patron, prof = 0) {
+  if (!obj || typeof obj !== 'object' || prof > 5) return null;
+  for (const [k, v] of Object.entries(obj)) {
+    if (patron.test(k) && v !== null && v !== '' && !isNaN(Number(v)) && typeof v !== 'object') return Number(v);
+  }
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) { const r = widgetBuscarNumero(v, patron, prof + 1); if (r !== null) return r; }
+  }
+  return null;
+}
+// Primer arreglo de objetos con fecha que se encuentre dentro de la respuesta.
+function widgetBuscarSerie(obj, prof = 0) {
+  if (!obj || typeof obj !== 'object' || prof > 4) return null;
+  if (Array.isArray(obj)) return obj.length && obj[0] && typeof obj[0] === 'object' ? obj : null;
+  for (const v of Object.values(obj)) { const r = widgetBuscarSerie(v, prof + 1); if (r) return r; }
+  return null;
+}
+async function widgetDolarFetch() {
+  const [brouR, bcuR] = await Promise.allSettled([
+    widgetFetchJson('https://datosuruguay.com/api/v1/exchange-rates/usd/quote'),
+    widgetFetchJson('https://datosuruguay.com/api/v1/exchange-rates/usd')
+  ]);
+  let brou = null, bcu = null;
+  if (brouR.status === 'fulfilled') {
+    widgetLogUnaVez('BROU respuesta', JSON.stringify(brouR.value));
+    const compra = widgetBuscarNumero(brouR.value, /^(buy|compra|bid)$/i);
+    const venta = widgetBuscarNumero(brouR.value, /^(sell|venta|ask)$/i);
+    if (compra !== null && venta !== null) brou = { compra, venta };
+  } else console.error('[widgets] BROU:', brouR.reason && brouR.reason.message);
+  if (bcuR.status === 'fulfilled') {
+    widgetLogUnaVez('BCU respuesta', JSON.stringify(bcuR.value));
+    const serie = widgetBuscarSerie(bcuR.value);
+    if (serie) {
+      const filas = serie.map(f => {
+        const claveFecha = Object.keys(f).find(k => /date|fecha/i.test(k));
+        const claveValor = Object.keys(f).find(k => /^(value|valor|rate|close|cotizacion|price)$/i.test(k)) || Object.keys(f).find(k => k !== claveFecha && !isNaN(Number(f[k])) && f[k] !== null && typeof f[k] !== 'object');
+        return claveFecha && claveValor ? { fecha: String(f[claveFecha]), valor: Number(f[claveValor]) } : null;
+      }).filter(Boolean).sort((x, y) => (x.fecha < y.fecha ? 1 : -1));
+      if (filas.length) {
+        const ult = filas[0], prev = filas[1];
+        bcu = { valor: ult.valor, fecha: ult.fecha.slice(0, 10), variacion: prev && prev.valor ? ((ult.valor - prev.valor) / prev.valor) * 100 : null };
+      }
+    } else {
+      const v = widgetBuscarNumero(bcuR.value, /^(value|valor|rate)$/i);
+      if (v !== null) bcu = { valor: v, fecha: null, variacion: null };
+    }
+  } else console.error('[widgets] BCU:', bcuR.reason && bcuR.reason.message);
+  if (!brou && !bcu) throw new Error('No se pudo interpretar ninguna cotización');
+  return { brou, bcu };
+}
+const WIDGET_DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+// Símbolos de MET Norway → ícono + texto en español.
+function widgetSimboloClima(codigo) {
+  const c = String(codigo || '').replace(/_(day|night|polartwilight)$/, '');
+  const noche = /_night$/.test(String(codigo || ''));
+  if (/thunder/.test(c)) return { icono: 'cloud-lightning', texto: 'Tormenta' };
+  if (/snow|sleet/.test(c)) return { icono: 'cloud-snow', texto: c.includes('sleet') ? 'Aguanieve' : 'Nieve' };
+  if (/heavyrain/.test(c)) return { icono: 'cloud-rain', texto: 'Lluvia fuerte' };
+  if (/lightrain/.test(c)) return { icono: 'cloud-drizzle', texto: 'Llovizna' };
+  if (/rain|showers/.test(c)) return { icono: 'cloud-rain', texto: /showers/.test(c) ? 'Chubascos' : 'Lluvia' };
+  if (/fog/.test(c)) return { icono: 'cloud-fog', texto: 'Niebla' };
+  if (c === 'clearsky') return { icono: noche ? 'moon' : 'sun', texto: 'Despejado' };
+  if (c === 'fair') return { icono: noche ? 'cloud-moon' : 'cloud-sun', texto: 'Mayormente despejado' };
+  if (c === 'partlycloudy') return { icono: noche ? 'cloud-moon' : 'cloud-sun', texto: 'Parcialmente nublado' };
+  if (c === 'cloudy') return { icono: 'cloud', texto: 'Nublado' };
+  return { icono: 'cloud', texto: 'Variable' };
+}
+async function widgetClimaFetch() {
+  const j = await widgetFetchJson(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${WIDGET_LAT.toFixed(4)}&lon=${WIDGET_LON.toFixed(4)}`);
+  const serie = (j.properties && j.properties.timeseries) || [];
+  if (!serie.length) throw new Error('Pronóstico vacío');
+  widgetLogUnaVez('clima primer dato', JSON.stringify(serie[0]));
+  const local = t => new Date(new Date(t).getTime() - 3 * 3600 * 1000); // Uruguay = UTC-3
+  const claveDia = t => { const d = local(t); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`; };
+  const ahora = serie[0];
+  const det = ahora.data.instant.details;
+  const sim = widgetSimboloClima((ahora.data.next_1_hours || ahora.data.next_6_hours || ahora.data.next_12_hours || { summary: {} }).summary.symbol_code);
+  const hoyClave = claveDia(ahora.time);
+  const dias = {};
+  let lluviaHoyMm = 0;
+  for (const p of serie) {
+    const k = claveDia(p.time);
+    const d = dias[k] || (dias[k] = { temps: [], simbolo: null, simboloMediodia: null, dow: local(p.time).getUTCDay() });
+    const temp = p.data.instant.details.air_temperature;
+    if (typeof temp === 'number') d.temps.push(temp);
+    const s6 = p.data.next_6_hours && p.data.next_6_hours.summary && p.data.next_6_hours.summary.symbol_code;
+    const h = local(p.time).getUTCHours();
+    if (s6 && !d.simbolo) d.simbolo = s6;
+    if (s6 && h >= 11 && h <= 14 && !d.simboloMediodia) d.simboloMediodia = s6;
+    if (k === hoyClave && p.data.next_1_hours && p.data.next_1_hours.details) lluviaHoyMm += Number(p.data.next_1_hours.details.precipitation_amount) || 0;
+  }
+  const hoy = dias[hoyClave];
+  const proximos = Object.keys(dias).filter(k => k > hoyClave).sort().slice(0, 3).map(k => {
+    const d = dias[k];
+    const s = widgetSimboloClima((d.simboloMediodia || d.simbolo || '').replace(/_night$/, '_day'));
+    return { dia: WIDGET_DIAS[d.dow], icono: s.icono, max: Math.round(Math.max(...d.temps)) };
+  });
+  return {
+    temp: Math.round(det.air_temperature), desc: sim.texto, icono: sim.icono,
+    vientoKmh: typeof det.wind_speed === 'number' ? Math.round(det.wind_speed * 3.6) : null,
+    lluviaMm: Math.round(lluviaHoyMm * 10) / 10,
+    max: hoy && hoy.temps.length ? Math.round(Math.max(...hoy.temps)) : null,
+    min: hoy && hoy.temps.length ? Math.round(Math.min(...hoy.temps)) : null,
+    proximos
+  };
+}
+async function widgetObtener(clave, ttlMs, fn) {
+  const c = widgetsCache[clave];
+  const ahora = Date.now();
+  if (c.data && ahora - c.t < ttlMs) return c.data;
+  if (!c.data && ahora - c.falloT < 60000) return null; // si falló hace poco, no insistir en cada pantalla
+  try {
+    const d = await fn();
+    c.data = { ...d, actualizado: new Date().toISOString() };
+    c.t = ahora;
+    return c.data;
+  } catch (e) {
+    console.error(`[widgets] ${clave} falló:`, e.message);
+    c.falloT = ahora;
+    return c.data || null; // si hay un dato viejo, se sigue mostrando antes que nada
+  }
+}
+app.get('/api/widgets', requireStaff, async (req, res) => {
+  const [clima, dolar] = await Promise.all([
+    widgetObtener('clima', 20 * 60 * 1000, widgetClimaFetch),
+    widgetObtener('dolar', 10 * 60 * 1000, widgetDolarFetch)
+  ]);
+  ok(res, { clima, dolar });
+});
 app.get('/api/satisfaccion/:id/:valor', async (req, res) => {
   const paginaFn = (titulo, mensaje) => `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${titulo}</title>

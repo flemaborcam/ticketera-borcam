@@ -24,7 +24,8 @@ let state = {
   reportesDesde: '', reportesHasta: '',
   configMenuAbierto: false,
   stMenuAbierto: false,
-  docMenuAbierto: false
+  docMenuAbierto: false,
+  widgets: null, widgetsT: 0, widgetsCargando: false
 };
 
 /* ---------------- Menú lateral colapsado (solo iconos) ---------------- */
@@ -4003,6 +4004,11 @@ function toggleConfigMenu() {
   if (sidebarColapsado) { go('configuracion'); return; }
   state.configMenuAbierto = !state.configMenuAbierto; render();
 }
+const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />"};
+// Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
+function iconoLucide(nombre, cls) {
+  return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
+}
 const NAV_ST_SUBVISTAS = ['servicio-tecnico', 'calendario'];
 function toggleStMenu() {
   if (sidebarColapsado) { go('servicio-tecnico'); return; }
@@ -4015,20 +4021,20 @@ function toggleDocMenu() {
 }
 function navItems(activeView) {
   const items = [
-    { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
-    { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
+    { v: 'dashboard', label: 'Tickets', ico: iconoLucide('inbox') }, { v: 'reservas', label: 'Reservas', ico: iconoLucide('calendar-check') },
+    { v: 'grupos', label: 'Clientes', ico: iconoLucide('users') },
     { v: '__docs' },
-    { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' },
-    { v: 'tags', label: 'Tags', ico: '&#127991;' },
+    { v: 'newsletter', label: 'Newsletter', ico: iconoLucide('newspaper') },
+    { v: 'tags', label: 'Tags', ico: iconoLucide('tag') },
   ];
-  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
+  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: iconoLucide('chart-column') });
   // "Documentos" es un desplegable con "Documentos Tipo" y "Documentos edificio".
   const docAbierto = state.docMenuAbierto || NAV_DOC_SUBVISTAS.includes(activeView);
   const docSub = [
-    { v: 'documentos', label: 'Documentos Tipo', ico: '&#128220;' },
-    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' },
+    { v: 'documentos', label: 'Documentos Tipo', ico: iconoLucide('file-text') },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') },
   ];
-  const docBtn = `<button class="nav-btn nav-btn-config ${docAbierto ? 'open' : ''} ${NAV_DOC_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleDocMenu()" title="Documentos"><span class="ico">&#128220;</span><span class="nav-btn-label">Documentos</span><span class="nav-btn-chev">&#9654;</span></button>
+  const docBtn = `<button class="nav-btn nav-btn-config ${docAbierto ? 'open' : ''} ${NAV_DOC_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleDocMenu()" title="Documentos"><span class="ico">${iconoLucide('folder-open')}</span><span class="nav-btn-label">Documentos</span><span class="nav-btn-chev">${iconoLucide('chevron-right')}</span></button>
     <div class="nav-submenu ${docAbierto ? 'open' : ''}">
       ${docSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
     </div>`;
@@ -4036,10 +4042,10 @@ function navItems(activeView) {
   // "Dep. Técnico" es un desplegable (como Configuración) que va justo después de "Documentos".
   const stAbierto = state.stMenuAbierto || NAV_ST_SUBVISTAS.includes(activeView);
   const stSub = [
-    { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: '&#128295;' },
-    { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
+    { v: 'servicio-tecnico', label: 'Servicios Técnicos', ico: iconoLucide('wrench') },
+    { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
   ];
-  const stBtn = `<button class="nav-btn nav-btn-config ${stAbierto ? 'open' : ''} ${NAV_ST_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleStMenu()" title="Dep. Técnico"><span class="ico">&#128295;</span><span class="nav-btn-label">Dep. Técnico</span><span class="nav-btn-chev">&#9654;</span></button>
+  const stBtn = `<button class="nav-btn nav-btn-config ${stAbierto ? 'open' : ''} ${NAV_ST_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleStMenu()" title="Dep. Técnico"><span class="ico">${iconoLucide('wrench')}</span><span class="nav-btn-label">Dep. Técnico</span><span class="nav-btn-chev">${iconoLucide('chevron-right')}</span></button>
     <div class="nav-submenu ${stAbierto ? 'open' : ''}">
       ${stSub.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
     </div>`;
@@ -4049,13 +4055,13 @@ function navItems(activeView) {
   // "Configuración" se abre solo si ya estás parado en alguna de sus subvistas, o si lo abriste a mano.
   const abierto = state.configMenuAbierto || NAV_CONFIG_SUBVISTAS.includes(activeView);
   const subItems = [
-    { v: 'configuracion', label: 'General', ico: '&#9881;' },
-    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' },
-    { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
-    { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
-    { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' },
+    { v: 'configuracion', label: 'General', ico: iconoLucide('settings') },
+    { v: 'usuarios', label: 'Usuarios', ico: iconoLucide('users') },
+    { v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') },
+    { v: 'automatizaciones', label: 'Automatizaciones', ico: iconoLucide('zap') },
+    { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') },
   ];
-  const configBtn = `<button class="nav-btn nav-btn-config ${abierto ? 'open' : ''} ${NAV_CONFIG_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleConfigMenu()" title="Configuración"><span class="ico">&#9881;</span><span class="nav-btn-label">Configuración</span><span class="nav-btn-chev">&#9654;</span></button>
+  const configBtn = `<button class="nav-btn nav-btn-config ${abierto ? 'open' : ''} ${NAV_CONFIG_SUBVISTAS.includes(activeView) ? 'active' : ''}" onclick="toggleConfigMenu()" title="Configuración"><span class="ico">${iconoLucide('settings')}</span><span class="nav-btn-label">Configuración</span><span class="nav-btn-chev">${iconoLucide('chevron-right')}</span></button>
     <div class="nav-submenu ${abierto ? 'open' : ''}">
       ${subItems.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
     </div>`;
@@ -4068,8 +4074,8 @@ function navItems(activeView) {
 const NAV_ITEMS_BOTTOM_PRINCIPALES = ['dashboard', 'grupos', 'servicio-tecnico', 'calendario', 'reservas'];
 function navItemsBottom(activeView) {
   const todos = [
-    { v: 'dashboard', label: 'Tickets', ico: '&#9776;' }, { v: 'grupos', label: 'Clientes', ico: '&#128100;' },
-    { v: 'servicio-tecnico', label: 'Dep. Técnico', ico: '&#128295;' }, { v: 'reservas', label: 'Reservas', ico: '&#128203;' },
+    { v: 'dashboard', label: 'Tickets', ico: iconoLucide('inbox') }, { v: 'grupos', label: 'Clientes', ico: iconoLucide('users') },
+    { v: 'servicio-tecnico', label: 'Dep. Técnico', ico: iconoLucide('wrench') }, { v: 'reservas', label: 'Reservas', ico: iconoLucide('calendar-check') },
   ];
   const enMenuMovil = NAV_ITEMS_BOTTOM_PRINCIPALES.includes(activeView) ? false : true;
   const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && activeView === 'calendario')) ? 'active' : ''}" onclick="go('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
@@ -4079,15 +4085,15 @@ function openMenuMovil() { state.modal = 'menu-movil'; render(); }
 function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
-    { v: 'calendario', label: 'Domótica', ico: '&#127968;' },
-    { v: 'documentos', label: 'Documentos Tipo', ico: '&#128220;' },
-    { v: 'documentos-edificio', label: 'Documentos edificio', ico: '&#128193;' }, { v: 'automatizaciones', label: 'Automatizaciones', ico: '&#9889;' },
-    { v: 'newsletter', label: 'Newsletter', ico: '&#128240;' }, { v: 'tags', label: 'Tags', ico: '&#127991;' },
+    { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
+    { v: 'documentos', label: 'Documentos Tipo', ico: iconoLucide('file-text') },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') }, { v: 'automatizaciones', label: 'Automatizaciones', ico: iconoLucide('zap') },
+    { v: 'newsletter', label: 'Newsletter', ico: iconoLucide('newspaper') }, { v: 'tags', label: 'Tags', ico: iconoLucide('tag') },
   ];
-  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: '&#128202;' });
+  if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: iconoLucide('chart-column') });
   items.push(
-    { v: 'configuracion', label: 'Configuración', ico: '&#9881;' }, { v: 'perfil', label: 'Mi perfil', ico: '&#9998;' },
-    { v: 'usuarios', label: 'Usuarios', ico: '&#128101;' }, { v: 'respuestas', label: 'Respuestas', ico: '&#128172;' }
+    { v: 'configuracion', label: 'Configuración', ico: iconoLucide('settings') }, { v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') },
+    { v: 'usuarios', label: 'Usuarios', ico: iconoLucide('users') }, { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') }
   );
   const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
@@ -4168,6 +4174,11 @@ function renderShell(inner) {
     .nav-subbtn:hover{background:rgba(255,255,255,.07);color:#fff;}
     .nav-subbtn.active{background:rgba(61,126,240,.28);color:#fff;}
     .nav-subbtn .ico{display:inline-flex;align-items:center;justify-content:center;width:18px;font-size:11px;flex:none;}
+    .lu{width:16px;height:16px;flex:none;display:block;}
+    .nav-subbtn .ico .lu{width:14px;height:14px;}
+    .nav-btn-chev .lu{width:12px;height:12px;}
+    .bottomnav .nav-btn .ico .lu{width:20px;height:20px;}
+    .modal .nav-btn .ico .lu{width:16px;height:16px;}
     .sidebar.collapsed .nav-submenu,.sidebar.collapsed .nav-btn-chev{display:none;}
     .sidebar-foot{border-top-color:rgba(255,255,255,.1);}
     .sidebar-foot .who{display:flex;align-items:center;gap:10px;padding:4px 4px 12px;}
@@ -4276,6 +4287,22 @@ function dashboardStyleTag() {
   return `<style id="dash-style-v2">
     .dash-saludo{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
     .dash-saludo-fecha{font-family:var(--font-body);font-weight:500;}
+    /* Widgets de clima y dólar (compactos) */
+    .wdg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px;margin-bottom:12px;}
+    .wdg{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:9px 12px;box-shadow:var(--shadow);min-width:0;}
+    .wdg h4{margin:0 0 6px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);display:flex;align-items:center;gap:6px;}
+    .wdg h4 .lu{width:13px;height:13px;} .wdg h4 em{margin-left:auto;font-style:normal;text-transform:none;letter-spacing:0;font-weight:600;font-size:10.5px;}
+    .wdg-row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;}
+    .wdg-big{font-size:24px;font-weight:800;letter-spacing:-.03em;line-height:1.15;display:flex;align-items:center;gap:8px;}
+    .wdg-big .lu{width:26px;height:26px;color:#F2A100;} .wdg-big small{font-size:12px;font-weight:600;color:var(--ink-soft);letter-spacing:0;}
+    .wdg-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-soft);margin-top:2px;} .wdg-meta span{display:inline-flex;align-items:center;gap:4px;} .wdg-meta .lu{width:12px;height:12px;}
+    .wdg-dias{display:flex;gap:5px;} .wdg-dia{text-align:center;font-size:10.5px;font-weight:700;color:var(--ink-soft);background:var(--paper);border-radius:8px;padding:3px 8px;}
+    .wdg-dia .lu{width:16px;height:16px;margin:1px auto;color:#F2A100;} .wdg-dia b{display:block;color:var(--ink);font-size:11.5px;}
+    .wdg-rates{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;} .wdg-rate{background:var(--paper);border-radius:8px;padding:5px 9px;}
+    .wdg-rate small{display:block;font-size:10px;font-weight:700;color:var(--ink-soft);} .wdg-rate b{font-size:16px;font-weight:800;}
+    .wdg-var{font-size:10.5px;font-weight:700;margin-left:3px;display:inline-flex;align-items:center;gap:2px;} .wdg-var .lu{width:11px;height:11px;}
+    .wdg-up{color:var(--stamp-green);} .wdg-down{color:var(--stamp-red);}
+    .wdg-fuente{font-size:10px;color:var(--ink-soft);margin-top:5px;opacity:.85;} .wdg-fuente a{color:inherit;}
     .filters{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow);}
     .filters select,.filters input[type=date]{transition:border-color .15s ease,box-shadow .15s ease;}
     .filters select:focus,.filters input:focus{outline:none;border-color:var(--brand-2);box-shadow:0 0 0 3px rgba(61,126,240,.15);}
@@ -4757,6 +4784,57 @@ function renderCargaTrabajo() {
   return `<div class="carga-trabajo"><span class="carga-trabajo-label">Carga actual:</span>${chips}</div>`;
 }
 
+/* ---------------- Widgets de clima y dólar ---------------- */
+function wdgHace(iso) {
+  if (!iso) return '';
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (min < 1) return 'ahora';
+  if (min < 60) return `hace ${min} min`;
+  return `hace ${Math.round(min / 60)} h`;
+}
+function wdgPesos(n) { return '$ ' + Number(n).toLocaleString('es-UY', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function renderWidgetsHtml() {
+  const w = state.widgets;
+  if (!w || (!w.clima && !w.dolar)) return '';
+  let clima = '', dolar = '';
+  if (w.clima) {
+    const c = w.clima;
+    const dias = (c.proximos || []).map(d => `<div class="wdg-dia">${escapeHtml(d.dia)}${iconoLucide(d.icono)}<b>${d.max}°</b></div>`).join('');
+    clima = `<div class="wdg"><h4>${iconoLucide('cloud-sun')} Clima · Montevideo<em>${wdgHace(c.actualizado)}</em></h4>
+      <div class="wdg-row"><div>
+        <div class="wdg-big">${iconoLucide(c.icono)}<span>${c.temp}°C</span><small>${escapeHtml(c.desc)}</small></div>
+        <div class="wdg-meta">${c.lluviaMm !== null ? `<span>${iconoLucide('droplets')} ${String(c.lluviaMm).replace('.', ',')} mm hoy</span>` : ''}${c.vientoKmh !== null ? `<span>${iconoLucide('wind')} ${c.vientoKmh} km/h</span>` : ''}${c.max !== null ? `<span>Máx ${c.max}° · Mín ${c.min}°</span>` : ''}</div>
+      </div><div class="wdg-dias">${dias}</div></div>
+      <div class="wdg-fuente">Datos: <a href="https://www.met.no/en" target="_blank" rel="noopener">MET Norway</a></div></div>`;
+  }
+  if (w.dolar) {
+    const d = w.dolar;
+    const variacion = d.bcu && d.bcu.variacion !== null && d.bcu.variacion !== undefined
+      ? `<span class="wdg-var ${d.bcu.variacion >= 0 ? 'wdg-up' : 'wdg-down'}">${iconoLucide(d.bcu.variacion >= 0 ? 'trending-up' : 'trending-down')}${Math.abs(d.bcu.variacion).toFixed(1).replace('.', ',')}%</span>` : '';
+    dolar = `<div class="wdg"><h4>${iconoLucide('circle-dollar-sign')} Dólar · Uruguay<em>${wdgHace(d.actualizado)}</em></h4>
+      <div class="wdg-rates">
+        ${d.bcu ? `<div class="wdg-rate"><small>BCU (oficial)</small><b>${wdgPesos(d.bcu.valor)}</b>${variacion}</div>` : ''}
+        ${d.brou ? `<div class="wdg-rate"><small>BROU compra</small><b>${wdgPesos(d.brou.compra)}</b></div><div class="wdg-rate"><small>BROU venta</small><b>${wdgPesos(d.brou.venta)}</b></div>` : ''}
+      </div>
+      <div class="wdg-fuente">Fuente: BCU y BROU · <a href="https://datosuruguay.com/dolar" target="_blank" rel="noopener">datosUruguay.com</a> (CC BY 4.0)</div></div>`;
+  }
+  return `<div class="wdg-grid">${clima}${dolar}</div>`;
+}
+// Se piden al servidor como mucho cada 5 minutos y se pintan SIN render() (así no se pierde nada de lo
+// que se esté tipeando en filtros ni se parpadea la bandeja).
+async function cargarWidgets() {
+  if (state.widgetsCargando) return;
+  if (state.widgets && Date.now() - state.widgetsT < 5 * 60 * 1000) return;
+  state.widgetsCargando = true;
+  try {
+    state.widgets = await api('GET', '/api/widgets');
+    state.widgetsT = Date.now();
+    const slot = document.getElementById('widgets-slot');
+    if (slot) slot.innerHTML = renderWidgetsHtml();
+  } catch (e) { /* los widgets son un extra: si fallan, no se muestra nada */ }
+  state.widgetsCargando = false;
+}
+
 function renderDashboard() {
   const todos = filteredTickets();
   const totalPaginas = Math.max(1, Math.ceil(todos.length / TICKETS_POR_PAGINA));
@@ -4781,6 +4859,7 @@ function renderDashboard() {
 
   const u = currentUser();
   const vencidosCount = cache.tickets.filter(t => !esTicketDeReserva(t) && ticketVencido(t)).length;
+  cargarWidgets();
   return `${dashboardStyleTag()}
     <div class="dash-saludo">${saludoDelDia()}, ${escapeHtml(u.nombre)} 👋 <span class="dash-saludo-fecha">· ${fechaLargaHoy()}</span></div>
     <div class="page-head"><div><h1>Bandeja de entrada general</h1><div class="sub">${todos.length} ticket${todos.length === 1 ? '' : 's'} visibles${state.filters.fecha ? ` · mostrando tickets del ${state.filters.fecha.split('-').reverse().join('/')}` : ''}${vencidosCount ? ` · <span class="badge-vencido">⏰ ${vencidosCount} vencido${vencidosCount === 1 ? '' : 's'}</span>` : ''}</div></div>
@@ -4791,6 +4870,7 @@ function renderDashboard() {
           <span class="dash-profile-name">${escapeHtml(u.nombre)}</span>
         </button>
       </div></div>
+    <div id="widgets-slot">${renderWidgetsHtml()}</div>
     ${renderCargaTrabajo()}
     <div class="filters">
       <button class="btn ${state.filters.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" onclick="setFilter('fecha', hoyStr())">Tickets de hoy</button>

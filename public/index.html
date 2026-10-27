@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-title" content="Borcam Tickets">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
     --ink:#0F2A4D; --ink-soft:#48607F; --paper:#F3F7FC; --card:#FFFFFF;
@@ -22,7 +22,7 @@
     --stamp-red:#C43D3D; --stamp-red-tint:#FBE7E7; --stamp-amber:#B3811C; --stamp-amber-tint:#F5EAD4;
     --stamp-green:#1F8A5F; --stamp-green-tint:#E1F5EC; --gray:#7488A3; --gray-tint:#EAF1FA;
     --radius:8px; --shadow:0 1px 2px rgba(15,42,77,.07),0 2px 6px rgba(15,42,77,.05);
-    --font-display:'Oswald',sans-serif; --font-body:'IBM Plex Sans',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+    --font-display:'Manrope',sans-serif; --font-body:'Manrope',sans-serif; --font-mono:'IBM Plex Mono',monospace;
   }
   *{box-sizing:border-box;} html,body{margin:0;padding:0;overflow-x:hidden;max-width:100%;}
   img{max-width:100%;}
@@ -223,6 +223,8 @@
     .stub-num::before,.stub-num::after{top:50%;transform:translateY(-50%);} .stub-num::before{left:-7px;right:auto;} .stub-num::after{right:-7px;}
     .auth-card-body{padding:26px 20px;}
   }
+  /* Etapa 1 del rediseño (Navy Pro): títulos más firmes con Manrope. */
+  .page-head h1{font-weight:800;letter-spacing:-.02em;font-size:26px;} .ticket-head h1{font-weight:800;letter-spacing:-.01em;}
 </style>
 </head>
 <body>
