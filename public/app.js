@@ -1737,6 +1737,8 @@ function construirPdfReporteMensualServicios(filas, mes) {
   doc.save(`Reporte servicio tecnico ${mes}.pdf`);
 }
 function nombreClientePorId(id) { const c = cache.clientes.find(x => x.id === id); return c ? c.nombre : '—'; }
+// Ilustración propia (pin sobre mapa plegado) para el botón "Ver ubicación".
+const ICONO_UBICACION = `<svg class="il-ubic" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="gpUbic" x1="0" x2="1"><stop offset="0" stop-color="#F26A5E"/><stop offset="1" stop-color="#D93A3A"/></linearGradient></defs><polygon points="3,31 16,27 19,44 6,46" fill="#9EC1F2" stroke="#6C8FC4" stroke-width=".6"/><polygon points="16,27 32,31 35,46 19,44" fill="#F7EBCB" stroke="#C9B27A" stroke-width=".6"/><polygon points="32,31 45,27 42,46 35,46" fill="#A7D9A0" stroke="#6FAE68" stroke-width=".6"/><path d="M16 27 19 44" stroke="#fff" stroke-width=".8" opacity=".7"/><path d="M32 31 35 46" stroke="#fff" stroke-width=".8" opacity=".7"/><path d="M7 40 19 36 31 39 41 35" fill="none" stroke="#F2B544" stroke-width="1.3" stroke-linecap="round"/><ellipse cx="24" cy="32.5" rx="5.5" ry="1.6" fill="#0F2A4D" opacity=".22"/><path d="M24 3.5c-6.6 0-11 4.9-11 10.7 0 7.6 11 18.3 11 18.3s11-10.7 11-18.3C35 8.4 30.6 3.5 24 3.5z" fill="url(#gpUbic)"/><circle cx="24" cy="14.2" r="4.3" fill="#fff"/></svg>`;
 // Link de "Ver ubicación": arma una búsqueda de Google Maps con la dirección tal cual está cargada en
 // la ficha del cliente/edificio — sin usar ninguna API de mapas (que tendría costo), solo un enlace
 // que abre Maps en el navegador o la app del celular de quien lo toque. Devuelve null si ese cliente
@@ -2559,7 +2561,7 @@ function renderDetalleServicioTecnicoModal() {
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
       ${filas.map(([label, valor]) => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13.5px;border-bottom:1px dashed var(--line);padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><strong>${valor}</strong></div>`).join('')}
     </div>
-    ${urlUbicacion ? `<div style="margin-bottom:16px;"><a class="btn btn-ghost" href="${urlUbicacion}" target="_blank" rel="noopener">📍 Ver ubicación</a></div>` : ''}
+    ${urlUbicacion ? `<div style="margin-bottom:16px;"><a class="btn btn-ghost btn-ubic" href="${urlUbicacion}" target="_blank" rel="noopener">${ICONO_UBICACION} Ver ubicación</a></div>` : ''}
     ${s.estado === 'realizado' ? renderDetalleRealizadoServicio(s) : ''}
     ${s.checklist_sistemas ? renderChecklistSistemasServicio(s) : ''}
     ${s.checklist_sistemas ? renderNotasMantenimientoServicio(s) : ''}
@@ -5271,7 +5273,7 @@ function renderTicket(id) {
         ${!esTicketDeReserva(t) ? `<button type="button" class="btn btn-ghost" onclick="irAPedidoDeTagDesdeTicket('${t.id}')">🏷️ Pedido de Tag</button>` : ''}
         <button type="button" class="btn btn-ghost" onclick="openFusionarTicketModal('${t.id}')">🔀 Fusionar con otro ticket</button>
         <a class="btn btn-ghost" href="/api/tickets/${t.id}/pdf" target="_blank" rel="noopener">📄 Exportar PDF</a>
-        ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">📍 Ver ubicación</a>` : ''}
+        ${urlUbicacionCliente(t.grupoId) ? `<a class="btn btn-ghost btn-ubic" href="${urlUbicacionCliente(t.grupoId)}" target="_blank" rel="noopener">${ICONO_UBICACION} Ver ubicación</a>` : ''}
         <button type="button" class="btn btn-danger" onclick="eliminarTicket('${t.id}')">Eliminar ticket</button>
       </div>
       <div class="meta-grid">
