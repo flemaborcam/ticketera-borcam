@@ -3292,12 +3292,12 @@ function renderServiciosTecnicosDelTicket(t) {
     ${configSectionHead('🛠️', 'Servicio técnico agendado', 'Turnos cargados desde este ticket.')}
     <div style="display:flex;flex-direction:column;gap:8px;">
       ${turnos.map(s => `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;">
-          <div>
+        <div class="tkst-row" style="display:flex;justify-content:space-between;align-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;">
+          <div style="min-width:0;">
             <div style="font-weight:600;font-size:13.5px;">${escapeHtml(s.titulo)}</div>
             <div class="u-sub">${s.todo_el_dia ? new Date(s.fecha_hora).toLocaleDateString('es-UY', { dateStyle: 'medium', timeZone: 'America/Montevideo' }) + ' · Todo el día' : new Date(s.fecha_hora).toLocaleString('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' })}</div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div class="tkst-btns" style="display:flex;gap:8px;align-items:center;">
             <button type="button" class="btn btn-ghost" onclick="verDetalleServicioTecnicoDesdeTicket('${s.id}')">💲 Costos / presupuesto</button>
             ${s.estado === 'realizado' ? `<span class="tag tag-resuelto">Realizado</span>` : `<button type="button" class="btn btn-ghost" onclick="marcarServicioTecnicoRealizadoDesdeTicket('${s.id}', '${t.id}')">✅ Marcar realizado</button>`}
           </div>
