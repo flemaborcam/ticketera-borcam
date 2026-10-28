@@ -4559,7 +4559,7 @@ function renderMenuDepTecnicoModal() {
     { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
     { v: 'pedidos-insumos', label: 'Pedidos de insumos', ico: iconoLucide('package') }
   ];
-  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <h2>Dep. Técnico</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
       ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
@@ -4582,7 +4582,7 @@ function renderMenuMovilModal() {
     { v: 'usuarios', label: 'Usuarios', ico: iconoLucide('users') }, { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') }
   );
   const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
-  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal" style="max-width:360px;padding-bottom:10px;">
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <h2>Más opciones</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
       <button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="toggleTema()"><span class="ico" style="background:var(--gray-tint);">${esOscuro ? '&#9728;' : '&#127769;'}</span><span>Modo ${esOscuro ? 'claro' : 'oscuro'}</span></button>
@@ -5231,7 +5231,7 @@ function limpiarFiltrosMovil() { Object.assign(state.filters, { fecha: '', categ
 function renderFiltrosMovilModal() {
   const opt = (arr, cur, lab) => arr.map(v => `<option value="${escapeHtml(v)}" ${cur === v ? 'selected' : ''}>${escapeHtml(lab(v))}</option>`).join('');
   const f = state.filters;
-  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal">
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <h2>Filtros</h2>
     <button type="button" class="btn ${f.fecha === hoyStr() ? 'btn-primary' : 'btn-ghost'}" style="width:100%;margin-bottom:12px;" onclick="setFilterMovil('fecha', hoyStr())">Tickets de hoy</button>
     <div class="field"><label>Otro día</label><input type="date" value="${f.fecha}" onchange="setFilterMovil('fecha', this.value)"></div>
@@ -8283,4 +8283,28 @@ boot();
     });
   };
   new MutationObserver(() => { if (!pendiente) { pendiente = true; requestAnimationFrame(centrar); } }).observe(document.body, { childList: true, subtree: true });
+})();
+
+
+// Celular: las ventanas que suben desde abajo ("sheet") se pueden cerrar arrastrando la rayita hacia abajo.
+(function () {
+  if (window.__sheetDragInit) return; window.__sheetDragInit = true;
+  let y0 = null, sheet = null;
+  document.addEventListener('touchstart', e => {
+    const h = e.target.closest && e.target.closest('.sheet-handle, .sheet > h2');
+    if (!h) return;
+    sheet = h.closest('.sheet'); y0 = e.touches[0].clientY;
+    if (sheet) sheet.style.transition = 'none';
+  }, { passive: true });
+  document.addEventListener('touchmove', e => {
+    if (y0 === null || !sheet) return;
+    const dy = Math.max(0, e.touches[0].clientY - y0);
+    sheet.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if (y0 === null || !sheet) return;
+    const dy = Math.max(0, (e.changedTouches[0].clientY) - y0);
+    const el = sheet; y0 = null; sheet = null;
+    if (dy > 90) { closeModal(); } else { el.style.transition = 'transform .2s ease'; el.style.transform = ''; }
+  }, { passive: true });
 })();

@@ -286,6 +286,15 @@
     .content .reply-tabs .reply-tab,.content .cl-seg:has(> :nth-child(4)) .cl-seg-b{flex:none;display:inline-flex;align-items:center;gap:7px;height:42px;min-height:42px;padding:0 15px !important;border:1px solid var(--line-strong) !important;border-radius:99px !important;background:var(--card) !important;color:var(--ink-soft);font:700 13.5px var(--font-body,inherit);white-space:nowrap;box-shadow:none !important;margin:0;top:0 !important;}
     .content .reply-tabs .reply-tab.active,.content .cl-seg:has(> :nth-child(4)) .cl-seg-b.on{background:var(--brand-tint) !important;border-color:var(--brand) !important;color:var(--brand) !important;}
   }
+  /* Celular: ventanas que suben desde abajo (Más, Dep. Técnico, Filtros) */
+  .sheet-handle{display:none;}
+  @media (max-width:880px){
+    .modal.sheet{max-width:100% !important;width:100%;border-radius:22px 22px 0 0;padding:8px 16px calc(18px + env(safe-area-inset-bottom));animation:sheetUp .22s ease;}
+    @keyframes sheetUp{from{transform:translateY(40px);opacity:.6;}to{transform:none;opacity:1;}}
+    .sheet-handle{display:block;width:44px;height:5px;border-radius:99px;background:var(--line-strong);margin:4px auto 10px;padding:0;position:relative;} .sheet-handle:before{content:"";position:absolute;left:-20px;right:-20px;top:-12px;bottom:-12px;}
+    .modal.sheet > h2{margin:0 0 6px;font-size:18px;}
+    .modal.sheet .nav-btn{min-height:52px;border-radius:12px;font-size:15px;} .modal.sheet .nav-btn .ico{width:34px;height:34px;border-radius:10px;}
+  }
   /* Reporte mensual */
   .rp-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 16px;} .rp-ttl{font-size:20px;font-weight:800;letter-spacing:-.01em;} .rp-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;} .rp-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
   .rp-mes{display:inline-flex;align-items:center;background:var(--card);border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;} .rp-mes button{background:none;border:0;padding:9px 12px;color:var(--gray);cursor:pointer;display:inline-flex;} .rp-mes button:hover{background:var(--paper);color:var(--brand);} .rp-mes .lu{width:16px;height:16px;}
