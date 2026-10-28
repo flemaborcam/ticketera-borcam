@@ -116,7 +116,8 @@ function mapTicket(row) {
     satisfaccion: row.satisfaccion || null,
     historialCliente: row.historialCliente || [],
     checklistEstado: row.checklist_estado || {},
-    fechaReservaDetectada: row.fecha_reserva_detectada || null
+    fechaReservaDetectada: row.fecha_reserva_detectada || null,
+    presupuestoPendiente: !!row.presupuesto_pendiente
   };
 }
 function mapMensaje(m) {
@@ -7933,28 +7934,28 @@ function probarAutomatizacionTexto() {
 
 /* ---------------- Portal de cliente ---------------- */
 
-function navItemsCliente(activeView) {
+function navItemsCliente(activeView, corto) {
   const items = [
-    { v: 'cliente-dashboard', label: 'Mis tickets', ico: '&#9776;' },
-    { v: 'cliente-documentos', label: 'Documentos', ico: '&#128193;' },
+    { v: 'cliente-dashboard', label: corto ? 'Tickets' : 'Mis tickets', ico: iconoLucide('inbox') },
+    { v: 'cliente-documentos', label: 'Documentos', ico: iconoLucide('folder-open') },
     // Por ahora solo lo ve una cuenta con rol "Administración" (puede cargar proveedores para los
     // edificios que administra).
-    ...(cache.perfilCliente && cache.perfilCliente.rol_cliente === 'Administración' ? [{ v: 'cliente-proveedores', label: 'Proveedores y Servicios', ico: '&#128295;' }] : []),
-    { v: 'cliente-perfil', label: 'Mi perfil', ico: '&#9998;' }
+    ...(cache.perfilCliente && cache.perfilCliente.rol_cliente === 'Administración' ? [{ v: 'cliente-proveedores', label: corto ? 'Proveedores' : 'Proveedores y Servicios', ico: iconoLucide('wrench') }] : []),
+    { v: 'cliente-perfil', label: corto ? 'Perfil' : 'Mi perfil', ico: iconoLucide('user') }
   ];
   const activo = (v) => v === activeView || (v === 'cliente-dashboard' && activeView === 'cliente-ticket');
   return items.map(it => `<button class="nav-btn ${activo(it.v) ? 'active' : ''}" onclick="goCliente('${it.v}')"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
 }
 function renderClientShell(inner) {
   const g = currentGrupo();
-  return `<div class="shell">
+  return `<div class="shell ${state.view === 'cliente-ticket' ? 'cp-ticket' : ''}">
     <aside class="sidebar"><div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div>
       <nav>${navItemsCliente(state.view)}</nav>
       <div class="sidebar-foot"><div class="who"><strong>${escapeHtml(g.nombre)}</strong>Portal de cliente</div><button class="nav-btn" onclick="logout()"><span class="ico">&#8630;</span><span>Cerrar sesión</span></button></div>
     </aside>
     <div class="main"><div class="topbar">${state.view !== 'cliente-dashboard' && state.view !== 'dashboard' ? `<button class="nav-btn" style="color:#fff;width:34px;height:34px;padding:0;flex:none;justify-content:center;border-radius:50%;background:rgba(255,255,255,.14);margin-right:10px;" onclick="volverAtras()" title="Volver" aria-label="Volver"><span style="font-size:19px;line-height:1;">&#8592;</span></button>` : ''}<div class="brand-mark">${logoSvg('white')}<span class="name">Sistema de Tickets</span></div><button class="nav-btn" style="color:#fff" onclick="logout()">Salir</button></div>
       <div class="content">${inner}</div>
-      <div class="bottomnav">${navItemsCliente(state.view)}</div>
+      <div class="bottomnav">${navItemsCliente(state.view, true)}</div>
     </div></div>
   ${renderActiveModal()}
   ${state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : ''}`;
@@ -8015,9 +8016,39 @@ function renderClienteResumen(tickets) {
 function renderClienteDashboard() {
   const g = currentGrupo();
   const tickets = [...cache.tickets].sort((a, b) => new Date(b.actualizado) - new Date(a.actualizado));
-  const list = tickets.length ? `<div class="stub-list">${tickets.map(t => renderStub(t, true)).join('')}</div>` : `<div class="empty-state"><div class="big">Todavía no tenés tickets</div></div>`;
-  return `<div class="page-head"><div><h1>Mis tickets</h1><div class="sub">Todos los tickets abiertos a nombre de ${escapeHtml(g.nombre)}</div></div>
-    <button class="btn btn-primary" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>${renderClienteResumen(tickets)}${list}`;
+  const razon = t => t.presupuestoPendiente ? 'Presupuesto para dar conformidad' : (t.estado === 'Esperando al Cliente' ? 'Te pedimos una respuesta' : '');
+  const atencion = tickets.filter(t => razon(t));
+  const resto = tickets.filter(t => !razon(t));
+  const resueltos = tickets.filter(t => t.estado === 'Resuelto' || t.estado === 'Cerrado').length;
+  const bloqueAtencion = atencion.length ? `<div class="cp-alert"><div class="cp-alert-h">${iconoLucide('triangle-alert')}Necesita tu atención (${atencion.length})</div>
+    ${atencion.map(t => `<button type="button" class="cp-alert-it" onclick="openClienteTicket('${t.id}')"><div><div class="cp-alert-t">${escapeHtml(t.asunto)}</div><div class="cp-alert-s">${razon(t)}</div></div>${iconoLucide('chevron-right')}</button>`).join('')}</div>` : '';
+  const list = resto.length ? `<div class="stub-list">${resto.map(t => renderStub(t, true)).join('')}</div>` : (tickets.length ? '' : `<div class="empty-state"><div class="big">Todavía no tenés tickets</div></div>`);
+  const tituloLista = atencion.length ? 'Otros tickets' : 'Todos mis tickets';
+  return `${clientePortalStyleTag()}<div class="cp-wrap">
+    <div class="page-head"><div><div class="cp-hola">Hola 👋</div><h1>${escapeHtml(g.nombre)}</h1><div class="sub">Tus tickets de soporte</div></div>
+      <button class="btn btn-primary cp-nuevo-d" onclick="openNuevoTicketClienteModal()">+ Nuevo ticket</button></div>
+    ${bloqueAtencion}
+    <div class="cp-desk-resumen">${renderClienteResumen(tickets)}</div>
+    ${tickets.length ? `<div class="cp-lista-h"><b>${tituloLista}</b><span>${resueltos} ${resueltos === 1 ? 'resuelto' : 'resueltos'} · ${tickets.length - resueltos} en curso</span></div>` : ''}
+    ${list}
+    <button type="button" class="btn btn-primary cp-nuevo-m" onclick="openNuevoTicketClienteModal()">${iconoLucide('plus')} Nuevo ticket</button></div>`;
+}
+function clientePortalStyleTag() {
+  return `<style id="cliente-portal-style-v1">
+    .cp-hola{font-size:13px;color:var(--ink-soft);font-weight:600;}
+    .cp-alert{background:#FFF6DC;border:1px solid #F0D78A;border-radius:16px;padding:14px;margin-bottom:18px;}
+    .cp-alert-h{display:flex;align-items:center;gap:8px;font-weight:800;color:#8A6200;margin-bottom:10px;} .cp-alert-h .lu{width:20px;height:20px;}
+    .cp-alert-it{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;background:#fff;border:0;border-radius:12px;padding:12px 14px;margin-top:8px;cursor:pointer;font:inherit;color:var(--ink);min-height:56px;}
+    .cp-alert-it .lu{width:18px;height:18px;color:var(--ink-soft);flex:none;}
+    .cp-alert-t{font-weight:800;font-size:14.5px;} .cp-alert-s{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+    .cp-lista-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:4px 2px 10px;} .cp-lista-h span{font-size:12.5px;color:var(--ink-soft);}
+    .cp-nuevo-m{display:none;}
+    @media(max-width:880px){
+      .cp-nuevo-d{display:none !important;} .cp-desk-resumen{display:none;}
+      .cp-nuevo-m{display:flex !important;position:fixed;left:16px;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:15;height:50px;align-items:center;justify-content:center;gap:8px;border-radius:14px;font-size:15px;box-shadow:0 10px 24px -8px rgba(30,86,199,.6);} .cp-nuevo-m .lu{width:18px;height:18px;}
+      .cp-wrap{padding-bottom:70px;}
+    }
+  </style>`;
 }
 function clienteTicketStyleTag() {
   if (document.getElementById('cliente-ticket-style-v1')) return '';
@@ -8057,22 +8088,51 @@ function renderClienteTicket(id) {
   if (!t) return `<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver</button><div class="empty-state cargando">Cargando…</div>`;
   const thread = renderThreadHtml(t);
   const edificio = cache.edificiosCliente.length > 1 ? cache.edificiosCliente.find(e => e.id === t.grupoId) : null;
-  return `${clienteTicketStyleTag()}<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
+  const pendientes = (t.serviciosTecnicos || []).filter(s => s.presupuesto_enviado && !s.presupuesto_aprobado);
+  const barraAcciones = `<div class="cp-bar"><div class="cp-bar-in">${pendientes.length === 1 ? `<button type="button" class="btn cp-ok" onclick="aprobarPresupuestoCliente('${pendientes[0].id}')">${iconoLucide('check')} Dar conformidad</button>` : ''}<button type="button" class="btn ${pendientes.length === 1 ? 'btn-ghost' : 'btn-primary'}" onclick="cpResponder()">${iconoLucide('send')} Responder</button></div></div>`;
+  return `${clienteTicketStyleTag()}${clientePortalTicketStyleTag()}<button class="back-link" onclick="go('cliente-dashboard')">&larr; Volver a mis tickets</button>
     <div class="ticket-head"><div class="ticket-head-top"><div><div class="ticket-num-big">${t.numero}</div><h1>${escapeHtml(t.asunto)}</h1>
       <div class="ticket-from">${edificio ? `Edificio: <strong>${escapeHtml(edificio.nombre)}</strong> · ` : ''}Categoría: ${escapeHtml(t.categoria)} · Prioridad: ${t.prioridad} · Creado ${fmtDateTime(t.creado)}</div></div>
       <div class="stamp stamp-${slug(t.estado)}">${t.estado}</div></div>
-      ${renderEstadoTimelineCliente(t.estado)}</div>
-    ${renderPresupuestosClienteTicket(t)}
+      ${renderEstadoTimelineCliente(t.estado)}<div class="cp-estado-txt">${ESTADO_TIMELINE_PASOS[pasoDeEstadoCliente(t.estado)]}</div></div>
+    ${renderPresupuestosClienteTicket(t, pendientes.length === 1)}
     <div class="thread">${thread}</div>
-    <div class="reply-box"><form onsubmit="return submitClienteReply(event, '${t.id}')">
+    <div class="reply-box" id="cp-reply"><form onsubmit="return submitClienteReply(event, '${t.id}')">
       <div class="field" style="margin-bottom:0;"><textarea name="cuerpo" placeholder="Escribí tu respuesta…" required></textarea></div>
       <div class="field" style="margin-top:12px;"><label>Adjuntar fotos o video (opcional)</label><input type="file" multiple accept="image/*,video/*,application/pdf" onchange="addPendingAttachments(this)"><div class="hint-text">Imágenes, PDF o video, máx. 20 MB.</div><div id="pending-attachments">${renderPendingChips()}</div></div>
       <div class="reply-actions"><button type="submit" class="btn btn-primary">Enviar respuesta</button></div>
-    </form></div>`;
+    </form></div>${barraAcciones}`;
+}
+function cpResponder() {
+  const box = document.getElementById('cp-reply'); if (!box) return;
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const ta = box.querySelector('textarea'); if (ta) setTimeout(() => ta.focus(), 350);
+}
+function clientePortalTicketStyleTag() {
+  return `<style id="cliente-portal-ticket-style-v1">
+    .cp-estado-txt,.cp-bar{display:none;}
+    @media(max-width:880px){
+      .cp-ticket .bottomnav,.cp-ticket .back-link{display:none !important;}
+      .cp-ticket .content{padding-bottom:150px !important;}
+      .cp-ticket .ticket-head .stamp{display:none !important;}
+      .cp-ticket .ticket-head .ticket-num-big{background:none !important;color:var(--ink-soft) !important;box-shadow:none !important;padding:0 !important;font-size:12.5px !important;margin-bottom:2px !important;}
+      .cp-ticket .ticket-head h1{font-size:21px !important;margin:0 0 6px !important;}
+      .cp-ticket .estado-timeline{margin-top:14px !important;padding-top:14px !important;align-items:center !important;}
+      .cp-ticket .estado-paso{width:auto !important;gap:0 !important;} .cp-ticket .estado-paso-label{display:none !important;}
+      .cp-ticket .estado-paso-punto{width:24px !important;height:24px !important;font-size:12px !important;}
+      .cp-ticket .estado-paso-linea{margin-top:0 !important;}
+      .cp-estado-txt{display:block;margin-top:10px;font-weight:800;font-size:14px;color:var(--brand);}
+      .cp-ticket .cp-pres-btn{display:none !important;}
+      .cp-bar{display:block;position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--card);border-top:1px solid var(--line);padding:12px 16px calc(14px + env(safe-area-inset-bottom));}
+      .cp-bar-in{display:flex;flex-direction:column;gap:8px;max-width:640px;margin:0 auto;}
+      .cp-bar .btn{width:100%;min-height:50px;font-size:15.5px;display:flex;align-items:center;justify-content:center;gap:8px;border-radius:14px;} .cp-bar .btn .lu{width:19px;height:19px;}
+      .cp-bar .cp-ok{background:var(--stamp-green);color:#fff;border-color:var(--stamp-green);}
+    }
+  </style>`;
 }
 // Presupuestos de servicio técnico que el equipo ya envió sobre este ticket: costos, archivos
 // adjuntos, y el botón para dar conformidad (obligatorio antes de que se avance con la tarea).
-function renderPresupuestosClienteTicket(t) {
+function renderPresupuestosClienteTicket(t, unSoloPendiente) {
   const servicios = (t.serviciosTecnicos || []).filter(s => s.presupuesto_enviado);
   if (!servicios.length) return '';
   return servicios.map(s => {
@@ -8087,7 +8147,7 @@ function renderPresupuestosClienteTicket(t) {
       ${adjuntos.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">${adjuntos.map(a => `<a href="/api/servicios-tecnicos/${s.id}/presupuesto/${a.id}/descargar" target="_blank" rel="noopener" class="btn btn-ghost" style="width:fit-content;">${attachIcon(tipoAdjunto(a.mime || ''))} ${escapeHtml(a.nombre)}</a>`).join('')}</div>` : ''}
       ${s.presupuesto_aprobado
         ? `<div class="tag tag-resuelto">✅ Diste tu conformidad${s.presupuesto_aprobado_fecha ? ' el ' + fmtDateTime(s.presupuesto_aprobado_fecha) : ''}</div>`
-        : `<button type="button" class="btn btn-primary" onclick="aprobarPresupuestoCliente('${s.id}')">✅ Dar conformidad con este presupuesto</button>`}
+        : `<button type="button" class="btn btn-primary ${unSoloPendiente ? 'cp-pres-btn' : ''}" onclick="aprobarPresupuestoCliente('${s.id}')">✅ Dar conformidad con este presupuesto</button>`}
     </div>`;
   }).join('');
 }

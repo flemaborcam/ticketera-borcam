@@ -5269,7 +5269,9 @@ app.put('/api/portal/perfil', requireCliente, async (req, res) => {
 app.get('/api/portal/tickets', requireClientePortalOApiKey, async (req, res) => {
   const ids = await idsClienteGestionados(clienteIdDeRequest(req));
   const tickets = (await pool.query(
-    `select t.*, c.nombre as edificio_nombre from tickets t left join clientes c on c.id = t.cliente_id
+    `select t.*, c.nombre as edificio_nombre,
+       exists(select 1 from servicios_tecnicos s where s.ticket_id = t.id and s.presupuesto_enviado and not coalesce(s.presupuesto_aprobado, false)) as presupuesto_pendiente
+     from tickets t left join clientes c on c.id = t.cliente_id
      where t.cliente_id = any($1) order by t.actualizado desc`,
     [ids]
   )).rows;
