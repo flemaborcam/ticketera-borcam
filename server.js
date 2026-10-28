@@ -3498,34 +3498,83 @@ app.post('/api/agenda/cancelar/:token', async (req, res) => {
 app.get('/agendar', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'agendar.html'));
 });
+/* ---------------- Páginas públicas (links de correo, sin login) ----------------
+   Un solo estilo para todas: barra de marca arriba, tarjetas, botón de acción fijo abajo y pantallas
+   de "listo" / error. Se usan en cancelar turno, aceptar documento, aprobar presupuesto y pedido de insumo. */
+const PP_ICONOS = {
+  ok: '<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  info: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>'
+};
+const PP_CSS = `
+*{box-sizing:border-box}body{margin:0;font-family:'Manrope','IBM Plex Sans',Arial,sans-serif;background:#F2F6FC;color:#0F2A52}
+.pp-top{background:#0F2A52;height:56px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;letter-spacing:.1em;font-size:15px}
+.pp-top img{height:30px;width:auto;display:block}
+.pp-page{min-height:calc(100vh - 56px);display:flex;flex-direction:column}
+.pp-main{flex:1;width:100%;max-width:560px;margin:0 auto;padding:18px 16px 24px}
+.pp-card{background:#fff;border:1px solid #DBE3F0;border-radius:16px;padding:18px;margin-bottom:14px}
+.pp-k{font-size:11px;letter-spacing:.08em;color:#5B6B85;font-weight:800;text-transform:uppercase}
+.pp-h{font-size:21px;font-weight:800;margin:4px 0 6px;line-height:1.25}
+.pp-m{color:#5B6B85;font-size:14px;line-height:1.5;margin:0}
+.pp-tr{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid #EEF3FA;font-size:14.5px}.pp-tr:last-child{border-bottom:0}
+.pp-tr span{color:#5B6B85}.pp-tr b{text-align:right;font-weight:700}
+.pp-tot{background:#0F2A52;color:#fff;border-radius:14px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;margin-top:12px}.pp-tot b{font-size:24px}
+.pp-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #DBE3F0;padding:12px 16px calc(14px + env(safe-area-inset-bottom))}
+.pp-bar-in{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.pp-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:52px;border:0;border-radius:14px;background:#1E56C7;color:#fff;font:800 16px 'Manrope',Arial,sans-serif;cursor:pointer}
+.pp-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.pp-btn.ok{background:#127A4B}.pp-btn.danger{background:#C0392B}.pp-btn.ghost{background:#fff;color:#C0392B;border:1.5px solid #F0C5BF}
+.pp-btn:disabled{opacity:.55;cursor:default}
+.pp-msg{margin-top:6px;text-align:center;font-weight:700;font-size:14px;color:#C0392B}
+.pp-okwrap{text-align:center;padding:56px 8px 20px}
+.pp-okc{width:84px;height:84px;border-radius:50%;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;background:#D5EFE1;color:#127A4B}
+.pp-okc.err{background:#FBE0DC;color:#C0392B}.pp-okc.info{background:#E3ECFB;color:#1E56C7}
+.pp-okc svg{width:42px;height:42px;fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.pp-field{margin-bottom:14px}.pp-field label{display:block;font-size:12px;font-weight:800;color:#5B6B85;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+.pp-field input,.pp-field textarea,.pp-ta{width:100%;padding:12px 13px;border:1px solid #B7CDE8;border-radius:12px;font:500 16px 'Manrope',Arial,sans-serif;color:#0F2A52;background:#fff}
+.pp-field input:focus,.pp-field textarea:focus,.pp-ta:focus{outline:2px solid #BFD3F6;border-color:#1E56C7}
+.pp-row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.pp-texto{white-space:pre-wrap;font-size:14.5px;line-height:1.65;max-height:360px;overflow-y:auto;border:1px solid #DCE7F5;border-radius:12px;padding:14px;background:#FAFCFE;margin-top:10px}
+.pp-check{display:flex;align-items:flex-start;gap:12px;font-size:14px;line-height:1.45;margin:6px 0 2px}.pp-check input{width:22px;height:22px;margin-top:1px;flex:none;accent-color:#1E56C7}
+@media(max-width:480px){.pp-row2{grid-template-columns:1fr}}
+`;
+function paginaPublicaBorcam(titulo, cuerpo, barra) {
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${escapeHtmlSrv(titulo)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>${PP_CSS}</style></head>
+<body><div class="pp-top"><img src="/logo-white.png" alt="Borcam" onerror="this.replaceWith(document.createTextNode('BORCAM'))"></div>
+<div class="pp-page"><main class="pp-main">${cuerpo}</main>${barra ? `<div class="pp-bar"><div class="pp-bar-in">${barra}</div></div>` : ''}</div>
+<script>
+var PP_OK='${PP_ICONOS.ok.replace(/'/g, "\\'")}';
+function ppListo(t,m){document.querySelector('.pp-main').innerHTML='<div class="pp-okwrap"><div class="pp-okc">'+PP_OK+'</div><h1 class="pp-h">'+t+'</h1><p class="pp-m">'+m+'</p></div>';var b=document.querySelector('.pp-bar');if(b)b.remove();window.scrollTo(0,0);}
+</script></body></html>`;
+}
+// Pantalla simple centrada (ya resuelto, no encontrado, error): tipo 'ok' | 'err' | 'info'.
+function paginaPublicaEstado(titulo, tipo, encabezado, texto) {
+  return paginaPublicaBorcam(titulo, `<div class="pp-okwrap"><div class="pp-okc ${tipo === 'ok' ? '' : tipo}">${PP_ICONOS[tipo === 'ok' ? 'ok' : tipo === 'err' ? 'x' : 'info']}</div><h1 class="pp-h">${escapeHtmlSrv(encabezado)}</h1><p class="pp-m">${texto}</p></div>`);
+}
 app.get('/cancelar-cita/:token', async (req, res) => {
   const cita = (await pool.query('select * from citas where token_cancelacion=$1', [req.params.token])).rows[0];
-  if (!cita) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Turno no encontrado</h1>');
+  if (!cita) return res.status(404).send(paginaPublicaEstado('Turno no encontrado', 'err', 'Turno no encontrado', 'Puede que el enlace sea incorrecto o que el turno ya no exista.'));
   const fechaFmt = new Date(cita.fecha_hora).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
-  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cancelar turno</title>
-  <style>
-    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}
-    .card{background:#fff;border-radius:10px;padding:32px;max-width:420px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
-    h1{font-size:20px;color:#0F2A4D;margin:0 0 10px;} p{color:#48607F;line-height:1.5;}
-    button{background:#C43D3D;color:#fff;border:none;padding:12px 20px;border-radius:6px;font-size:15px;cursor:pointer;margin-top:14px;}
-    button:hover{background:#a83232;} #msg{margin-top:16px;font-weight:600;color:#0F2A4D;}
-  </style></head>
-  <body><div class="card">
-    ${cita.estado === 'cancelada' ? `<h1>Este turno ya estaba cancelado</h1><p>${fechaFmt}</p>` : `
-    <h1>¿Cancelar tu turno?</h1>
-    <p><strong>${fechaFmt}</strong><br>${escapeHtmlSrv(cita.edificio)} · Unidad ${escapeHtmlSrv(cita.numero_unidad)}</p>
-    <button onclick="cancelar()">Sí, cancelar mi turno</button>
-    <div id="msg"></div>
+  if (cita.estado === 'cancelada') return res.send(paginaPublicaEstado('Turno cancelado', 'info', 'Este turno ya estaba cancelado', escapeHtmlSrv(fechaFmt)));
+  res.send(paginaPublicaBorcam('Cancelar turno', `<div class="pp-card"><div class="pp-k">Tu turno</div><h1 class="pp-h">¿Querés cancelar este turno?</h1>
+    <div class="pp-tr"><span>Fecha</span><b>${escapeHtmlSrv(fechaFmt)}</b></div>
+    <div class="pp-tr"><span>Edificio</span><b>${escapeHtmlSrv(cita.edificio)}</b></div>
+    <div class="pp-tr"><span>Unidad</span><b>${escapeHtmlSrv(cita.numero_unidad)}</b></div></div>
+    <div class="pp-msg" id="msg"></div>
     <script>
       async function cancelar(){
-        document.getElementById('msg').textContent = 'Cancelando…';
-        const r = await fetch('/api/agenda/cancelar/${cita.token_cancelacion}', { method:'POST' });
-        const data = await r.json();
-        document.getElementById('msg').textContent = data.ok ? 'Listo, tu turno fue cancelado.' : (data.error || 'Ocurrió un error.');
+        var btn=document.getElementById('btn-cancelar'),msg=document.getElementById('msg');
+        btn.disabled=true;btn.textContent='Cancelando…';msg.textContent='';
+        try{
+          var r=await fetch('/api/agenda/cancelar/${cita.token_cancelacion}',{method:'POST'});
+          var data=await r.json();
+          if(!r.ok||!data.ok)throw new Error(data.error||'Ocurrió un error.');
+          ppListo('Turno cancelado','Listo, tu turno fue cancelado.');
+        }catch(e){msg.textContent=e.message;btn.disabled=false;btn.textContent='Sí, cancelar mi turno';}
       }
-    </script>`}
-  </div></body></html>`);
+    </script>`,
+    `<button type="button" class="pp-btn danger" id="btn-cancelar" onclick="cancelar()">Sí, cancelar mi turno</button>`));
 });
 /* ---------------- Widgets de clima y dólar (bandeja de entrada) ----------------
    Clima: MET Norway (api.met.no), gratuito y con uso comercial permitido citando la fuente; pide un
@@ -3733,80 +3782,52 @@ app.get('/api/tickets/:id/aceptaciones', requireStaff, async (req, res) => {
 });
 app.get('/aceptar-documento/:token', async (req, res) => {
   const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
-  if (!a) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Documento no encontrado</h1>');
+  if (!a) return res.status(404).send(paginaPublicaEstado('Documento no encontrado', 'err', 'Documento no encontrado', 'Puede que el enlace sea incorrecto o que el documento ya no exista.'));
   const t = (await pool.query('select remitente_nombre, remitente_email from tickets where id=$1', [a.ticket_id])).rows[0] || {};
   if (a.estado === 'aceptado') {
     const fechaFmt = new Date(a.fecha_aceptacion).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
-    return res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Documento aceptado</title>
-    <style>body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;}
-    .card{background:#fff;border-radius:10px;padding:32px;max-width:460px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
-    h1{font-size:20px;color:#1F8A5F;} p{color:#48607F;line-height:1.5;}</style></head>
-    <body><div class="card"><h1>✅ Este documento ya fue aceptado</h1><p>Quedó registrada la aceptación de <strong>${escapeHtmlSrv(a.nombre_solicitante || t.remitente_nombre || '')}</strong> el ${fechaFmt}.</p></div></body></html>`);
+    return res.send(paginaPublicaEstado('Documento aceptado', 'ok', 'Este documento ya fue aceptado', `Quedó registrada la aceptación de <strong>${escapeHtmlSrv(a.nombre_solicitante || t.remitente_nombre || '')}</strong> el ${escapeHtmlSrv(fechaFmt)}.`));
   }
-  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtmlSrv(a.documento_nombre)}</title>
-  <style>
-    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;margin:0;padding:20px;}
-    .wrap{max-width:640px;margin:0 auto;}
-    .card{background:#fff;border-radius:10px;padding:28px;box-shadow:0 2px 10px rgba(15,42,77,.08);margin-bottom:16px;}
-    h1{font-size:20px;color:#0F2A4D;margin:0 0 14px;}
-    .texto{white-space:pre-wrap;font-size:14px;line-height:1.6;color:#20262B;max-height:420px;overflow-y:auto;border:1px solid #DCE7F5;border-radius:8px;padding:16px;background:#FAFCFE;}
-    .field{margin-bottom:14px;} label{display:block;font-size:12.5px;font-weight:600;color:#48607F;margin-bottom:5px;text-transform:uppercase;letter-spacing:.03em;}
-    input,textarea{width:100%;padding:10px 12px;border:1px solid #B7CDE8;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box;}
-    .row{display:flex;gap:12px;} .row .field{flex:1;}
-    .checkrow{display:flex;align-items:flex-start;gap:10px;font-size:13.5px;color:#20262B;margin:16px 0;line-height:1.4;}
-    button{background:#1E56C7;color:#fff;border:none;padding:13px 20px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
-    button:disabled{opacity:.5;cursor:default;}
-    #msg{margin-top:14px;font-weight:600;text-align:center;}
-    .ok-box{text-align:center;} .ok-box h2{color:#1F8A5F;font-family:'IBM Plex Sans',sans-serif;}
-  </style></head>
-  <body><div class="wrap">
-    <div class="card">
-      <h1>${escapeHtmlSrv(a.documento_nombre)}</h1>
-      <div class="texto">${escapeHtmlSrv(a.documento_texto)}</div>
-    </div>
-    <div class="card" id="form-card">
+  res.send(paginaPublicaBorcam(a.documento_nombre, `
+    <div class="pp-card"><div class="pp-k">Documento para aceptar</div><h1 class="pp-h">${escapeHtmlSrv(a.documento_nombre)}</h1>
+      <div class="pp-texto">${escapeHtmlSrv(a.documento_texto)}</div></div>
+    <div class="pp-card">
       <form id="form-aceptar" onsubmit="return aceptar(event)">
-        <div class="field"><label>Nombre completo</label><input name="nombre" value="${escapeHtmlSrv(t.remitente_nombre || '')}" required></div>
-        <div class="row">
-          <div class="field"><label>Documento de identidad</label><input name="documentoIdentidad"></div>
-          <div class="field"><label>Empresa / Institución (si corresponde)</label><input name="empresaInstitucion"></div>
+        <div class="pp-field"><label>Nombre completo</label><input name="nombre" value="${escapeHtmlSrv(t.remitente_nombre || '')}" required></div>
+        <div class="pp-row2">
+          <div class="pp-field"><label>Documento de identidad</label><input name="documentoIdentidad"></div>
+          <div class="pp-field"><label>Empresa / Institución (si corresponde)</label><input name="empresaInstitucion"></div>
         </div>
-        <div class="field"><label>Motivo de la solicitud</label><input name="motivoSolicitud" required></div>
-        <div class="field"><label>Descripción del material (cámara/s, fecha y hora del registro)</label><input name="descripcionMaterial"></div>
-        <div class="field"><label>Medio de entrega (pendrive, correo, nube, etc.)</label><input name="medioEntrega"></div>
-        <label class="checkrow"><input type="checkbox" id="check-leido" required style="margin-top:3px;"> He leído y entiendo el contenido de este documento, y acepto plenamente todos sus términos.</label>
-        <button type="submit">Aceptar y firmar</button>
-        <div id="msg"></div>
+        <div class="pp-field"><label>Motivo de la solicitud</label><input name="motivoSolicitud" required></div>
+        <div class="pp-field"><label>Descripción del material (cámara/s, fecha y hora del registro)</label><input name="descripcionMaterial"></div>
+        <div class="pp-field"><label>Medio de entrega (pendrive, correo, nube, etc.)</label><input name="medioEntrega"></div>
+        <label class="pp-check"><input type="checkbox" id="check-leido" required> <span>He leído y entiendo el contenido de este documento, y acepto plenamente todos sus términos.</span></label>
       </form>
     </div>
-  </div>
-  <script>
+    <div class="pp-msg" id="msg"></div>
+    <script>
     async function aceptar(ev){
       ev.preventDefault();
-      const btn = ev.target.querySelector('button');
-      btn.disabled = true; btn.textContent = 'Enviando…';
-      const fd = new FormData(ev.target);
-      try {
-        const r = await fetch('/api/documentos/aceptar/${a.token}', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            nombreSolicitante: fd.get('nombre'), documentoIdentidad: fd.get('documentoIdentidad'),
-            empresaInstitucion: fd.get('empresaInstitucion'), motivoSolicitud: fd.get('motivoSolicitud'),
-            descripcionMaterial: fd.get('descripcionMaterial'), medioEntrega: fd.get('medioEntrega')
+      var btn=document.getElementById('btn-aceptar'),msg=document.getElementById('msg');
+      btn.disabled=true;btn.textContent='Enviando…';msg.textContent='';
+      var fd=new FormData(ev.target);
+      try{
+        var r=await fetch('/api/documentos/aceptar/${a.token}',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            nombreSolicitante:fd.get('nombre'),documentoIdentidad:fd.get('documentoIdentidad'),
+            empresaInstitucion:fd.get('empresaInstitucion'),motivoSolicitud:fd.get('motivoSolicitud'),
+            descripcionMaterial:fd.get('descripcionMaterial'),medioEntrega:fd.get('medioEntrega')
           })
         });
-        const data = await r.json();
-        if(!r.ok) throw new Error(data.error || 'No se pudo registrar la aceptación.');
-        document.getElementById('form-card').innerHTML = '<div class="ok-box"><h2>✅ ¡Listo!</h2><p>Tu aceptación quedó registrada correctamente.</p></div>';
-      } catch(e){
-        document.getElementById('msg').innerHTML = '<span style="color:#C43D3D;">'+e.message+'</span>';
-        btn.disabled = false; btn.textContent = 'Aceptar y firmar';
-      }
+        var data=await r.json();
+        if(!r.ok)throw new Error(data.error||'No se pudo registrar la aceptación.');
+        ppListo('¡Listo, gracias!','Tu aceptación quedó registrada correctamente.');
+      }catch(e){msg.textContent=e.message;btn.disabled=false;btn.textContent='Aceptar y firmar';}
       return false;
     }
-  </script>
-  </body></html>`);
+    </script>`,
+    `<button type="submit" form="form-aceptar" class="pp-btn" id="btn-aceptar">Aceptar y firmar</button>`));
 });
 app.post('/api/documentos/aceptar/:token', async (req, res) => {
   const a = (await pool.query('select * from aceptaciones_legales where token=$1', [req.params.token])).rows[0];
@@ -3836,72 +3857,43 @@ app.post('/api/documentos/aceptar/:token', async (req, res) => {
 // clientes que nunca llegan a entrar ahí y el presupuesto no puede quedar trabado por eso.
 app.get('/aprobar-presupuesto/:token', async (req, res) => {
   const s = (await pool.query('select * from servicios_tecnicos where presupuesto_token=$1', [req.params.token])).rows[0];
-  if (!s) return res.status(404).send('<h1 style="font-family:sans-serif;text-align:center;margin-top:60px;">Presupuesto no encontrado</h1>');
+  if (!s) return res.status(404).send(paginaPublicaEstado('Presupuesto no encontrado', 'err', 'Presupuesto no encontrado', 'Puede que el enlace sea incorrecto o que el presupuesto ya no exista.'));
   const costos = (await pool.query('select * from costos_servicio_tecnico where servicio_id=$1 order by creado asc', [s.id])).rows;
   const IVA_RATE = 0.22;
   const aplicaIva = s.aplica_iva !== false;
   const subtotales = {};
   for (const c of costos) subtotales[c.moneda] = (subtotales[c.moneda] || 0) + Number(c.cantidad) * Number(c.precio_unitario);
-  const filasCostos = costos.map(c => `<tr><td>${escapeHtmlSrv(c.descripcion)} x${c.cantidad}</td><td style="text-align:right;">${c.moneda} ${Math.round(Number(c.cantidad) * Number(c.precio_unitario))}</td></tr>`).join('');
-  const filasTotales = Object.entries(subtotales).map(([m, subRaw]) => {
+  const fmtN = n => Number(n).toLocaleString('es-UY');
+  const filasCostos = costos.map(c => `<div class="pp-tr"><span>${escapeHtmlSrv(c.descripcion)} ×${c.cantidad}</span><b>${c.moneda} ${fmtN(Math.round(Number(c.cantidad) * Number(c.precio_unitario)))}</b></div>`).join('');
+  const bloquesTotales = Object.entries(subtotales).map(([m, subRaw]) => {
     const sub = Math.round(subRaw);
-    if (!aplicaIva) return `<tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${sub}</td></tr>`;
-    const iva = Math.round(sub * IVA_RATE);
-    return `<tr><td>Subtotal (${m})</td><td style="text-align:right;">${m} ${sub}</td></tr>
-      <tr><td>IVA 22% (${m})</td><td style="text-align:right;">${m} ${iva}</td></tr>
-      <tr style="font-weight:700;"><td>Total (${m})</td><td style="text-align:right;">${m} ${sub + iva}</td></tr>`;
+    const iva = aplicaIva ? Math.round(sub * IVA_RATE) : 0;
+    return `${aplicaIva ? `<div class="pp-tr"><span>Subtotal (${m})</span><b>${m} ${fmtN(sub)}</b></div><div class="pp-tr"><span>IVA 22% (${m})</span><b>${m} ${fmtN(iva)}</b></div>` : ''}
+      <div class="pp-tot"><span>Total a abonar</span><b>${m} ${fmtN(sub + iva)}</b></div>`;
   }).join('');
   if (s.presupuesto_aprobado) {
     const fechaFmt = new Date(s.presupuesto_aprobado_fecha).toLocaleString('es-UY', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Montevideo' });
-    return res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Presupuesto aprobado</title>
-    <style>body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:16px;}
-    .card{background:#fff;border-radius:10px;padding:32px;max-width:460px;box-shadow:0 2px 10px rgba(15,42,77,.1);text-align:center;}
-    h1{font-size:20px;color:#1F8A5F;} p{color:#48607F;line-height:1.5;}</style></head>
-    <body><div class="card"><h1>✅ Este presupuesto ya fue aprobado</h1><p>Quedó registrada tu conformidad el ${fechaFmt}. Ya podemos avanzar con la tarea.</p></div></body></html>`);
+    return res.send(paginaPublicaEstado('Presupuesto aprobado', 'ok', 'Este presupuesto ya fue aprobado', `Quedó registrada tu conformidad el ${escapeHtmlSrv(fechaFmt)}. Ya podemos avanzar con la tarea.`));
   }
-  res.send(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Presupuesto: ${escapeHtmlSrv(s.titulo)}</title>
-  <style>
-    body{font-family:'IBM Plex Sans',sans-serif;background:#F3F7FC;margin:0;padding:20px;}
-    .wrap{max-width:520px;margin:0 auto;}
-    .card{background:#fff;border-radius:10px;padding:28px;box-shadow:0 2px 10px rgba(15,42,77,.08);margin-bottom:16px;}
-    h1{font-size:20px;color:#0F2A4D;margin:0 0 14px;}
-    table{width:100%;border-collapse:collapse;font-size:14px;color:#20262B;}
-    td{padding:6px 0;border-bottom:1px solid #EEF3FA;}
-    .aviso{font-size:12.5px;color:#8299B8;margin-top:4px;}
-    button{background:#1E56C7;color:#fff;border:none;padding:13px 20px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:8px;}
-    button:disabled{opacity:.5;cursor:default;}
-    #msg{margin-top:14px;font-weight:600;text-align:center;}
-    .ok-box{text-align:center;} .ok-box h2{color:#1F8A5F;font-family:'IBM Plex Sans',sans-serif;}
-  </style></head>
-  <body><div class="wrap">
-    <div class="card">
-      <h1>${escapeHtmlSrv(s.titulo)}</h1>
-      <table>${filasCostos}${filasTotales}</table>
-      <div class="aviso">${aplicaIva ? 'Precios sin IVA + 22% de IVA (tasa básica en Uruguay).' : 'Importe total a abonar.'}</div>
-    </div>
-    <div class="card" id="form-card">
-      <p style="margin:0 0 8px;color:#20262B;font-size:14px;">Al confirmar, das tu conformidad con este presupuesto y habilitás a Borcam a avanzar con la tarea.</p>
-      <button type="button" id="btn-aprobar" onclick="aprobar()">Dar conformidad</button>
-      <div id="msg"></div>
-    </div>
-  </div>
-  <script>
-    async function aprobar(){
-      const btn = document.getElementById('btn-aprobar');
-      btn.disabled = true; btn.textContent = 'Enviando…';
-      try {
-        const r = await fetch('/api/presupuesto/aprobar/${s.presupuesto_token}', { method:'POST' });
-        const data = await r.json();
-        if(!r.ok) throw new Error(data.error || 'No se pudo registrar la conformidad.');
-        document.getElementById('form-card').innerHTML = '<div class="ok-box"><h2>✅ ¡Listo!</h2><p>Tu conformidad quedó registrada.</p></div>';
-      } catch(e){
-        document.getElementById('msg').innerHTML = '<span style="color:#C43D3D;">'+e.message+'</span>';
-        btn.disabled = false; btn.textContent = 'Dar conformidad';
+  res.send(paginaPublicaBorcam('Presupuesto: ' + s.titulo, `
+    <div class="pp-card"><div class="pp-k">Presupuesto</div><h1 class="pp-h">${escapeHtmlSrv(s.titulo)}</h1>
+      <div style="margin-top:6px">${filasCostos}${bloquesTotales}</div>
+      <p class="pp-m" style="margin-top:12px;font-size:12.5px">${aplicaIva ? 'Precios sin IVA + 22% de IVA (tasa básica en Uruguay).' : 'Importe total a abonar.'}</p></div>
+    <p class="pp-m" style="padding:0 4px">Al confirmar, das tu conformidad con este presupuesto y habilitás a Borcam a avanzar con la tarea.</p>
+    <div class="pp-msg" id="msg"></div>
+    <script>
+      async function aprobar(){
+        var btn=document.getElementById('btn-aprobar'),msg=document.getElementById('msg');
+        btn.disabled=true;btn.textContent='Enviando…';msg.textContent='';
+        try{
+          var r=await fetch('/api/presupuesto/aprobar/${s.presupuesto_token}',{method:'POST'});
+          var data=await r.json();
+          if(!r.ok)throw new Error(data.error||'No se pudo registrar la conformidad.');
+          ppListo('¡Listo, gracias!','Tu conformidad quedó registrada. Ya podemos avanzar con la tarea.');
+        }catch(e){msg.textContent=e.message;btn.disabled=false;btn.textContent='Dar conformidad';}
       }
-    }
-  </script>
-  </body></html>`);
+    </script>`,
+    `<button type="button" class="pp-btn" id="btn-aprobar" onclick="aprobar()">${PP_ICONOS.ok}Dar conformidad</button>`));
 });
 app.post('/api/presupuesto/aprobar/:token', async (req, res) => {
   const s = (await pool.query('select * from servicios_tecnicos where presupuesto_token=$1', [req.params.token])).rows[0];
@@ -4785,27 +4777,25 @@ app.get('/api/pedidos-insumos/:id/foto', requireStaff, async (req, res) => {
   } catch (e) { bad(res, 'No se pudo cargar la foto.', 500); }
 });
 // Página pública (enlace del correo): decide como el usuario dueño de ese enlace, sin necesidad de loguearse.
-function insumoPaginaPublica(titulo, cuerpo) {
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtmlSrv(titulo)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap" rel="stylesheet">
-<style>body{font-family:'Manrope',Arial,sans-serif;background:#F3F7FC;color:#0F2A4D;margin:0;padding:20px}.c{max-width:520px;margin:30px auto;background:#fff;border:1px solid #DCE7F5;border-radius:14px;padding:22px;box-shadow:0 2px 10px rgba(15,42,77,.08)}h1{font-size:20px;margin:0 0 6px}.r{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #EEF3FB;font-size:14px}.r span{color:#48607F}.r b{text-align:right}.b{display:block;width:100%;border:0;border-radius:10px;padding:13px;font:700 15px Manrope,Arial;cursor:pointer;margin-top:10px}.ok{background:#127A4B;color:#fff}.no{background:#fff;color:#C4281C;border:1px solid #F3C3BD}textarea{width:100%;box-sizing:border-box;border:1px solid #DCE7F5;border-radius:10px;padding:10px;font:500 14px Manrope,Arial;margin-top:10px}.m{font-size:14px;color:#48607F;margin-top:12px}</style></head><body><div class="c">${cuerpo}</div></body></html>`;
+function insumoPaginaPublica(titulo, cuerpo, barra) {
+  return paginaPublicaBorcam(titulo, cuerpo, barra);
 }
 app.get('/insumo/:token', async (req, res) => {
   const a = /^[0-9a-f-]{36}$/i.test(req.params.token) ? (await pool.query('select * from pedido_insumo_avisos where token=$1', [req.params.token])).rows[0] : null;
   const p = a ? await insumoPedido(a.pedido_id) : null;
-  if (!p) return res.status(404).send(insumoPaginaPublica('No encontrado', '<h1>Pedido no encontrado</h1><p class="m">Puede que se haya cancelado.</p>'));
+  if (!p) return res.status(404).send(paginaPublicaEstado('No encontrado', 'err', 'Pedido no encontrado', 'Puede que se haya cancelado.'));
   const e = escapeHtmlSrv;
-  const filas = `<div class="r"><span>Insumo</span><b>${e(p.insumo)}</b></div><div class="r"><span>Cantidad</span><b>${Number(p.cantidad)}</b></div><div class="r"><span>Cliente</span><b>${e(p.cliente_nombre || '—')}</b></div><div class="r"><span>Servicio</span><b>${e(p.servicio_titulo || '—')}</b></div>${p.motivo ? `<div class="r"><span>Motivo</span><b>${e(p.motivo)}</b></div>` : ''}`;
-  const cab = `<h1>Pedido de insumo</h1><div class="m" style="margin:0 0 10px">Pidió ${e(p.pedido_por_nombre || '')}${p.urgencia === 'bloquea' ? ' · <b style="color:#C4281C">Bloquea el trabajo</b>' : ''}</div>`;
+  const filas = `<div class="pp-tr"><span>Cantidad</span><b>${Number(p.cantidad)}</b></div><div class="pp-tr"><span>Cliente</span><b>${e(p.cliente_nombre || '—')}</b></div><div class="pp-tr"><span>Servicio</span><b>${e(p.servicio_titulo || '—')}</b></div>${p.motivo ? `<div class="pp-tr"><span>Motivo</span><b>${e(p.motivo)}</b></div>` : ''}`;
+  const cab = `<div class="pp-k">Pedido de insumo</div><h1 class="pp-h">${e(p.insumo)} × ${Number(p.cantidad)}</h1><p class="pp-m" style="margin-bottom:8px">Pidió ${e(p.pedido_por_nombre || '')}${p.urgencia === 'bloquea' ? ' · <b style="color:#C0392B">Bloquea el trabajo</b>' : ''}</p>`;
   if (p.estado !== 'pendiente') {
     const txt = p.estado === 'rechazado' ? 'rechazado' : 'aprobado';
-    return res.send(insumoPaginaPublica('Pedido de insumo', `${cab}${filas}<p class="m"><b>Ya fue ${txt}</b> por ${e(p.decidido_por_nombre || 'otra persona')}.${p.estado === 'aprobado' ? ' Los datos de compra se cargan desde la ticketera.' : ''}</p>`));
+    return res.send(paginaPublicaBorcam('Pedido de insumo', `<div class="pp-card">${cab}${filas}</div><div class="pp-card" style="text-align:center"><b>Ya fue ${txt}</b> por ${e(p.decidido_por_nombre || 'otra persona')}.${p.estado === 'aprobado' ? '<p class="pp-m" style="margin-top:6px">Los datos de compra se cargan desde la ticketera.</p>' : ''}</div>`));
   }
-  res.send(insumoPaginaPublica('Pedido de insumo', `${cab}${filas}
-<button class="b ok" onclick="dec('aprobar')">✔ Aprobar</button>
-<textarea id="mot" rows="2" placeholder="Si rechazás, escribí un motivo corto (opcional)"></textarea>
-<button class="b no" onclick="dec('rechazar')">✖ Rechazar</button><div class="m" id="msg"></div>
-<script>async function dec(a){const m=document.getElementById('msg');m.textContent='Enviando…';try{const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accion:a,motivo:document.getElementById('mot').value})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Error');location.reload()}catch(e){m.textContent=e.message}}</script>`));
+  res.send(paginaPublicaBorcam('Pedido de insumo', `<div class="pp-card">${cab}${filas}</div>
+    <div class="pp-card"><div class="pp-k">Si lo rechazás</div><textarea id="mot" rows="2" class="pp-ta" style="margin-top:8px" placeholder="Escribí un motivo corto (opcional)"></textarea></div>
+    <div class="pp-msg" id="msg"></div>
+    <script>async function dec(a){var m=document.getElementById('msg');m.style.color='#5B6B85';m.textContent='Enviando…';document.querySelectorAll('.pp-btn').forEach(function(b){b.disabled=true});try{var r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accion:a,motivo:document.getElementById('mot').value})});var d=await r.json();if(!r.ok)throw new Error(d.error||'Error');location.reload()}catch(err){m.style.color='#C0392B';m.textContent=err.message;document.querySelectorAll('.pp-btn').forEach(function(b){b.disabled=false})}}</script>`,
+    `<button type="button" class="pp-btn ok" onclick="dec('aprobar')">${PP_ICONOS.ok}Aprobar</button><button type="button" class="pp-btn ghost" onclick="dec('rechazar')">Rechazar</button>`));
 });
 app.post('/insumo/:token', async (req, res) => {
   const a = /^[0-9a-f-]{36}$/i.test(req.params.token) ? (await pool.query('select * from pedido_insumo_avisos where token=$1', [req.params.token])).rows[0] : null;
