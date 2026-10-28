@@ -5595,7 +5595,7 @@ function renderTicket(id) {
   const uid_ = currentUser().id;
   const u = currentUser();
   return `${ticketStyleTag()}
-    <button class="back-link" onclick="volverDesdeTicket()">&larr; ${state.ticketVolverA === 'reservas' ? 'Volver a Reservas' : 'Volver a la bandeja general'}</button>
+    <button class="back-link tk-back" onclick="volverDesdeTicket()">&larr; ${state.ticketVolverA === 'reservas' ? 'Volver a Reservas' : 'Volver a la bandeja general'}</button>
     <div class="ticket-head tk-head">
       ${t.necesitaAtencion ? `<div class="tk-alert">${iconoLucide('bell-ring')}Respondió el cliente<span>Requiere tu respuesta</span></div>` : ''}
       <div class="tk-top">
