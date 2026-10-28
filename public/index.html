@@ -324,6 +324,12 @@
   .tkst-btns .btn{width:100% !important;min-height:44px;justify-content:center;border-radius:12px !important;}
   .tkst-btns .tag{align-self:flex-start;}
 }
+/* Barra inferior (celular) */
+@media(max-width:880px){
+  .bottomnav .nav-btn::before{display:none !important;}
+  .bottomnav .nav-btn{min-width:0;padding:7px 2px !important;}
+  .bottomnav .nav-btn > span:last-child{white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:min(10.5px,2.5vw);}
+}
 /* Reporte mensual */
   .rp-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 16px;} .rp-ttl{font-size:20px;font-weight:800;letter-spacing:-.01em;} .rp-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;} .rp-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
   .rp-mes{display:inline-flex;align-items:center;background:var(--card);border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;} .rp-mes button{background:none;border:0;padding:9px 12px;color:var(--gray);cursor:pointer;display:inline-flex;} .rp-mes button:hover{background:var(--paper);color:var(--brand);} .rp-mes .lu{width:16px;height:16px;}
