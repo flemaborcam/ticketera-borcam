@@ -4295,7 +4295,23 @@ const INSUMOS_CSS = `<style>
 .ins-tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}.ins-tabs b{background:var(--stamp-red);color:#fff;border-radius:10px;font-size:11px;padding:1px 6px;margin-left:5px}
 .ins-badge{background:var(--stamp-red);color:#fff;border-radius:10px;font-size:10.5px;font-weight:800;padding:1px 6px;margin-left:6px;line-height:1.4}
 .ins-in{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line-strong);border-radius:8px;background:var(--card);color:var(--ink)}.ins-in:focus{outline:2px solid var(--brand-tint);border-color:var(--brand)}
-@media(max-width:900px){.ins-two{grid-template-columns:1fr}.ins-tr{grid-template-columns:minmax(0,1fr) 108px}.ins-tr>:nth-child(3),.ins-tr>:nth-child(5),.ins-tr>:nth-child(2){display:none}}
+@media(min-width:881px){.ins-handle,.ins-dim{display:none}}
+@media(max-width:900px){.ins-two{grid-template-columns:1fr}
+.ins-list{background:none !important;border:0 !important;box-shadow:none !important;overflow:visible !important}
+.ins-tr.h{display:none}
+.ins-tr,.ins-tr.sel{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 8px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.ins-tr:last-child{border-bottom:1px solid var(--line)}
+.ins-tr>:nth-child(1){grid-area:1/1}.ins-tr>:nth-child(4){grid-area:1/2}.ins-tr>:nth-child(2){grid-area:2/1/3/3;display:block}.ins-tr>:nth-child(3){display:none}.ins-tr>:nth-child(5){grid-area:3/1/4/3;display:block;text-align:left !important}
+.ins-tr .t{font-size:15px}.ins-chip{padding:6px 11px;font-size:12.5px}
+.ins-tabs{flex-wrap:nowrap;overflow-x:auto;margin:4px -16px 14px;padding:0 16px 2px;scrollbar-width:none}.ins-tabs::-webkit-scrollbar{display:none}
+.ins-tabs button{flex:none;white-space:nowrap;padding:10px 15px;font-size:13.5px}.ins-tabs b{font-size:12px;padding:2px 7px}
+.ins-dim{display:none}
+.ins-det{display:none}
+.ins-det.open{display:block;position:fixed;left:0;right:0;bottom:0;z-index:300;max-height:88vh;overflow-y:auto;background:var(--card);border-radius:22px 22px 0 0;padding:8px 4px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -10px 30px rgba(0,0,0,.25);animation:sheetUp .22s ease}
+.ins-det.open .card{border:0 !important;box-shadow:none !important;background:none !important}
+.ins-det.open .ins-handle{display:block;width:44px;height:5px;border-radius:99px;background:var(--line-strong);margin:4px auto 4px;position:relative}.ins-det.open .ins-handle:before{content:"";position:absolute;left:-30px;right:-30px;top:-14px;bottom:-14px}
+.ins-det.open .btn{min-height:46px}
+.ins-dim.open{display:block;position:fixed;inset:0;z-index:299;background:rgba(10,20,40,.45)}}
 </style>`;
 function insumoMontoTxt(moneda, n) { return (moneda === 'USD' ? 'U$S ' : '$ ') + Number(n).toLocaleString('es-UY', { maximumFractionDigits: 2 }); }
 function insumoHace(iso) {
@@ -4396,8 +4412,9 @@ async function insumoCancelar(id) {
 }
 /* --- Pantalla "Pedidos de insumos" (administración y técnicos) --- */
 const INSUMO_TABS = [['pendiente', 'Pendientes'], ['aprobado', 'Aprobados (para comprar)'], ['listo_retirar', 'Listos para retirar'], ['retirado', 'Retirados'], ['rechazado', 'Rechazados']];
-function insumoTab(t) { state.insumoTab = t; state.insumoSelId = null; state.insumoRechazando = null; render(); }
-function insumoSel(id) { state.insumoSelId = id; state.insumoRechazando = null; render(); }
+function insumoCerrarSheet() { state.insumoSheet = false; state.insumoRechazando = null; render(); }
+function insumoTab(t) { state.insumoTab = t; state.insumoSheet = false; state.insumoSelId = null; state.insumoRechazando = null; render(); }
+function insumoSel(id) { state.insumoSheet = true; state.insumoSelId = id; state.insumoRechazando = null; render(); }
 function insumoCompraDe(p) {
   if (!state.insumoCompra || state.insumoCompra.id !== p.id) {
     state.insumoCompra = { id: p.id, lugar: p.compra_lugar || '', direccion: p.compra_direccion || '', costo: p.compra_costo != null ? String(Number(p.compra_costo)) : '', moneda: p.compra_moneda || 'UYU', pagado: !!p.compra_pagado };
@@ -4418,7 +4435,9 @@ async function insumoResolver(id, accion) {
   if (accion === 'rechazar' && state.insumoRechazando !== id) { state.insumoRechazando = id; state.insumoMotivoRech = ''; render(); return; }
   try {
     await api('POST', `/api/pedidos-insumos/${id}/decidir`, { accion, motivo: accion === 'rechazar' ? state.insumoMotivoRech : '' });
-    state.insumoRechazando = null; await cargarInsumos();
+    state.insumoRechazando = null;
+    if (window.innerWidth <= 880) { if (accion === 'aprobar') { state.insumoTab = 'aprobado'; state.insumoSelId = id; state.insumoSheet = true; } else state.insumoSheet = false; }
+    await cargarInsumos();
     showToast(accion === 'aprobar' ? 'Aprobado. Cargá ahora los datos de compra.' : 'Rechazado. Se avisó al técnico.');
   } catch (e) { showToast(e.message); await cargarInsumos(); }
 }
@@ -4437,7 +4456,7 @@ function renderInsumosModulo() {
     : `<div class="empty-state" style="padding:30px;">No hay pedidos en esta pestaña.</div>`;
   return `${INSUMOS_CSS}<div class="page-head"><div><h1>Pedidos de insumos</h1><div class="sub">Lo que piden los técnicos y qué falta comprar o retirar</div></div></div>
     <div class="ins-tabs">${tabs}</div>
-    <div class="ins-two"><div class="card" style="padding:0;overflow:hidden;">${tabla}</div>${sel ? renderInsumoDetalle(sel) : ''}</div>`;
+    <div class="ins-two"><div class="card ins-list" style="padding:0;overflow:hidden;">${tabla}</div>${sel ? `<div class="ins-dim ${state.insumoSheet ? 'open' : ''}" onclick="insumoCerrarSheet()"></div><div class="ins-det ${state.insumoSheet ? 'open' : ''}"><div class="ins-handle" onclick="insumoCerrarSheet()"></div>${renderInsumoDetalle(sel)}</div>` : ''}</div>`;
 }
 function renderInsumoDetalle(p) {
   const puede = !!state.insumosPuedeAprobar;
