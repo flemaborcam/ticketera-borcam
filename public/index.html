@@ -279,6 +279,13 @@
     .tk-panel{display:none;margin-top:8px;} .tk-panel.tk-abierto{display:grid;} .tk-fields{grid-template-columns:1fr;}
     .tk-panel .field select,.tk-panel input:not([list]){min-height:48px;}
   }
+  /* Celular: pestañas como tira deslizable (la activa se centra sola) */
+  @media (max-width:880px){
+    .content .reply-tabs,.content .cl-seg:has(> :nth-child(4)){position:relative;display:flex;flex-wrap:nowrap !important;gap:6px !important;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin:6px -16px 12px !important;padding:4px 18px !important;background:none !important;border:0 !important;border-radius:0 !important;box-shadow:none;width:auto !important;max-width:none !important;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 16px,#000 calc(100% - 16px),transparent 100%);}
+    .content .reply-tabs::-webkit-scrollbar,.content .cl-seg:has(> :nth-child(4))::-webkit-scrollbar{display:none;}
+    .content .reply-tabs .reply-tab,.content .cl-seg:has(> :nth-child(4)) .cl-seg-b{flex:none;display:inline-flex;align-items:center;gap:7px;height:42px;min-height:42px;padding:0 15px !important;border:1px solid var(--line-strong) !important;border-radius:99px !important;background:var(--card) !important;color:var(--ink-soft);font:700 13.5px var(--font-body,inherit);white-space:nowrap;box-shadow:none !important;margin:0;top:0 !important;}
+    .content .reply-tabs .reply-tab.active,.content .cl-seg:has(> :nth-child(4)) .cl-seg-b.on{background:var(--brand-tint) !important;border-color:var(--brand) !important;color:var(--brand) !important;}
+  }
   /* Reporte mensual */
   .rp-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 16px;} .rp-ttl{font-size:20px;font-weight:800;letter-spacing:-.01em;} .rp-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;} .rp-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
   .rp-mes{display:inline-flex;align-items:center;background:var(--card);border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;} .rp-mes button{background:none;border:0;padding:9px 12px;color:var(--gray);cursor:pointer;display:inline-flex;} .rp-mes button:hover{background:var(--paper);color:var(--brand);} .rp-mes .lu{width:16px;height:16px;}

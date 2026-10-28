@@ -8267,3 +8267,20 @@ boot();
     ultimo = y;
   }, { passive: true });
 })();
+
+
+// Celular: en las tiras de pestañas deslizables, deja centrada la pestaña activa después de cada cambio de pantalla.
+(function () {
+  if (window.__tabsCentrarInit) return; window.__tabsCentrarInit = true;
+  let pendiente = false;
+  const centrar = () => {
+    pendiente = false;
+    if (window.innerWidth > 880) return;
+    document.querySelectorAll('.content .reply-tabs, .content .cl-seg').forEach(c => {
+      if (c.scrollWidth <= c.clientWidth + 2) return;
+      const a = c.querySelector('.active, .on');
+      if (a) c.scrollLeft = a.offsetLeft - (c.clientWidth - a.offsetWidth) / 2;
+    });
+  };
+  new MutationObserver(() => { if (!pendiente) { pendiente = true; requestAnimationFrame(centrar); } }).observe(document.body, { childList: true, subtree: true });
+})();
