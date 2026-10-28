@@ -4447,9 +4447,16 @@ function renderInsumosModulo() {
   const lista = (state.insumos || []);
   const tab = state.insumoTab || 'pendiente';
   const cuenta = e => lista.filter(p => p.estado === e).length;
+  // Número rojo en la pestaña que le toca a cada uno: quien aprueba ve "Pendientes" (por aprobar) y
+  // "Aprobados" (falta cargar la compra); el técnico ve "Listos para retirar" de sus propios pedidos.
+  const cuentaAviso = k => {
+    if (k === 'pendiente' || (k === 'aprobado' && state.insumosPuedeAprobar)) return cuenta(k);
+    if (k === 'listo_retirar' && !state.insumosPuedeAprobar) return lista.filter(p => p.estado === k && p.pedido_por === state.insumosUsuarioId).length;
+    return 0;
+  };
   const filas = lista.filter(p => p.estado === tab);
   const sel = filas.find(p => p.id === state.insumoSelId) || filas[0] || null;
-  const tabs = INSUMO_TABS.map(([k, n]) => `<button type="button" class="${tab === k ? 'on' : ''}" onclick="insumoTab('${k}')">${n}${(k === 'pendiente' && cuenta(k)) ? `<b>${cuenta(k)}</b>` : ''}</button>`).join('');
+  const tabs = INSUMO_TABS.map(([k, n]) => `<button type="button" class="${tab === k ? 'on' : ''}" onclick="insumoTab('${k}')">${n}${cuentaAviso(k) ? `<b>${cuentaAviso(k)}</b>` : ''}</button>`).join('');
   const tabla = filas.length ? `<div class="ins-tr h"><div>Insumo</div><div>Cliente / servicio</div><div>Pidió</div><div>Estado</div><div style="text-align:right">Hace</div></div>
     ${filas.map(p => `<div class="ins-tr ${sel && sel.id === p.id ? 'sel' : ''}" onclick="insumoSel(${p.id})"><div><div class="t">${escapeHtml(p.insumo)} × ${Number(p.cantidad)}</div>${p.urgencia === 'bloquea' ? `<div class="ins-urg">${iconoLucide('triangle-alert')}Bloquea el trabajo</div>` : ''}</div>
       <div><div class="t" style="font-size:13px;">${escapeHtml(p.cliente_nombre || '—')}</div><div class="s">${escapeHtml(p.servicio_titulo || '')}</div></div>
