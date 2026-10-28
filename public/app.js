@@ -4585,6 +4585,15 @@ function renderMenuDepTecnicoModal() {
     </div>
   </div></div>`;
 }
+function openMenuCliente(id) { state.modal = 'menu-cliente'; state.menuClienteId = id; render(); }
+function renderMenuClienteModal() {
+  const id = state.menuClienteId;
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+      <button class="btn btn-ghost" style="min-height:50px;font-size:15px;" onclick="closeModal();openEditarGrupoModal('${id}')">${iconoLucide('pencil')} Editar cliente</button>
+      <button class="btn btn-danger" style="min-height:50px;font-size:15px;" onclick="closeModal();deleteGrupo('${id}')">${iconoLucide('trash-2')} Eliminar cliente</button>
+    </div></div></div>`;
+}
 function openMenuMovil() { state.modal = 'menu-movil'; render(); }
 function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
@@ -5798,26 +5807,27 @@ async function renderGrupoDetailAsync(id) {
   if (g.rolCliente === 'Administración') { cache.proveedores = await api('GET', '/api/proveedores'); }
   const serviciosTecnicosCliente = await api('GET', `/api/clientes/${id}/servicios-tecnicos`).catch(() => []);
   const contratoMantenimiento = g.esMantenimiento ? await api('GET', `/api/clientes/${id}/contrato-mantenimiento`).catch(() => null) : null;
-  return `${ticketStyleTag()}${clientesRowStyleTag()}
+  return `${ticketStyleTag()}${clientesRowStyleTag()}<div class="cd-detalle">
     <button class="back-link" onclick="go('grupos')">&larr; Volver a clientes</button>
     <div class="ticket-head">
-      <div class="ticket-head-top"><div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
+      <div class="ticket-head-top"><div><div class="cd-tag">${escapeHtml(String(g.rolCliente || 'Cliente').toUpperCase())}</div><div class="ticket-num-big">CLIENTE</div><h1>${escapeHtml(g.nombre)}</h1>
         <div class="ticket-from">${[g.direccion, g.telefono, g.correo].filter(Boolean).map(escapeHtml).join(' · ')}</div>
         ${g.correoInformes ? `<div class="ticket-from">📧 Informes a: <strong>${escapeHtml(g.correoInformes)}</strong></div>` : ''}
         <div class="ticket-from">Portal de cliente: ${g.tienePortal ? `<strong style="color:var(--stamp-green);">habilitado</strong>` : '<strong style="color:var(--gray);">sin configurar</strong>'}</div>
         ${g.administradoPorNombre ? `<div class="ticket-from">Administrado por: <strong>${escapeHtml(g.administradoPorNombre)}</strong></div>` : ''}
       </div>
         ${g.rolCliente ? `<div class="stamp stamp-abierto">${escapeHtml(g.rolCliente)}</div>` : ''}</div>
-      <div style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line-strong);">
+      <div class="cd-desk" style="display:flex;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed var(--line-strong);">
         <button class="btn btn-ghost" onclick="openEditarGrupoModal('${g.id}')">Editar cliente</button>
         <button class="btn btn-danger" onclick="deleteGrupo('${g.id}')">Eliminar</button></div>
+      <div class="cd-mob"><button class="btn btn-primary cd-edit" onclick="openEditarGrupoModal('${g.id}')">${iconoLucide('pencil')} Editar cliente</button><button class="cd-more" aria-label="Más opciones" onclick="openMenuCliente('${g.id}')">${iconoLucide('ellipsis')}</button></div>
     </div>
     ${renderDependientesGrupo(g)}
     ${g.rolCliente === 'Administración' ? renderProveedoresGrupo(g) : ''}
     ${g.esMantenimiento ? renderContratoMantenimientoGrupo(g, contratoMantenimiento) : ''}
     ${renderHistorialServiciosTecnicosCliente(serviciosTecnicosCliente)}
     <div class="page-head"><div><h1 style="font-size:18px;">Tickets de este cliente</h1><div class="sub">${tickets.length} en total</div></div></div>
-    ${list}`;
+    ${list}</div>`;
 }
 // Historial de servicios técnicos hechos a este cliente/edificio a lo largo del tiempo, con su
 // comprobante si ya se generó uno — para responder rápido "¿cuántas veces vinieron?".
@@ -7609,6 +7619,7 @@ function renderActiveModal() {
   if (state.modal === 'importar-clientes') return renderImportarClientesModal();
   if (state.modal === 'menu-movil') return renderMenuMovilModal();
   if (state.modal === 'menu-dep-tecnico') return renderMenuDepTecnicoModal();
+  if (state.modal === 'menu-cliente') return renderMenuClienteModal();
   if (state.modal === 'filtros-movil') return renderFiltrosMovilModal();
   if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
   if (state.modal === 'plantilla-mantenimiento') return renderPlantillaMantenimientoModal();

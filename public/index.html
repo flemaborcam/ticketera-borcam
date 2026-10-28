@@ -295,7 +295,22 @@
     .modal.sheet > h2{margin:0 0 6px;font-size:18px;}
     .modal.sheet .nav-btn{min-height:52px;border-radius:12px;font-size:15px;} .modal.sheet .nav-btn .ico{width:34px;height:34px;border-radius:10px;}
   }
-  /* Reporte mensual */
+  /* Detalle de cliente (celular) */
+.cd-tag,.cd-mob{display:none;}
+@media(max-width:880px){
+  .cd-detalle .back-link{min-height:44px;font-size:14.5px !important;font-weight:700 !important;color:var(--brand) !important;margin-bottom:2px !important;}
+  .cd-detalle .ticket-head .stamp,.cd-detalle .ticket-head .ticket-num-big{display:none !important;}
+  .cd-detalle .cd-tag{display:inline-block;background:var(--ink);color:#fff;font-size:11px;font-weight:800;letter-spacing:.06em;padding:4px 10px;border-radius:7px;margin-bottom:6px;}
+  .cd-detalle .ticket-head h1{font-size:22px !important;margin:2px 0 4px !important;}
+  .cd-detalle .cd-desk{display:none !important;}
+  .cd-detalle .cd-mob{display:flex;gap:8px;margin-top:14px;}
+  .cd-detalle .cd-edit{flex:1;min-height:44px;font-size:14.5px;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+  .cd-detalle .cd-more{width:44px;min-height:44px;border-radius:12px;border:1.5px solid var(--line-strong);background:var(--card);color:var(--ink);display:flex;align-items:center;justify-content:center;padding:0;}
+  .cd-detalle .page-head{margin-top:26px !important;}
+  .cd-detalle .page-head h1{font-size:12px !important;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft) !important;font-weight:800 !important;}
+  .cd-detalle .page-head .btn{min-height:40px;}
+}
+/* Reporte mensual */
   .rp-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 16px;} .rp-ttl{font-size:20px;font-weight:800;letter-spacing:-.01em;} .rp-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;} .rp-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
   .rp-mes{display:inline-flex;align-items:center;background:var(--card);border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;} .rp-mes button{background:none;border:0;padding:9px 12px;color:var(--gray);cursor:pointer;display:inline-flex;} .rp-mes button:hover{background:var(--paper);color:var(--brand);} .rp-mes .lu{width:16px;height:16px;}
   .rp-mes label{position:relative;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;font-weight:800;font-size:14px;border-left:1px solid var(--line);border-right:1px solid var(--line);cursor:pointer;} .rp-mes label input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;}
