@@ -320,7 +320,7 @@ async function logout() {
   session = null; state.view = 'login'; state.authView = 'login'; state.clienteDocumentosCargados = false;
   cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [] };
   notifTicketsConocidos = null; // para que el próximo login arranque con una foto nueva, no la de otra sesión
-  ultimoHistorialView = null; // el próximo render arranca el historial de nuevo, sin arrastrar la sesión anterior
+  sheetDepth = 0; despuesDePop = null; ultimoHistorialView = null; // el próximo render arranca el historial de nuevo, sin arrastrar la sesión anterior
   render();
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
@@ -622,7 +622,7 @@ async function submitFusionarTicket(ev) {
 }
 
 function openNuevoCorreoModal() { state.modal = 'nuevo-correo'; render(); }
-function closeModal() { state.modal = null; state.subcatError = ''; state.insumoForm = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
+function closeModal() { if (sheetDepth > 0 && SHEETS_MOVIL.includes(state.modal)) { salirDeSheets(); return; } state.modal = null; state.subcatError = ''; state.insumoForm = null; state.editandoPasos = []; state.editandoServicioTecnicoId = null; state.pendingAttachments = []; state.pendingPresupuestos = []; state.pendingCostosServicio = []; state.documentoEdificioArchivo = null; state.fusionarTicketId = null; state.fusionarBusqueda = ''; state.catalogoCostoEditId = null; state.duplicarNombreBase = null; state.historialAutomatizacionId = null; state.historialAutomatizacionDatos = null; state.nuevoServicioFechaPrefijada = null; render(); }
 
 async function submitNuevoCorreo(ev) {
   ev.preventDefault();
@@ -4578,7 +4578,7 @@ function navItemsBottom(activeView) {
   const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && (activeView === 'calendario' || activeView === 'pedidos-insumos'))) ? 'active' : ''}" onclick="${it.v === 'servicio-tecnico' ? 'openMenuDepTecnico()' : `go('${it.v}')`}"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
   return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
 }
-function openMenuDocumentos() { state.modal = 'menu-documentos'; render(); }
+function openMenuDocumentos() { abrirSheet('menu-documentos'); }
 function renderMenuDocumentosModal() {
   const view = state.view;
   const items = [
@@ -4586,13 +4586,14 @@ function renderMenuDocumentosModal() {
     { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') }
   ];
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
+    <button type="button" class="sheet-back" onclick="sheetVolver()">${iconoLucide('chevron-left')} Volver</button>
     <h2>Documentos</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
       ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
     </div>
   </div></div>`;
 }
-function openMenuConfig() { state.modal = 'menu-config'; render(); }
+function openMenuConfig() { abrirSheet('menu-config'); }
 function renderMenuConfigModal() {
   const view = state.view;
   const items = [
@@ -4603,13 +4604,14 @@ function renderMenuConfigModal() {
     { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') }
   ];
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
+    <button type="button" class="sheet-back" onclick="sheetVolver()">${iconoLucide('chevron-left')} Volver</button>
     <h2>Configuración</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
       ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
     </div>
   </div></div>`;
 }
-function openMenuDepTecnico() { state.modal = 'menu-dep-tecnico'; render(); }
+function openMenuDepTecnico() { abrirSheet('menu-dep-tecnico'); }
 function renderMenuDepTecnicoModal() {
   const view = state.view;
   const items = [
@@ -4624,17 +4626,17 @@ function renderMenuDepTecnicoModal() {
     </div>
   </div></div>`;
 }
-function openMenuCliente(id) { state.modal = 'menu-cliente'; state.menuClienteId = id; render(); }
+function openMenuCliente(id) { state.menuClienteId = id; abrirSheet('menu-cliente'); }
 function renderMenuClienteModal() {
   const id = state.menuClienteId;
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
-      <button class="btn btn-ghost" style="min-height:50px;font-size:15px;" onclick="closeModal();openEditarGrupoModal('${id}')">${iconoLucide('pencil')} Editar cliente</button>
-      <button class="btn btn-danger" style="min-height:50px;font-size:15px;" onclick="closeModal();deleteGrupo('${id}')">${iconoLucide('trash-2')} Eliminar cliente</button>
+      <button class="btn btn-ghost" style="min-height:50px;font-size:15px;" onclick="salirDeSheets(() => openEditarGrupoModal('${id}'))">${iconoLucide('pencil')} Editar cliente</button>
+      <button class="btn btn-danger" style="min-height:50px;font-size:15px;" onclick="salirDeSheets(() => deleteGrupo('${id}'))">${iconoLucide('trash-2')} Eliminar cliente</button>
     </div></div></div>`;
 }
-function openMenuMovil() { state.modal = 'menu-movil'; render(); }
-function irDesdeMenuMovil(view) { state.modal = null; go(view); }
+function openMenuMovil() { abrirSheet('menu-movil'); }
+function irDesdeMenuMovil(view) { salirDeSheets(() => go(view)); }
 function renderMenuMovilModal() {
   const items = [
     { sub: 'documentos', label: 'Documentos', ico: iconoLucide('folder-open') },
@@ -5288,7 +5290,7 @@ function renderFiltrosMovilBloque() {
     <div class="fl-chips">${chips}</div>
   </div>`;
 }
-function openFiltrosMovil() { state.modal = 'filtros-movil'; render(); }
+function openFiltrosMovil() { abrirSheet('filtros-movil'); }
 function setFilterMovil(k, v) { state.filters[k] = v; state.paginaTickets = 1; render(); }
 function limpiarFiltrosMovil() { Object.assign(state.filters, { fecha: '', categoria: 'todas', prioridad: 'todas', grupo: 'todos', agente: 'todos' }); state.paginaTickets = 1; render(); }
 function renderFiltrosMovilModal() {
@@ -8329,12 +8331,39 @@ function actualizarHistorial() {
   } catch (e) { /* algunos navegadores en modo privado bloquean history.* */ }
   ultimoHistorialView = state.view;
 }
+/* Hojas inferiores del celular (menú Más, Dep. Técnico, Documentos, Configuración, filtros...): cada una
+   suma una entrada al historial del navegador, así el botón "atrás" del teléfono las cierra (o vuelve
+   a la hoja anterior) en vez de sacar al usuario de la app. */
+const SHEETS_MOVIL = ['menu-movil', 'menu-dep-tecnico', 'menu-documentos', 'menu-config', 'filtros-movil', 'menu-cliente'];
+let sheetDepth = 0;
+let despuesDePop = null;
+function abrirSheet(nombre) {
+  state.modal = nombre;
+  try {
+    history.pushState({ view: state.view, ticketId: state.ticketId || null, sheet: nombre, depth: sheetDepth + 1 }, '');
+    sheetDepth++;
+  } catch (e) { /* sin historial: la hoja igual funciona, solo no responde al botón atrás */ }
+  render();
+}
+// Cierra todas las hojas abiertas (volviendo en el historial) y, cuando termina, ejecuta cb.
+function salirDeSheets(cb) {
+  const n = sheetDepth;
+  const fin = () => { state.modal = null; sheetDepth = 0; if (cb) cb(); else render(); };
+  if (n <= 0) { fin(); return; }
+  despuesDePop = fin;
+  try { history.go(-n); } catch (e) { despuesDePop = null; fin(); return; }
+  setTimeout(() => { if (despuesDePop === fin) { despuesDePop = null; fin(); } }, 600);
+}
+// "Volver" dentro de una hoja: si hay una hoja anterior (ej. Más), vuelve a ella; si no, la cierra.
+function sheetVolver() { if (sheetDepth > 1) history.back(); else closeModal(); }
 window.addEventListener('popstate', (e) => {
   if (!session) return;
+  if (despuesDePop) { const f = despuesDePop; despuesDePop = null; f(); return; }
   suprimirPushHistorial = true;
   if (e.state && e.state.view) { state.view = e.state.view; state.ticketId = e.state.ticketId || null; }
   else { state.view = 'dashboard'; state.ticketId = null; }
-  state.modal = null;
+  state.modal = (e.state && e.state.sheet) || null;
+  sheetDepth = (e.state && e.state.depth) || 0;
   ultimoHistorialView = state.view;
   render();
   suprimirPushHistorial = false;
