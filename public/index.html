@@ -339,7 +339,9 @@
 /* Botón Volver dentro de las hojas del celular */
 .sheet-back{display:inline-flex;align-items:center;gap:4px;height:40px;padding:0 12px 0 6px;margin:2px 0 0 -6px;border:0;background:transparent;color:var(--blue,#1E56C7);font:700 14.5px var(--font-body,inherit);cursor:pointer;border-radius:10px;}
 .sheet-back .lu{width:20px;height:20px;}
-/* Reporte mensual */
+/* Número de ticket: una sola línea, sin cortarse */
+  @media (min-width:521px){ .stub-num{width:118px !important;padding:10px 8px !important;} .stub-num .n{white-space:nowrap !important;font-size:15px !important;letter-spacing:.2px;} .stub-num .y{margin-top:3px !important;} }
+  /* Reporte mensual */
   .rp-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 16px;} .rp-ttl{font-size:20px;font-weight:800;letter-spacing:-.01em;} .rp-sub{font-size:13px;color:var(--ink-soft);margin-top:2px;} .rp-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
   .rp-mes{display:inline-flex;align-items:center;background:var(--card);border:1.5px solid var(--line-strong);border-radius:12px;overflow:hidden;} .rp-mes button{background:none;border:0;padding:9px 12px;color:var(--gray);cursor:pointer;display:inline-flex;} .rp-mes button:hover{background:var(--paper);color:var(--brand);} .rp-mes .lu{width:16px;height:16px;}
   .rp-mes label{position:relative;display:inline-flex;align-items:center;gap:8px;padding:9px 14px;font-weight:800;font-size:14px;border-left:1px solid var(--line);border-right:1px solid var(--line);cursor:pointer;} .rp-mes label input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;}
