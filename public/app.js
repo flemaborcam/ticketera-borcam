@@ -4578,6 +4578,37 @@ function navItemsBottom(activeView) {
   const botonesPrincipales = todos.map(it => `<button class="nav-btn ${(activeView === it.v || (it.v === 'servicio-tecnico' && (activeView === 'calendario' || activeView === 'pedidos-insumos'))) ? 'active' : ''}" onclick="${it.v === 'servicio-tecnico' ? 'openMenuDepTecnico()' : `go('${it.v}')`}"><span class="ico">${it.ico}</span><span>${it.label}</span></button>`).join('');
   return `${botonesPrincipales}<button class="nav-btn ${enMenuMovil ? 'active' : ''}" onclick="openMenuMovil()"><span class="ico">&#8942;</span><span>Más</span></button>`;
 }
+function openMenuDocumentos() { state.modal = 'menu-documentos'; render(); }
+function renderMenuDocumentosModal() {
+  const view = state.view;
+  const items = [
+    { v: 'documentos', label: 'Documentos Tipo', ico: iconoLucide('file-text') },
+    { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') }
+  ];
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
+    <h2>Documentos</h2>
+    <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+      ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
+    </div>
+  </div></div>`;
+}
+function openMenuConfig() { state.modal = 'menu-config'; render(); }
+function renderMenuConfigModal() {
+  const view = state.view;
+  const items = [
+    { v: 'configuracion', label: 'General', ico: iconoLucide('settings') },
+    { v: 'usuarios', label: 'Usuarios', ico: iconoLucide('users') },
+    { v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') },
+    { v: 'automatizaciones', label: 'Automatizaciones', ico: iconoLucide('zap') },
+    { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') }
+  ];
+  return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
+    <h2>Configuración</h2>
+    <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
+      ${items.map(it => `<button class="nav-btn ${view === it.v ? 'active' : ''}" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
+    </div>
+  </div></div>`;
+}
 function openMenuDepTecnico() { state.modal = 'menu-dep-tecnico'; render(); }
 function renderMenuDepTecnicoModal() {
   const view = state.view;
@@ -4606,23 +4637,19 @@ function openMenuMovil() { state.modal = 'menu-movil'; render(); }
 function irDesdeMenuMovil(view) { state.modal = null; go(view); }
 function renderMenuMovilModal() {
   const items = [
-    { v: 'calendario', label: 'Domótica', ico: iconoLucide('house') },
-    { v: 'pedidos-insumos', label: 'Pedidos de insumos', ico: iconoLucide('package') },
-    { v: 'documentos', label: 'Documentos Tipo', ico: iconoLucide('file-text') },
-    { v: 'documentos-edificio', label: 'Documentos edificio', ico: iconoLucide('building-2') }, { v: 'automatizaciones', label: 'Automatizaciones', ico: iconoLucide('zap') },
+    { sub: 'documentos', label: 'Documentos', ico: iconoLucide('folder-open') },
     { v: 'newsletter', label: 'Newsletter', ico: iconoLucide('newspaper') }, { v: 'tags', label: 'Tags', ico: iconoLucide('tag') },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: iconoLucide('chart-column') });
-  items.push(
-    { v: 'configuracion', label: 'Configuración', ico: iconoLucide('settings') }, { v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') },
-    { v: 'usuarios', label: 'Usuarios', ico: iconoLucide('users') }, { v: 'respuestas', label: 'Respuestas', ico: iconoLucide('message-square') }
-  );
+  items.push({ sub: 'config', label: 'Configuración', ico: iconoLucide('settings') });
   const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <h2>Más opciones</h2>
     <div style="display:flex;flex-direction:column;gap:2px;margin-top:4px;">
       <button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="toggleTema()"><span class="ico" style="background:var(--gray-tint);">${esOscuro ? '&#9728;' : '&#127769;'}</span><span>Modo ${esOscuro ? 'claro' : 'oscuro'}</span></button>
-      ${items.map(it => `<button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
+      ${items.map(it => it.sub
+        ? `<button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="${it.sub === 'config' ? 'openMenuConfig()' : 'openMenuDocumentos()'}"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span><span style="margin-left:auto;display:inline-flex;color:var(--ink-soft);">${iconoLucide('chevron-right')}</span></button>`
+        : `<button class="nav-btn" style="color:var(--ink);justify-content:flex-start;" onclick="irDesdeMenuMovil('${it.v}')"><span class="ico" style="background:var(--gray-tint);">${it.ico}</span><span>${it.label}</span></button>`).join('')}
       <button class="nav-btn" style="color:var(--stamp-red);justify-content:flex-start;" onclick="logout()"><span class="ico" style="background:var(--gray-tint);">&#8630;</span><span>Cerrar sesión</span></button>
     </div>
   </div></div>`;
@@ -7627,6 +7654,8 @@ function renderActiveModal() {
   if (state.modal === 'importar-clientes') return renderImportarClientesModal();
   if (state.modal === 'menu-movil') return renderMenuMovilModal();
   if (state.modal === 'menu-dep-tecnico') return renderMenuDepTecnicoModal();
+  if (state.modal === 'menu-documentos') return renderMenuDocumentosModal();
+  if (state.modal === 'menu-config') return renderMenuConfigModal();
   if (state.modal === 'menu-cliente') return renderMenuClienteModal();
   if (state.modal === 'filtros-movil') return renderFiltrosMovilModal();
   if (state.modal === 'contrato-mantenimiento') return renderContratoMantenimientoModal();
