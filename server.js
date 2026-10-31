@@ -3518,6 +3518,7 @@ const PP_CSS = `
 .pp-m{color:#5B6B85;font-size:14px;line-height:1.5;margin:0}
 .pp-tr{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid #EEF3FA;font-size:14.5px}.pp-tr:last-child{border-bottom:0}
 .pp-tr span{color:#5B6B85}.pp-tr b{text-align:right;font-weight:700}
+.pp-fecha{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 4px;padding:10px 14px;background:#EEF3FA;border-radius:10px;font-size:14px}.pp-fecha span{color:#5B6B85;font-weight:700}.pp-fecha b{color:#0F2A4D;font-weight:800}
 .pp-tot{background:#0F2A52;color:#fff;border-radius:14px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;margin-top:12px}.pp-tot b{font-size:24px}
 .pp-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid #DBE3F0;padding:12px 16px calc(14px + env(safe-area-inset-bottom))}
 .pp-bar-in{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
@@ -3855,6 +3856,17 @@ app.post('/api/documentos/aceptar/:token', async (req, res) => {
 // Igual que /aceptar-documento/:token, pero para dar conformidad de un presupuesto de servicio
 // técnico: un link público (mandado por mail) que no requiere loguearse en el portal, porque hay
 // clientes que nunca llegan a entrar ahí y el presupuesto no puede quedar trabado por eso.
+// Fecha agendada de un servicio técnico, en texto para el cliente (hora de Montevideo).
+// Si el servicio es "todo el día" se muestra solo el día, sin hora.
+function fechaAgendadaServicioTexto(s) {
+  if (!s || !s.fecha_hora) return '';
+  const d = new Date(s.fecha_hora);
+  if (isNaN(d.getTime())) return '';
+  const opts = s.todo_el_dia ? { dateStyle: 'full', timeZone: 'America/Montevideo' } : { dateStyle: 'full', timeStyle: 'short', hour12: false, timeZone: 'America/Montevideo' };
+  let txt = d.toLocaleString('es-UY', opts);
+  txt = txt.charAt(0).toUpperCase() + txt.slice(1);
+  return s.todo_el_dia ? txt + ' (todo el día)' : txt + ' h';
+}
 app.get('/aprobar-presupuesto/:token', async (req, res) => {
   const s = (await pool.query('select * from servicios_tecnicos where presupuesto_token=$1', [req.params.token])).rows[0];
   if (!s) return res.status(404).send(paginaPublicaEstado('Presupuesto no encontrado', 'err', 'Presupuesto no encontrado', 'Puede que el enlace sea incorrecto o que el presupuesto ya no exista.'));
@@ -3877,6 +3889,7 @@ app.get('/aprobar-presupuesto/:token', async (req, res) => {
   }
   res.send(paginaPublicaBorcam('Presupuesto: ' + s.titulo, `
     <div class="pp-card"><div class="pp-k">Presupuesto</div><h1 class="pp-h">${escapeHtmlSrv(s.titulo)}</h1>
+      ${fechaAgendadaServicioTexto(s) ? `<div class="pp-fecha"><span>Fecha agendada</span><b>${escapeHtmlSrv(fechaAgendadaServicioTexto(s))}</b></div>` : ''}
       <div style="margin-top:6px">${filasCostos}${bloquesTotales}</div>
       <p class="pp-m" style="margin-top:12px;font-size:12.5px">${aplicaIva ? 'Precios sin IVA + 22% de IVA (tasa básica en Uruguay).' : 'Importe total a abonar.'}</p></div>
     <p class="pp-m" style="padding:0 4px">Al confirmar, das tu conformidad con este presupuesto y habilitás a Borcam a avanzar con la tarea.</p>
@@ -4375,7 +4388,8 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
   const baseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_BASE_URL || '';
   const linkAprobacion = `${baseUrl}/aprobar-presupuesto/${token}`;
   const adjuntosPresupuesto = servicio.presupuesto_adjuntos || [];
-  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${adjuntosPresupuesto.length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés dar tu conformidad entrando acá, sin necesidad de loguearte:\n${linkAprobacion}`;
+  const fechaAgendadaTxt = fechaAgendadaServicioTexto(servicio);
+  const cuerpo = `Te enviamos el presupuesto de "${servicio.titulo}" para tu conformidad.${fechaAgendadaTxt ? `\n\nFecha agendada: ${fechaAgendadaTxt}` : ''}${detalleCostos ? `\n\n${detalleCostos}` : ''}\n\nTotal (precios sin IVA + 22% IVA):\n${totalesTexto}${adjuntosPresupuesto.length ? '\n\nAdjuntamos el/los archivo(s) de presupuesto.' : ''}\n\nPodés dar tu conformidad entrando acá, sin necesidad de loguearte:\n${linkAprobacion}`;
 
   if (t) {
     await pool.query(
