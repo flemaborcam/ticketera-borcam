@@ -324,7 +324,14 @@ async function logout() {
   render();
 }
 function goAuth(mode) { state.authView = mode; state.authError = ''; state.regError = ''; render(); }
+const VISTAS_SOLO_SUPERADMIN = ['configuracion', 'usuarios', 'automatizaciones', 'respuestas'];
+function vistaPermitida(view) {
+  const u = session && session.usuario;
+  if (VISTAS_SOLO_SUPERADMIN.includes(view) && !(u && u.es_superadmin)) return 'perfil';
+  return view;
+}
 function go(view) {
+  view = vistaPermitida(view);
   if ((state.view === 'dashboard' || state.view === 'reservas') && view !== state.view) state.selectedTickets.clear();
   if (view === 'tags' && state.view !== 'tags') state.tagsPrecarga = null; // al entrar por el menú normal, sin datos precargados de un ticket
   state.view = view;
@@ -4563,6 +4570,8 @@ function navItems(activeView) {
       ${subItems.map(it => `<button class="nav-subbtn ${activeView === it.v ? 'active' : ''}" onclick="go('${it.v}')" title="${it.label}"><span class="ico">${it.ico}</span><span class="nav-btn-label">${it.label}</span></button>`).join('')}
     </div>`;
 
+  // Solo el Superadmin ve el menú completo de Configuración; el resto únicamente "Mi perfil".
+  if (!currentUser().es_superadmin) return botonesPrincipales + btnNav({ v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') });
   return botonesPrincipales + configBtn;
 }
 // Barra inferior (celular): solo los accesos más usados + "Más" con el resto, para que no queden
@@ -4643,7 +4652,8 @@ function renderMenuMovilModal() {
     { v: 'newsletter', label: 'Newsletter', ico: iconoLucide('newspaper') }, { v: 'tags', label: 'Tags', ico: iconoLucide('tag') },
   ];
   if (currentUser().es_superadmin) items.push({ v: 'estadisticas', label: 'Estadísticas', ico: iconoLucide('chart-column') });
-  items.push({ sub: 'config', label: 'Configuración', ico: iconoLucide('settings') });
+  if (currentUser().es_superadmin) items.push({ sub: 'config', label: 'Configuración', ico: iconoLucide('settings') });
+  else items.push({ v: 'perfil', label: 'Mi perfil', ico: iconoLucide('user') });
   const esOscuro = document.documentElement.getAttribute('data-theme') === 'dark';
   return `<div class="modal-backdrop" onclick="if(event.target===this) closeModal()"><div class="modal sheet"><div class="sheet-handle" aria-hidden="true"></div>
     <h2>Más opciones</h2>
@@ -8386,6 +8396,7 @@ function renderInterno() {
     app.innerHTML = renderClientShell(inner);
     return;
   }
+  state.view = vistaPermitida(state.view);
   let inner = '';
   if (state.view === 'ticket' && state.ticketId) inner = renderTicket(state.ticketId);
   else if (state.view === 'perfil') inner = renderPerfil();

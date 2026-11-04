@@ -1227,7 +1227,7 @@ app.delete('/api/subcategorias-soporte', requireStaff, async (req, res) => {
   await guardarSubcategoriasSoporte(lista);
   ok(res, { ok: true, lista });
 });
-app.put('/api/checklists-categoria', requireStaff, async (req, res) => {
+app.put('/api/checklists-categoria', requireStaff, requireSuperadmin, async (req, res) => {
   const checklists = req.body.checklists || {};
   await pool.query('update configuracion set checklist_categorias=$1 where id=1', [JSON.stringify(checklists)]);
   ok(res, { ok: true });
@@ -3153,18 +3153,18 @@ app.post('/api/usuarios/me/telegram/desvincular', requireStaff, async (req, res)
 app.get('/api/respuestas', requireStaff, async (req, res) => {
   ok(res, (await pool.query('select * from respuestas_predefinidas order by titulo')).rows);
 });
-app.post('/api/respuestas', requireStaff, async (req, res) => {
+app.post('/api/respuestas', requireStaff, requireSuperadmin, async (req, res) => {
   const { titulo, cuerpo } = req.body;
   if (!titulo || !cuerpo) return bad(res, 'Faltan datos');
   const r = await pool.query('insert into respuestas_predefinidas (titulo, cuerpo) values ($1,$2) returning id', [titulo, cuerpo]);
   ok(res, { id: r.rows[0].id });
 });
-app.put('/api/respuestas/:id', requireStaff, async (req, res) => {
+app.put('/api/respuestas/:id', requireStaff, requireSuperadmin, async (req, res) => {
   const { titulo, cuerpo } = req.body;
   await pool.query('update respuestas_predefinidas set titulo=$1, cuerpo=$2 where id=$3', [titulo, cuerpo, req.params.id]);
   ok(res, { ok: true });
 });
-app.delete('/api/respuestas/:id', requireStaff, async (req, res) => {
+app.delete('/api/respuestas/:id', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('delete from respuestas_predefinidas where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
@@ -3181,7 +3181,7 @@ app.get('/api/automatizaciones', requireStaff, async (req, res) => {
   }
   ok(res, autos);
 });
-app.post('/api/automatizaciones', requireStaff, async (req, res) => {
+app.post('/api/automatizaciones', requireStaff, requireSuperadmin, async (req, res) => {
   const { nombre, activo, pasos } = req.body;
   if (!nombre || !pasos || !pasos.length) return bad(res, 'Faltan datos');
   const siguienteOrden = (await pool.query('select coalesce(max(orden),0)+1 as v from automatizaciones')).rows[0].v;
@@ -3197,7 +3197,7 @@ app.post('/api/automatizaciones', requireStaff, async (req, res) => {
   }
   ok(res, { id: autoId });
 });
-app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
+app.put('/api/automatizaciones/:id', requireStaff, requireSuperadmin, async (req, res) => {
   const { nombre, activo, pasos } = req.body;
   await pool.query('update automatizaciones set nombre=$1, activo=$2 where id=$3', [nombre, !!activo, req.params.id]);
   await pool.query('delete from automatizacion_pasos where automatizacion_id=$1', [req.params.id]);
@@ -3211,13 +3211,13 @@ app.put('/api/automatizaciones/:id', requireStaff, async (req, res) => {
   }
   ok(res, { ok: true });
 });
-app.post('/api/automatizaciones/:id/toggle', requireStaff, async (req, res) => {
+app.post('/api/automatizaciones/:id/toggle', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('update automatizaciones set activo = not activo where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
 // Sube o baja una automatización un lugar en la prioridad: intercambia su "orden" con el de la
 // vecina inmediata (según la dirección pedida) entre las que ya tienen orden asignado.
-app.post('/api/automatizaciones/:id/mover', requireStaff, async (req, res) => {
+app.post('/api/automatizaciones/:id/mover', requireStaff, requireSuperadmin, async (req, res) => {
   const direccion = req.body.direccion === 'arriba' ? 'arriba' : 'abajo';
   const todas = (await pool.query('select id, orden from automatizaciones order by orden asc nulls last, nombre asc')).rows;
   const idx = todas.findIndex(a => String(a.id) === String(req.params.id));
@@ -3231,7 +3231,7 @@ app.post('/api/automatizaciones/:id/mover', requireStaff, async (req, res) => {
   await pool.query('update automatizaciones set orden=$1 where id=$2', [ordenActual, vecino.id]);
   ok(res, { ok: true });
 });
-app.delete('/api/automatizaciones/:id', requireStaff, async (req, res) => {
+app.delete('/api/automatizaciones/:id', requireStaff, requireSuperadmin, async (req, res) => {
   await pool.query('delete from automatizaciones where id=$1', [req.params.id]);
   ok(res, { ok: true });
 });
@@ -3275,7 +3275,7 @@ app.get('/api/configuracion', requireStaff, async (req, res) => {
     tieneSmtpPasswordMant: !!c.smtp_pass_enc_mant
   });
 });
-app.put('/api/configuracion', requireStaff, async (req, res) => {
+app.put('/api/configuracion', requireStaff, requireSuperadmin, async (req, res) => {
   const b = req.body;
   const c = await getConfig();
   await pool.query(
@@ -3316,20 +3316,20 @@ app.put('/api/configuracion', requireStaff, async (req, res) => {
   ok(res, { ok: true });
 });
 // Prueba las credenciales guardadas sin activar el polling — para verificar antes de confiar en la conexión
-app.post('/api/configuracion/probar-telegram', requireStaff, async (req, res) => {
+app.post('/api/configuracion/probar-telegram', requireStaff, requireSuperadmin, async (req, res) => {
   try {
     const c = await getConfig();
     await enviarTelegramForzado(c.telegram_chat_id, '✅ Prueba de conexión desde el sistema de tickets de Borcam. Si ves este mensaje, quedó todo bien configurado.');
     ok(res, { ok: true });
   } catch (e) { bad(res, e.message); }
 });
-app.post('/api/configuracion/probar-seguimiento', requireStaff, async (req, res) => {
+app.post('/api/configuracion/probar-seguimiento', requireStaff, requireSuperadmin, async (req, res) => {
   try {
     await revisarSeguimientoTickets();
     ok(res, { ok: true });
   } catch (e) { bad(res, e.message); }
 });
-app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
+app.post('/api/configuracion/probar', requireStaff, requireSuperadmin, async (req, res) => {
   const c = await getConfig();
   const resultado = { imap: { ok: false, error: null }, smtp: { ok: false, error: null } };
   try {
@@ -3350,7 +3350,7 @@ app.post('/api/configuracion/probar', requireStaff, async (req, res) => {
   } catch (e) { resultado.smtp.error = e.message; }
   ok(res, resultado);
 });
-app.post('/api/configuracion/probar-mantenimiento', requireStaff, async (req, res) => {
+app.post('/api/configuracion/probar-mantenimiento', requireStaff, requireSuperadmin, async (req, res) => {
   const c = await getConfig();
   try {
     const transport = construirTransporteSmtpMantenimiento(c);
