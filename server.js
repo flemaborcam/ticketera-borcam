@@ -5736,13 +5736,26 @@ async function revisarCasillaReal() {
       }
       if (ultimoEnServidor === null || ultimoEnServidor > maxUid) {
         const desde = maxUid + 1;
-        for await (const msg of client.fetch(`${desde}:*`, { source: true, uid: true }, { uid: true })) {
-          if (msg.uid <= maxUid) continue;
+        // Ojo (causa de un consumo enorme de tráfico en el hosting): "N:*" devuelve SIEMPRE el último correo
+        // de la casilla aunque su UID sea menor que N. Si ese fetch pedía el correo completo (source:true),
+        // cada minuto se bajaba de nuevo el último correo con todos sus adjuntos. Pasa cuando "uidNext-1" es
+        // mayor que el último correo que sigue en la casilla (por ejemplo, se borró o movió el más nuevo).
+        // Por eso primero se pide SOLO la lista de UIDs (casi no pesa) y el correo completo se baja
+        // únicamente si su UID es realmente nuevo.
+        const uidsNuevos = [];
+        for await (const m of client.fetch(`${desde}:*`, { uid: true }, { uid: true })) {
+          if (m.uid > maxUid) uidsNuevos.push(m.uid);
+        }
+        uidsNuevos.sort((a, b) => a - b);
+        for (const uid of uidsNuevos) {
+          const msg = await client.fetchOne(String(uid), { source: true, uid: true }, { uid: true });
+          if (!msg || !msg.source) continue;
+          console.log(`[IMAP] correo nuevo UID ${uid} descargado (${msg.source.length} bytes)`);
           try {
             const parsed = await simpleParser(msg.source);
             await procesarCorreoEntrante(parsed);
           } catch (e) { console.error('Error procesando un correo:', e.message); }
-          if (msg.uid > maxUid) maxUid = msg.uid;
+          if (uid > maxUid) maxUid = uid;
           // Se guarda el avance después de CADA correo (y nunca hacia atrás): si algo se corta a mitad de
           // la vuelta, la siguiente no vuelve a bajar ni a reprocesar lo que ya se hizo.
           try {
