@@ -105,6 +105,7 @@ function mapTicket(row) {
     remitenteNombre: row.remitente_nombre, remitenteEmail: row.remitente_email,
     asignadoA: row.asignado_a, grupoId: row.cliente_id, edificioNombre: row.edificio_nombre || null, creado: row.creado, actualizado: row.actualizado,
     necesitaAtencion: !!row.necesita_atencion,
+    borradorAuto: row.borrador_auto ? { cuerpo: row.borrador_auto.cuerpo, creado: row.borrador_auto.creado } : null,
     mensajes: (row.mensajes || []).map(mapMensaje),
     mensajesTexto: row.mensajes_texto || (row.mensajes || []).map(m => m.cuerpo || '').join(' '),
     ultimoMensajeTipo: row.ultimo_msg_tipo || null,
@@ -441,6 +442,43 @@ async function openTicket(id) {
 }
 function volverDesdeTicket() {
   go(state.ticketVolverA || 'dashboard');
+}
+// Borrador de respuesta que armó la automatización (API) para este ticket. Nunca se envía solo:
+// "Usar borrador" lo pasa a la caja de respuesta para que el equipo lo revise, edite y envíe.
+function renderBorradorAuto(t) {
+  const b = t.borradorAuto;
+  if (!b || !b.cuerpo) return '';
+  return `<div class="borrador-auto">
+    <div class="borrador-auto-head">
+      <span class="borrador-auto-ico">${iconoLucide('sparkles')}</span>
+      <b>Borrador automático</b><span class="borrador-auto-chip">no enviado</span>
+      <span class="borrador-auto-fecha">${fmtDateTime(b.creado)}</span>
+    </div>
+    <div class="borrador-auto-body">${escapeHtml(b.cuerpo)}</div>
+    <div class="borrador-auto-acts">
+      <button type="button" class="btn btn-ghost" onclick="descartarBorradorAuto('${t.id}')">${iconoLucide('trash-2')}Descartar</button>
+      <button type="button" class="btn btn-primary" onclick="usarBorradorAuto('${t.id}')">${iconoLucide('corner-down-left')}Usar borrador</button>
+    </div>
+  </div>`;
+}
+function usarBorradorAuto(ticketId) {
+  const t = cache.tickets.find(x => x.id === ticketId);
+  if (!t || !t.borradorAuto) return;
+  const escrito = (state.replyDraftCuerpo || '').trim();
+  if (escrito && escrito !== t.borradorAuto.cuerpo.trim() && !confirm('Ya empezaste a escribir una respuesta. ¿Querés reemplazarla con el borrador?')) return;
+  state.replyTab = 'saliente'; state.pendingAttachments = [];
+  state.replyDraftCuerpo = t.borradorAuto.cuerpo;
+  render();
+  const ta = document.querySelector('.reply-box textarea[name="cuerpo"]');
+  if (ta) { ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => ta.focus(), 300); }
+}
+async function descartarBorradorAuto(ticketId) {
+  if (!confirm('¿Descartar este borrador automático? No se puede recuperar.')) return;
+  try {
+    await api('DELETE', `/api/tickets/${ticketId}/borrador`);
+    await refreshTicket(ticketId);
+    render();
+  } catch (e) { showToast(e.message); }
 }
 function setReplyTab(tab) { state.replyTab = tab; state.pendingAttachments = []; render(); }
 
@@ -4271,6 +4309,10 @@ function toggleConfigMenu() {
 }
 const ICONOS_LUCIDE = {"inbox": "<polyline points=\"22 12 16 12 14 15 10 15 8 12 2 12\" /> <path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" />", "calendar-check": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"m9 15 2 2 4-4\" />", "users": "<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <path d=\"M16 3.128a4 4 0 0 1 0 7.744\" /> <path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />", "wrench": "<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\" />", "newspaper": "<path d=\"M15 18h-5\" /> <path d=\"M18 14h-8\" /> <path d=\"M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2\" /> <rect width=\"8\" height=\"4\" x=\"10\" y=\"6\" rx=\"1\" />", "tag": "<path d=\"M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z\" /> <circle cx=\"7.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\" />", "settings": "<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\" /> <circle cx=\"12\" cy=\"12\" r=\"3\" />", "chevron-right": "<path d=\"m9 18 6-6-6-6\" />", "chart-column": "<path d=\"M3 3v16a2 2 0 0 0 2 2h16\" /> <path d=\"M18 17V9\" /> <path d=\"M13 17V5\" /> <path d=\"M8 17v-3\" />", "user": "<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /> <circle cx=\"12\" cy=\"7\" r=\"4\" />", "zap": "<path d=\"M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z\" />", "message-square": "<path d=\"M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z\" />", "house": "<path d=\"M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8\" /> <path d=\"M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\" />", "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M10 9H8\" /> <path d=\"M16 13H8\" /> <path d=\"M16 17H8\" />", "building-2": "<path d=\"M10 12h4\" /> <path d=\"M10 8h4\" /> <path d=\"M14 21v-3a2 2 0 0 0-4 0v3\" /> <path d=\"M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2\" /> <path d=\"M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16\" />", "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\" /> <path d=\"M12 2v2\" /> <path d=\"M12 20v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"m17.66 17.66 1.41 1.41\" /> <path d=\"M2 12h2\" /> <path d=\"M20 12h2\" /> <path d=\"m6.34 17.66-1.41 1.41\" /> <path d=\"m19.07 4.93-1.41 1.41\" />", "moon": "<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\" />", "cloud-sun": "<path d=\"M12 2v2\" /> <path d=\"m4.93 4.93 1.41 1.41\" /> <path d=\"M20 12h2\" /> <path d=\"m19.07 4.93-1.41 1.41\" /> <path d=\"M15.947 12.65a4 4 0 0 0-5.925-4.128\" /> <path d=\"M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z\" />", "cloud-moon": "<path d=\"M13 16a3 3 0 0 1 0 6H7a5 5 0 1 1 4.9-6z\" /> <path d=\"M18.376 14.512a6 6 0 0 0 3.461-4.127c.148-.625-.659-.97-1.248-.714a4 4 0 0 1-5.259-5.26c.255-.589-.09-1.395-.716-1.248a6 6 0 0 0-4.594 5.36\" />", "cloud": "<path d=\"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z\" />", "cloud-rain": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 14v6\" /> <path d=\"M8 14v6\" /> <path d=\"M12 16v6\" />", "cloud-drizzle": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 19v1\" /> <path d=\"M8 14v1\" /> <path d=\"M16 19v1\" /> <path d=\"M16 14v1\" /> <path d=\"M12 21v1\" /> <path d=\"M12 16v1\" />", "cloud-lightning": "<path d=\"M6 16.326A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 .5 8.973\" /> <path d=\"m13 12-3 5h4l-3 5\" />", "cloud-fog": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M16 17H7\" /> <path d=\"M17 21H9\" />", "cloud-snow": "<path d=\"M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242\" /> <path d=\"M8 15h.01\" /> <path d=\"M8 19h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M12 21h.01\" /> <path d=\"M16 15h.01\" /> <path d=\"M16 19h.01\" />", "droplets": "<path d=\"M7 16.3c2.2 0 4-1.83 4-4.05 0-1.16-.57-2.26-1.71-3.19S7.29 6.75 7 5.3c-.29 1.45-1.14 2.84-2.29 3.76S3 11.1 3 12.25c0 2.22 1.8 4.05 4 4.05z\" /> <path d=\"M12.56 6.6A10.97 10.97 0 0 0 14 3.02c.5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a6.98 6.98 0 0 1-11.91 4.97\" />", "wind": "<path d=\"M12.8 19.6A2 2 0 1 0 14 16H2\" /> <path d=\"M17.5 8a2.5 2.5 0 1 1 2 4H2\" /> <path d=\"M9.8 4.4A2 2 0 1 1 11 8H2\" />", "circle-dollar-sign": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8\" /> <path d=\"M12 18V6\" />", "trending-up": "<path d=\"M16 7h6v6\" /> <path d=\"m22 7-8.5 8.5-5-5L2 17\" />", "trending-down": "<path d=\"M16 17h6v-6\" /> <path d=\"m22 17-8.5-8.5-5 5L2 7\" />", "package": "<path d=\"M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z\" /> <path d=\"M12 22V12\" /> <polyline points=\"3.29 7 12 12 20.71 7\" /> <path d=\"m7.5 4.27 9 5.15\" />", "map-pin": "<path d=\"M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0\" /> <circle cx=\"12\" cy=\"10\" r=\"3\" />", "circle-check": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m16 9-5.5 5.5L8 12\" />", "circle-x": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"m15 9-6 6\" /> <path d=\"m9 9 6 6\" />", "clock": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 6v6l4 2\" />", "triangle-alert": "<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\" /> <path d=\"M12 9v4\" /> <path d=\"M12 17h.01\" />", "camera": "<path d=\"M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z\" /> <circle cx=\"12\" cy=\"13\" r=\"3\" />", "send": "<path d=\"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z\" /> <path d=\"m21.854 2.147-10.94 10.939\" />", "check": "<path d=\"M20 6 9 17l-5-5\" />", "x": "<path d=\"M18 6 6 18\" /> <path d=\"m6 6 12 12\" />", "image": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /> <circle cx=\"9\" cy=\"9\" r=\"2\" /> <path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />", "bell-ring": "<path d=\"M10.268 21a2 2 0 0 0 3.464 0\" /> <path d=\"M22 8c0-2.3-.8-4.3-2-6\" /> <path d=\"M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326\" /> <path d=\"M4 2C2.8 3.7 2 5.7 2 8\" />", "alarm-clock": "<circle cx=\"12\" cy=\"13\" r=\"8\" /> <path d=\"M12 9v4l2 2\" /> <path d=\"M5 3 2 6\" /> <path d=\"m22 6-3-3\" /> <path d=\"M6.38 18.7 4 21\" /> <path d=\"M17.64 18.67 20 21\" />", "flag": "<path d=\"M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528\" />", "user-check": "<path d=\"m16 11 2 2 4-4\" /> <path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /> <circle cx=\"9\" cy=\"7\" r=\"4\" />", "calendar-plus": "<path d=\"M16 18h6\" /> <path d=\"M16 2v3\" /> <path d=\"M19 15v6\" /> <path d=\"M21 11.5V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h8.3\" /> <path d=\"M3 9h18\" /> <path d=\"M8 2v3\" />", "tags": "<path d=\"M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z\" /> <path d=\"M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193\" /> <circle cx=\"10.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\" />", "git-merge": "<circle cx=\"18\" cy=\"18\" r=\"3\" /> <circle cx=\"6\" cy=\"6\" r=\"3\" /> <path d=\"M6 21V9a9 9 0 0 0 9 9\" />", "trash-2": "<path d=\"M10 11v6\" /> <path d=\"M14 11v6\" /> <path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\" /> <path d=\"M3 6h18\" /> <path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\" />", "ellipsis": "<circle cx=\"12\" cy=\"12\" r=\"1\" /> <circle cx=\"19\" cy=\"12\" r=\"1\" /> <circle cx=\"5\" cy=\"12\" r=\"1\" />", "info": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 16v-4\" /> <path d=\"M12 8h.01\" />", "mail": "<path d=\"m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7\" /> <rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\" />", "calendar": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" />", "corner-up-left": "<path d=\"M20 20v-7a4 4 0 0 0-4-4H4\" /> <path d=\"M9 14 4 9l5-5\" />", "chevron-down": "<path d=\"m6 9 6 6 6-6\" />", "smile": "<path d=\"M15 10V9\" /> <path d=\"M16.472 15a6 6 0 01-8.943 0\" /> <path d=\"M9 10V9\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "frown": "<path d=\"M15 10V9\" /> <path d=\"M9 10V9\" /> <path d=\"M9 16a5 5 0 016 0\" /> <circle cx=\"12\" cy=\"12\" r=\"10\" />", "pencil": "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\" /> <path d=\"m15 5 4 4\" />", "plus": "<path d=\"M5 12h14\" /> <path d=\"M12 5v14\" />", "history": "<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /> <path d=\"M3 3v5h5\" /> <path d=\"M12 7v5l4 2\" />", "phone": "<path d=\"M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384\" />", "upload": "<path d=\"M12 3v12\" /> <path d=\"m17 8-5-5-5 5\" /> <path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" />", "search": "<path d=\"m21 21-4.34-4.34\" /> <circle cx=\"11\" cy=\"11\" r=\"8\" />", "lock": "<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /> <path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />", "ticket": "<path d=\"M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z\" /> <path d=\"M13 5v2\" /> <path d=\"M13 17v2\" /> <path d=\"M13 11v2\" />", "truck": "<path d=\"M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2\" /> <path d=\"M15 18H9\" /> <path d=\"M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14\" /> <circle cx=\"17\" cy=\"18\" r=\"2\" /> <circle cx=\"7\" cy=\"18\" r=\"2\" />", "file-check": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"m9 15 2 2 4-4\" />", "file-clock": "<path d=\"M16 22h2a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v2.85\" /> <path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /> <path d=\"M8 14v2.2l1.6 1\" /> <circle cx=\"8\" cy=\"16\" r=\"6\" />", "banknote": "<rect width=\"20\" height=\"12\" x=\"2\" y=\"6\" rx=\"2\" /> <circle cx=\"12\" cy=\"12\" r=\"2\" /> <path d=\"M6 12h.01M18 12h.01\" />", "calendar-days": "<path d=\"M8 2v3\" /> <path d=\"M16 2v3\" /> <rect x=\"3\" y=\"3\" width=\"18\" height=\"18\" rx=\"2\" /> <path d=\"M3 9h18\" /> <path d=\"M8 13h.01\" /> <path d=\"M12 13h.01\" /> <path d=\"M16 13h.01\" /> <path d=\"M8 17h.01\" /> <path d=\"M12 17h.01\" /> <path d=\"M16 17h.01\" />", "list": "<path d=\"M3 5h.01\" /> <path d=\"M3 12h.01\" /> <path d=\"M3 19h.01\" /> <path d=\"M8 5h13\" /> <path d=\"M8 12h13\" /> <path d=\"M8 19h13\" />", "chevron-left": "<path d=\"m15 18-6-6 6-6\" />", "clipboard-check": "<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /> <path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /> <path d=\"m9 14 2 2 4-4\" />", "link": "<path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\" /> <path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\" />", "timer": "<line x1=\"10\" x2=\"14\" y1=\"2\" y2=\"2\" /> <line x1=\"12\" x2=\"15\" y1=\"14\" y2=\"11\" /> <circle cx=\"12\" cy=\"14\" r=\"8\" />", "globe": "<circle cx=\"12\" cy=\"12\" r=\"10\" /> <path d=\"M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20\" /> <path d=\"M2 12h20\" />", "copy": "<rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\" /> <path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\" />", "sliders-horizontal": "<path d=\"M10 5H3\" /> <path d=\"M12 19H3\" /> <path d=\"M14 3v4\" /> <path d=\"M16 17v4\" /> <path d=\"M21 12h-9\" /> <path d=\"M21 19h-5\" /> <path d=\"M21 5h-7\" /> <path d=\"M8 10v4\" /> <path d=\"M8 12H3\" />", "chevron-up": "<path d=\"m18 15-6-6-6 6\" />"};
 // Íconos Lucide (ISC) en línea: ya no hay que cargar ninguna librería externa.
+// Íconos extra (Lucide, ISC) para el borrador automático y la clave de la API.
+ICONOS_LUCIDE['sparkles'] = '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /> <path d="M20 3v4" /> <path d="M22 5h-4" /> <path d="M4 17v2" /> <path d="M5 18H3" />';
+ICONOS_LUCIDE['corner-down-left'] = '<polyline points="9 10 4 15 9 20" /> <path d="M20 4v7a4 4 0 0 1-4 4H4" />';
+ICONOS_LUCIDE['key-round'] = '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /> <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />';
 function iconoLucide(nombre, cls) {
   return `<svg class="lu${cls ? ' ' + cls : ''}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONOS_LUCIDE[nombre] || ''}</svg>`;
 }
@@ -5710,7 +5752,7 @@ function renderTicket(id) {
     ${renderChecklistTicket(t)}
     ${renderHistorialClienteTicket(t)}
     ${renderAceptacionesTicket(t)}
-    <div class="thread">${thread}</div>
+    <div class="thread">${thread}${renderBorradorAuto(t)}</div>
     <div class="reply-box">
       <div class="reply-tabs">
         <button class="reply-tab ${state.replyTab === 'saliente' ? 'active' : ''}" onclick="setReplyTab('saliente')">Responder como agente</button>
@@ -6424,13 +6466,63 @@ function renderConfigTabs() {
     { v: 'checklists', label: '✅ Checklists' },
     { v: 'subcategorias', label: '🗂️ Subcategorías' },
   ];
+  if (currentUser().es_superadmin) tabs.push({ v: 'api', label: '🔑 API' });
   if (currentUser().es_superadmin) tabs.push({ v: 'peligro', label: '⚠️ Zona de peligro' });
   const activa = state.configTab || 'correo';
   return `<div class="reply-tabs" style="flex-wrap:wrap;width:auto;">
     ${tabs.map(t => `<button type="button" class="reply-tab ${activa === t.v ? 'active' : ''}" onclick="setConfigTab('${t.v}')">${t.label}</button>`).join('')}
   </div>`;
 }
-function setConfigTab(v) { state.configTab = v; render(); if (v === 'subcategorias') cargarSubcategoriasConfig(); }
+function setConfigTab(v) { state.configTab = v; render(); if (v === 'subcategorias') cargarSubcategoriasConfig(); if (v === 'api') cargarApiAuto(); }
+// ---- Clave de la API de automatización (solo superadmin) ----
+async function cargarApiAuto() {
+  try { state.apiAuto = await api('GET', '/api/config/api-automatizacion'); } catch (e) { state.apiAuto = { error: e.message }; }
+  if (state.view === 'configuracion' && state.configTab === 'api') render();
+}
+async function generarClaveApiAuto() {
+  const hay = state.apiAuto && state.apiAuto.tieneClave;
+  if (hay && !confirm('Ya hay una clave. Si generás una nueva, la anterior deja de funcionar y hay que cambiarla donde se use. ¿Seguir?')) return;
+  try {
+    const r = await api('POST', '/api/config/api-automatizacion/generar');
+    state.apiAutoClaveNueva = r.clave;
+    await cargarApiAuto();
+    render();
+  } catch (e) { showToast(e.message); }
+}
+async function activarApiAuto(activa) {
+  if (!activa && !confirm('¿Desactivar la clave? La automatización deja de funcionar hasta que la actives de nuevo.')) return;
+  try { await api('PUT', '/api/config/api-automatizacion/activa', { activa }); await cargarApiAuto(); } catch (e) { showToast(e.message); }
+}
+function copiarClaveApiAuto() {
+  const k = state.apiAutoClaveNueva; if (!k) return;
+  if (navigator.clipboard) navigator.clipboard.writeText(k).then(() => showToast('Clave copiada.'), () => showToast('No se pudo copiar: seleccionala y copiala a mano.'));
+}
+function ocultarClaveApiAuto() { state.apiAutoClaveNueva = null; render(); }
+function renderTarjetaApiAuto() {
+  const d = state.apiAuto;
+  let cuerpo;
+  if (!d) cuerpo = '<div class="hint-text">Cargando…</div>';
+  else if (d.error) cuerpo = `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  else {
+    const estado = !d.tieneClave ? '<span class="tag">Sin clave</span>' : d.activa ? '<span class="tag tag-resuelto">✅ Activa</span>' : '<span class="tag">⏸ Desactivada</span>';
+    cuerpo = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">${estado}
+        ${d.creada ? `<span class="hint-text" style="margin:0;">Creada ${fmtDateTime(d.creada)}</span>` : ''}
+        ${d.ultimoUso ? `<span class="hint-text" style="margin:0;">· Último uso ${fmtDateTime(d.ultimoUso)}</span>` : (d.tieneClave ? '<span class="hint-text" style="margin:0;">· Todavía sin usar</span>' : '')}</div>
+      ${state.apiAutoClaveNueva ? `<div class="api-clave-nueva">
+        <div style="font-weight:700;margin-bottom:6px;">Esta es la clave. Copiala ahora: no se vuelve a mostrar.</div>
+        <code>${escapeHtml(state.apiAutoClaveNueva)}</code>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;"><button type="button" class="btn btn-primary" onclick="copiarClaveApiAuto()">${iconoLucide('copy')}Copiar clave</button><button type="button" class="btn btn-ghost" onclick="ocultarClaveApiAuto()">Ya la guardé</button></div></div>` : ''}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-primary" onclick="generarClaveApiAuto()">${iconoLucide('key-round')}${d.tieneClave ? 'Generar clave nueva' : 'Generar clave'}</button>
+        ${d.tieneClave ? (d.activa ? `<button type="button" class="btn btn-danger" onclick="activarApiAuto(false)">Desactivar</button>` : `<button type="button" class="btn btn-ghost" onclick="activarApiAuto(true)">Activar</button>`) : ''}
+      </div>
+      <div class="hint-text" style="margin-top:12px;">Esta clave solo sirve para la automatización: leer tickets activos, guardar borradores de respuesta (que nunca se envían solos) y cambiar categoría, estado (Abierto / En progreso) y técnico sin avisar al cliente. No abre el sistema.</div>
+      ${d.log && d.log.length ? `<div style="font-weight:600;font-size:13.5px;margin:16px 0 8px;padding-top:12px;border-top:1px dashed var(--line-strong);">Últimos usos</div>
+        <div class="api-log">${d.log.map(l => `<div><span>${fmtDateTime(l.fecha)}</span><span>${escapeHtml(l.metodo)} ${escapeHtml(l.ruta)}${l.ticket ? ' · ' + escapeHtml(l.ticket) : ''}</span><b class="${l.codigo >= 400 ? 'err' : ''}">${l.codigo}</b></div>`).join('')}</div>` : ''}`;
+  }
+  return configSectionHead('🔑', 'API de automatización', 'Para que una automatización (por ejemplo, la de la noche) clasifique tickets y deje borradores de respuesta para revisar a la mañana.') + cuerpo;
+}
 
 /* ---------------- Newsletter ---------------- */
 
@@ -7613,13 +7705,14 @@ function renderConfiguracion() {
         </div>` : ''}
       </div>
 
-      <div class="card card-narrow" style="max-width:560px;margin-top:0;${tab === 'subcategorias' ? 'display:none;' : ''}">
+      <div class="card card-narrow" style="max-width:560px;margin-top:0;${tab === 'subcategorias' || tab === 'api' ? 'display:none;' : ''}">
         <button type="submit" class="btn btn-primary btn-block">Guardar configuración</button>
         <div class="hint-text" style="margin-top:8px;text-align:center;">Guarda los cambios de todas las pestañas de arriba a la vez.</div>
       </div>
     </form>
 
     ${currentUser().es_superadmin ? `
+    ${tab === 'api' && currentUser().es_superadmin ? `<div class="card card-narrow" style="max-width:560px;">${renderTarjetaApiAuto()}</div>` : ''}
     <div class="card card-narrow card-peligro" style="max-width:560px;margin-top:18px;${tab === 'peligro' ? '' : 'display:none;'}">
       ${configSectionHead('⚠️', 'Zona de peligro', 'Solo visible para Superadmin.')}
       <div class="hint-text" style="margin-bottom:12px;">Borra absolutamente todos los tickets del sistema (y sus conversaciones). No se puede deshacer.</div>

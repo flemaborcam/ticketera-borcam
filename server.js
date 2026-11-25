@@ -768,6 +768,22 @@ const SUBCATEGORIAS_SOPORTE_TECNICO = ['CCTV', 'Domótica', 'Control de acceso',
 // Las subcategorías son editables desde el sistema (se guardan en configuracion.subcategorias_soporte).
 // Si todavía no se editaron, se usa esta lista inicial.
 pool.query(`alter table configuracion add column if not exists subcategorias_soporte jsonb`).catch(e => console.error('No se pudo migrar subcategorias_soporte:', e.message));
+// API de automatización: borradores guardados por la API (no se envían solos) y la clave de acceso
+// (se guarda solo el hash, nunca la clave en sí), con interruptor para desactivarla.
+pool.query(`create table if not exists tickets_borradores (
+  ticket_id uuid primary key references tickets(id) on delete cascade,
+  cuerpo text not null,
+  creado timestamptz not null default now()
+)`).catch(e => console.error('No se pudo migrar tickets_borradores:', e.message));
+pool.query('alter table configuracion add column if not exists api_auto_key_hash text').catch(e => console.error('No se pudo migrar api_auto_key_hash:', e.message));
+pool.query('alter table configuracion add column if not exists api_auto_activa boolean not null default false').catch(e => console.error('No se pudo migrar api_auto_activa:', e.message));
+pool.query('alter table configuracion add column if not exists api_auto_creada timestamptz').catch(e => console.error('No se pudo migrar api_auto_creada:', e.message));
+pool.query('alter table configuracion add column if not exists api_auto_ultimo_uso timestamptz').catch(e => console.error('No se pudo migrar api_auto_ultimo_uso:', e.message));
+pool.query(`create table if not exists api_automatizacion_log (
+  id bigserial primary key,
+  fecha timestamptz not null default now(),
+  metodo text, ruta text, ticket text, codigo integer
+)`).catch(e => console.error('No se pudo migrar api_automatizacion_log:', e.message));
 async function getSubcategoriasSoporte() {
   const r = await pool.query('select subcategorias_soporte from configuracion where id=1');
   const v = r.rows[0] && r.rows[0].subcategorias_soporte;
@@ -852,7 +868,8 @@ async function nextTicketNumero() {
     client.release();
   }
 }
-async function ticketConMensajes(ticketId) {
+// El borrador automático solo se incluye para el personal (opts.conBorrador): el portal del cliente nunca lo ve.
+async function ticketConMensajes(ticketId, opts) {
   const t = (await pool.query('select * from tickets where id=$1', [ticketId])).rows[0];
   if (!t) return null;
   const mensajes = (await pool.query('select * from mensajes where ticket_id=$1 order by fecha asc', [ticketId])).rows;
@@ -867,7 +884,11 @@ async function ticketConMensajes(ticketId) {
         [t.remitente_email, ticketId]
       )).rows
     : [];
-  return { ...t, mensajes, serviciosTecnicos, reservasCalendario, historialCliente };
+  let borradorAuto = null;
+  if (opts && opts.conBorrador) {
+    borradorAuto = (await pool.query('select cuerpo, creado from tickets_borradores where ticket_id=$1', [ticketId])).rows[0] || null;
+  }
+  return { ...t, mensajes, serviciosTecnicos, reservasCalendario, historialCliente, borrador_auto: borradorAuto };
 }
 async function collectTicketCCs(ticketId) {
   const r = await pool.query(
@@ -1254,7 +1275,7 @@ app.get('/api/tickets/notificaciones', requireStaff, async (req, res) => {
   ok(res, tickets);
 });
 app.get('/api/tickets/:id', requireStaff, async (req, res) => {
-  const t = await ticketConMensajes(req.params.id);
+  const t = await ticketConMensajes(req.params.id, { conBorrador: true });
   if (!t) return bad(res, 'No encontrado', 404);
   ok(res, t);
 });
@@ -1314,8 +1335,181 @@ app.patch('/api/tickets/:id', requireStaff, async (req, res) => {
   }
   if (clienteId !== undefined) await pool.query('update tickets set cliente_id=$1, actualizado=now() where id=$2', [clienteId || null, id]);
   if (estado !== undefined) await aplicarCambioEstado(id, estado);
-  const ticket = await ticketConMensajes(id);
+  const ticket = await ticketConMensajes(id, { conBorrador: true });
   ok(res, ticket);
+});
+/* ---------------- API de automatización ----------------
+   Clave propia (no es un usuario del sistema ni abre la web). Solo permite: leer tickets activos, guardar
+   un borrador de respuesta (NUNCA se envía solo, no existe ninguna ruta de envío) y cambiar categoría,
+   estado (solo Abierto / En progreso) y técnico SIN mandar ningún correo ni aviso al cliente.
+   La clave se guarda cifrada (hash) y se puede desactivar o regenerar desde Configuración → API. */
+const API_AUTO_ESTADOS_PERMITIDOS = ['Abierto', 'En progreso'];
+const API_AUTO_MAX_POR_MINUTO = 120;
+const API_AUTO_MAX_BORRADOR = 20000;
+const apiAutoVentana = { inicio: 0, cuenta: 0 };
+function apiAutoHash(clave) { return crypto.createHash('sha256').update(String(clave)).digest('hex'); }
+async function requireApiAutomatizacion(req, res, next) {
+  try {
+    const m = (req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+    const clave = m && m[1] ? m[1].trim() : '';
+    if (!clave) return res.status(401).json({ error: 'No autorizado' });
+    const cfg = (await pool.query('select api_auto_key_hash, api_auto_activa from configuracion where id=1')).rows[0];
+    if (!cfg || !cfg.api_auto_activa || !cfg.api_auto_key_hash) return res.status(401).json({ error: 'No autorizado' });
+    const a = Buffer.from(apiAutoHash(clave)), b = Buffer.from(cfg.api_auto_key_hash);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'No autorizado' });
+    const ahora = Date.now();
+    if (ahora - apiAutoVentana.inicio > 60000) { apiAutoVentana.inicio = ahora; apiAutoVentana.cuenta = 0; }
+    if (++apiAutoVentana.cuenta > API_AUTO_MAX_POR_MINUTO) return res.status(429).json({ error: 'Demasiados pedidos por minuto. Esperá un momento.' });
+    res.on('finish', () => {
+      pool.query('insert into api_automatizacion_log (metodo, ruta, ticket, codigo) values ($1,$2,$3,$4)',
+        [req.method, req.route ? req.route.path : req.path, req.params.numero || null, res.statusCode]).catch(() => {});
+      pool.query('update configuracion set api_auto_ultimo_uso=now() where id=1').catch(() => {});
+      if (Math.random() < 0.01) pool.query(`delete from api_automatizacion_log where fecha < now() - interval '60 days'`).catch(() => {});
+    });
+    next();
+  } catch (e) {
+    res.status(500).json({ error: 'Error validando la clave' });
+  }
+}
+const SQL_API_AUTO_TICKET = `
+  select t.id, t.numero, t.asunto, t.categoria, t.subcategoria, t.prioridad, t.estado, t.torre, t.edificio as apto,
+         t.remitente_nombre, t.creado, t.actualizado, t.asignado_a,
+         nullif(trim(coalesce(u.nombre,'') || ' ' || coalesce(u.apellido,'')), '') as tecnico,
+         c.nombre as cliente, c.rol_cliente as cliente_rol,
+         case when c.rol_cliente = 'Edificio' then c.nombre when c.rol_cliente = 'Apartamento' then p.nombre end as edificio,
+         exists (select 1 from tickets_borradores b where b.ticket_id = t.id) as tiene_borrador,
+         (select m.tipo from mensajes m where m.ticket_id = t.id and m.tipo <> 'nota' order by m.fecha desc limit 1) as ultimo_msg_tipo
+  from tickets t
+  left join usuarios u on u.id = t.asignado_a
+  left join clientes c on c.id = t.cliente_id
+  left join clientes p on p.id = c.administrado_por_id`;
+function apiAutoResumenTicket(r) {
+  return {
+    numero: r.numero, asunto: r.asunto, cliente: r.cliente || null, edificio: r.edificio || null,
+    torre: r.torre || null, apto: r.apto || null, solicitante: r.remitente_nombre,
+    estado: r.estado, categoria: r.categoria, subcategoria: r.subcategoria || null, prioridad: r.prioridad,
+    tecnico: r.tecnico || null, tecnico_id: r.asignado_a || null,
+    creado: r.creado, actualizado: r.actualizado,
+    ultimo_mensaje_de: r.ultimo_msg_tipo === 'entrante' ? 'cliente' : r.ultimo_msg_tipo ? 'equipo' : null,
+    tiene_borrador: !!r.tiene_borrador
+  };
+}
+async function apiAutoTicketPorNumero(numero) {
+  return (await pool.query(SQL_API_AUTO_TICKET + ' where t.numero = $1', [String(numero)])).rows[0] || null;
+}
+app.get('/api/automatizacion/opciones', requireApiAutomatizacion, async (req, res) => {
+  const tecnicos = (await pool.query(`select id, nombre, apellido, cargo from usuarios order by nombre, apellido`)).rows
+    .map(u => ({ id: u.id, nombre: `${u.nombre} ${u.apellido}`.trim(), cargo: u.cargo }));
+  ok(res, { categorias: CATEGORIAS, estados_permitidos: API_AUTO_ESTADOS_PERMITIDOS, tecnicos });
+});
+app.get('/api/automatizacion/tickets', requireApiAutomatizacion, async (req, res) => {
+  const estado = req.query.estado ? String(req.query.estado) : null;
+  if (estado && !ESTADOS.includes(estado)) return bad(res, 'Estado inválido.');
+  const params = [];
+  let filtro = `where t.estado not in ('Resuelto','Cerrado')`;
+  if (estado) { params.push(estado); filtro = `where t.estado = $1 and t.estado not in ('Resuelto','Cerrado')`; }
+  const rows = (await pool.query(SQL_API_AUTO_TICKET + ' ' + filtro + ' order by t.actualizado desc limit 500', params)).rows;
+  ok(res, { total: rows.length, tickets: rows.map(apiAutoResumenTicket) });
+});
+app.get('/api/automatizacion/tickets/:numero', requireApiAutomatizacion, async (req, res) => {
+  const t = await apiAutoTicketPorNumero(req.params.numero);
+  if (!t) return bad(res, 'Ticket no encontrado.', 404);
+  const TIPOS = { entrante: 'cliente', saliente: 'equipo', nota: 'nota_interna', sistema: 'sistema' };
+  const mensajes = (await pool.query('select tipo, autor, cuerpo, fecha, automatico from mensajes where ticket_id=$1 order by fecha asc', [t.id])).rows
+    .map(m => {
+      const cuerpo = String(m.cuerpo || '');
+      return { de: TIPOS[m.tipo] || m.tipo, autor: m.autor, fecha: m.fecha, automatico: !!m.automatico,
+        cuerpo: cuerpo.length > 8000 ? cuerpo.slice(0, 8000) + '…' : cuerpo, recortado: cuerpo.length > 8000 };
+    });
+  const borrador = (await pool.query('select cuerpo, creado from tickets_borradores where ticket_id=$1', [t.id])).rows[0] || null;
+  ok(res, { ...apiAutoResumenTicket(t), mensajes, borrador });
+});
+app.put('/api/automatizacion/tickets/:numero/borrador', requireApiAutomatizacion, async (req, res) => {
+  const t = await apiAutoTicketPorNumero(req.params.numero);
+  if (!t) return bad(res, 'Ticket no encontrado.', 404);
+  if (t.estado === 'Resuelto' || t.estado === 'Cerrado') return bad(res, 'El ticket está Resuelto o Cerrado: no admite borradores.', 409);
+  const cuerpo = typeof req.body.cuerpo === 'string' ? req.body.cuerpo.trim() : '';
+  if (!cuerpo) return bad(res, 'Falta el texto del borrador ("cuerpo").');
+  if (cuerpo.length > API_AUTO_MAX_BORRADOR) return bad(res, `El borrador es muy largo (máximo ${API_AUTO_MAX_BORRADOR} caracteres).`);
+  await pool.query(
+    `insert into tickets_borradores (ticket_id, cuerpo) values ($1,$2)
+     on conflict (ticket_id) do update set cuerpo = excluded.cuerpo, creado = now()`, [t.id, cuerpo]);
+  ok(res, { ok: true, numero: t.numero, guardado: true, enviado: false });
+});
+app.patch('/api/automatizacion/tickets/:numero', requireApiAutomatizacion, async (req, res) => {
+  const t = await apiAutoTicketPorNumero(req.params.numero);
+  if (!t) return bad(res, 'Ticket no encontrado.', 404);
+  if (t.estado === 'Resuelto' || t.estado === 'Cerrado') return bad(res, 'El ticket está Resuelto o Cerrado: no se puede modificar por API.', 409);
+  const { categoria, estado } = req.body || {};
+  const hayTecnico = req.body && Object.prototype.hasOwnProperty.call(req.body, 'tecnico');
+  if (categoria === undefined && estado === undefined && !hayTecnico) return bad(res, 'No hay nada para cambiar: enviá "categoria", "estado" y/o "tecnico".');
+  if (categoria !== undefined && !CATEGORIAS.includes(categoria)) return bad(res, `Categoría inválida. Opciones: ${CATEGORIAS.join(', ')}.`);
+  if (estado !== undefined && !API_AUTO_ESTADOS_PERMITIDOS.includes(estado)) {
+    return bad(res, `Por API solo se puede poner el estado: ${API_AUTO_ESTADOS_PERMITIDOS.join(' o ')}. Los demás estados avisan al cliente y se cambian a mano.`);
+  }
+  let nuevoTecnico; // undefined = sin cambio, null = sin asignar, objeto = técnico
+  if (hayTecnico) {
+    const v = req.body.tecnico;
+    if (v === null || v === '') nuevoTecnico = null;
+    else {
+      const valor = String(v).trim();
+      const esUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(valor);
+      const u = esUuid
+        ? (await pool.query('select id, nombre, apellido from usuarios where id=$1', [valor])).rows[0]
+        : valor.includes('@') ? (await pool.query('select id, nombre, apellido from usuarios where lower(email)=lower($1)', [valor])).rows[0] : null;
+      if (!u) return bad(res, 'Técnico no encontrado. Usá el "id" que devuelve /api/automatizacion/opciones, o su correo.');
+      nuevoTecnico = u;
+    }
+  }
+  const cambios = [];
+  if (categoria !== undefined && categoria !== t.categoria) {
+    // Igual que en la web: la subcategoría solo existe para "Soporte Técnico".
+    if (categoria === 'Soporte Técnico') await pool.query('update tickets set categoria=$1, actualizado=now() where id=$2', [categoria, t.id]);
+    else await pool.query('update tickets set categoria=$1, subcategoria=null, actualizado=now() where id=$2', [categoria, t.id]);
+    cambios.push(`Categoría: ${t.categoria} → ${categoria}`);
+  }
+  if (estado !== undefined && estado !== t.estado) {
+    // Directo a la base, SIN aplicarCambioEstado: no manda ningún correo al cliente.
+    await pool.query('update tickets set estado=$1, actualizado=now() where id=$2', [estado, t.id]);
+    cambios.push(`Estado: ${t.estado} → ${estado}`);
+  }
+  if (nuevoTecnico !== undefined) {
+    const idNuevo = nuevoTecnico ? nuevoTecnico.id : null;
+    if (String(idNuevo || '') !== String(t.asignado_a || '')) {
+      // Directo a la base, SIN asignarTicket: no le escribe al cliente ni manda Telegram.
+      await pool.query('update tickets set asignado_a=$1, actualizado=now() where id=$2', [idNuevo, t.id]);
+      cambios.push(`Técnico: ${t.tecnico || 'sin asignar'} → ${nuevoTecnico ? `${nuevoTecnico.nombre} ${nuevoTecnico.apellido}` : 'sin asignar'}`);
+    }
+  }
+  if (cambios.length) {
+    await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'nota','Automatización (API)',$2)`,
+      [t.id, 'Cambios hechos por la automatización: ' + cambios.join(' · ')]);
+  }
+  const actualizado = await apiAutoTicketPorNumero(t.numero);
+  ok(res, { ok: true, cambios, ticket: apiAutoResumenTicket(actualizado) });
+});
+// Administración de la clave (solo superadmin, desde Configuración → API)
+app.get('/api/config/api-automatizacion', requireStaff, requireSuperadmin, async (req, res) => {
+  const c = (await pool.query('select api_auto_key_hash, api_auto_activa, api_auto_creada, api_auto_ultimo_uso from configuracion where id=1')).rows[0] || {};
+  const log = (await pool.query('select fecha, metodo, ruta, ticket, codigo from api_automatizacion_log order by fecha desc limit 30')).rows;
+  ok(res, { tieneClave: !!c.api_auto_key_hash, activa: !!c.api_auto_activa, creada: c.api_auto_creada || null, ultimoUso: c.api_auto_ultimo_uso || null, log });
+});
+app.post('/api/config/api-automatizacion/generar', requireStaff, requireSuperadmin, async (req, res) => {
+  const clave = 'bcm_' + crypto.randomBytes(24).toString('hex');
+  await pool.query('update configuracion set api_auto_key_hash=$1, api_auto_activa=true, api_auto_creada=now(), api_auto_ultimo_uso=null where id=1', [apiAutoHash(clave)]);
+  ok(res, { clave }); // única vez que se muestra
+});
+app.put('/api/config/api-automatizacion/activa', requireStaff, requireSuperadmin, async (req, res) => {
+  const activa = !!(req.body && req.body.activa);
+  const c = (await pool.query('select api_auto_key_hash from configuracion where id=1')).rows[0];
+  if (activa && !(c && c.api_auto_key_hash)) return bad(res, 'Primero generá una clave.');
+  await pool.query('update configuracion set api_auto_activa=$1 where id=1', [activa]);
+  ok(res, { ok: true, activa });
+});
+// Para el personal: descartar el borrador automático desde la pantalla del ticket
+app.delete('/api/tickets/:id/borrador', requireStaff, async (req, res) => {
+  await pool.query('delete from tickets_borradores where ticket_id=$1', [req.params.id]);
+  ok(res, { ok: true });
 });
 // Borra absolutamente todos los tickets del sistema. Solo un Superadmin puede hacerlo.
 /* ---------------- Respaldo del sistema ---------------- */
@@ -1646,7 +1840,7 @@ app.post('/api/tickets/:id/fusionar', requireStaff, async (req, res) => {
   await pool.query('update tickets set necesita_atencion=$1, actualizado=now() where id=$2',
     [destino.necesita_atencion || origen.necesita_atencion, destinoId]);
   await pool.query('delete from tickets where id=$1', [origenId]);
-  ok(res, await ticketConMensajes(destinoId));
+  ok(res, await ticketConMensajes(destinoId, { conBorrador: true }));
 });
 // Asigna un ticket a un técnico: manda el aviso automático al cliente, le avisa al técnico por Telegram
 // si tiene su cuenta vinculada, y le saca el botón "Tomar ticket" al aviso del grupo si lo tenía.
@@ -1699,7 +1893,7 @@ app.post('/api/tickets/:id/tomar', requireStaff, async (req, res) => {
     return bad(res, `Ya lo había tomado ${otro ? otro.nombre + ' ' + otro.apellido : 'otro técnico'}.`);
   }
   await asignarTicket(id, req.session.userId);
-  ok(res, await ticketConMensajes(id));
+  ok(res, await ticketConMensajes(id, { conBorrador: true }));
 });
 app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
   const id = req.params.id;
@@ -1714,7 +1908,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
       [id, `${staff.nombre} ${staff.apellido}`, cuerpo]
     );
     await pool.query('update tickets set actualizado=now() where id=$1', [id]);
-    return ok(res, await ticketConMensajes(id));
+    return ok(res, await ticketConMensajes(id, { conBorrador: true }));
   }
   if (tipo === 'entrante') {
     await pool.query(`insert into mensajes (ticket_id, tipo, autor, cuerpo) values ($1,'entrante',$2,$3)`, [id, t.remitente_nombre, cuerpo]);
@@ -1777,6 +1971,8 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     }
     if (t.estado === 'Abierto') await pool.query('update tickets set estado=$1 where id=$2', ['En progreso', id]);
     await pool.query('update tickets set necesita_atencion=false where id=$1', [id]);
+    // Ya salió una respuesta real: el borrador automático quedó viejo.
+    await pool.query('delete from tickets_borradores where ticket_id=$1', [id]);
     const attachmentsForMail = (adjuntos || []).map(a => {
       const base64 = (a.dataUrl || '').split(',')[1] || '';
       return { filename: a.nombre, content: base64, encoding: 'base64' };
@@ -1789,7 +1985,7 @@ app.post('/api/tickets/:id/mensajes', requireStaff, async (req, res) => {
     });
   }
   await pool.query('update tickets set actualizado=now() where id=$1', [id]);
-  ok(res, await ticketConMensajes(id));
+  ok(res, await ticketConMensajes(id, { conBorrador: true }));
 });
 /* ---------------- Clientes ---------------- */
 app.get('/api/clientes', requireStaff, async (req, res) => {
@@ -4400,7 +4596,7 @@ app.post('/api/servicios-tecnicos/:id/enviar-presupuesto', requireStaff, async (
     await pool.query('update tickets set actualizado=now() where id=$1', [servicio.ticket_id]);
     const ccs = await collectTicketCCs(servicio.ticket_id);
     await enviarEmailReal({ to: t.remitente_email, cc: ccs, subject: `[${t.numero}] ${t.asunto}`, text: cuerpo, esAutomatico: true, ticketId: servicio.ticket_id });
-    return ok(res, await ticketConMensajes(servicio.ticket_id));
+    return ok(res, await ticketConMensajes(servicio.ticket_id, { conBorrador: true }));
   }
 
   // Sin ticket: se descargan los archivos de presupuesto para mandarlos adjuntos (el cliente no tiene
