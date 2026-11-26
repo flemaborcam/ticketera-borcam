@@ -244,6 +244,15 @@
   .cd-mas{font-weight:800;font-size:11px;color:var(--brand);padding-left:4px;} .cd-dots{display:none;}
   .cd-panel{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:16px 18px;margin-top:14px;} .cd-ph{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;} .cd-ph > div{flex:1;min-width:200px;} .cd-ph b{display:block;font-size:18px;} .cd-ph small{color:var(--ink-soft);font-size:13px;}
   .cd-pl-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:0 14px;}
+  /* Técnico del turno en la agenda del día y en el calendario mensual de Servicios Técnicos */
+  .sv-tec{display:flex;flex-direction:column;align-items:center;gap:3px;flex:none;max-width:84px;}
+  .sv-tec small{font-size:10.5px;font-weight:700;color:var(--ink-soft);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;} .sv-tec small.sv-tec-none{color:var(--stamp-amber);}
+  .sv-av{width:34px;height:34px;border-radius:50%;background:linear-gradient(145deg,#6FA2FF,#2C5FD0);color:#fff;font-weight:800;font-size:12.5px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #1b3f8c,0 6px 10px -4px rgba(15,42,77,.45);}
+  .sv-av.sv-av-none{background:transparent;border:2px dashed var(--stamp-amber);color:var(--stamp-amber);box-shadow:none;font-size:15px;}
+  .cd-pl .cd-tec{font-style:normal;flex:none;width:16px;height:16px;border-radius:50%;background:#2C5FD0;color:#fff;font-size:8.5px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;margin-right:5px;}
+  .cd-pl .cd-tec.n{background:transparent;border:1.5px dashed var(--stamp-amber);color:var(--stamp-amber);}
+  /* Barra de acciones fija abajo en el detalle del servicio técnico: siempre visible aunque el checklist sea largo */
+  .modal-actions-fija{position:sticky;bottom:-24px;margin:14px -24px -24px !important;padding:12px 24px;background:var(--card);border-top:1px solid var(--line);z-index:3;border-radius:0 0 10px 10px;box-shadow:0 -10px 16px -12px rgba(15,42,77,.35);}
   @media(max-width:700px){
     .cd-dow,.cd-grid{gap:3px;} .cd-dl{display:none;} .cd-ds{display:inline;}
     .cd-day{min-height:54px;padding:4px 2px;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:10px;} .cd-pls{display:none;} .cd-dots{display:flex;gap:3px;align-items:center;min-height:7px;} .cd-dots i{width:6px;height:6px;border-radius:50%;} .cd-dots small{font-weight:800;font-size:9px;line-height:6px;color:var(--ink-soft);}
@@ -473,6 +482,9 @@
        una fila que corta botones fuera de pantalla, se apilan de a uno ocupando todo el ancho. */
     .modal-actions{flex-direction:column-reverse;width:100%;}
     .modal-actions .btn{width:100%;}
+    /* La barra fija del detalle del servicio: en celular, dos columnas para no tapar media pantalla */
+    .modal-actions.modal-actions-fija{display:grid;grid-template-columns:1fr 1fr;gap:8px;bottom:-20px;margin:14px -16px -20px !important;padding:10px 16px calc(10px + env(safe-area-inset-bottom));border-radius:0;}
+    .modal-actions.modal-actions-fija .btn{padding:10px 8px;font-size:13px;}
     /* Filtros (estado, categoría, prioridad, etc.): más grandes y fáciles de tocar, dos por fila
        en vez de una tira angosta de selects apretados. */
     .filters select,.filters input[type=date]{flex:1 1 46%;min-width:130px;padding:10px 12px;font-size:14px;}

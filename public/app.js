@@ -11,6 +11,18 @@ async function api(method, url, body) {
 }
 
 let session = null;
+// Las ventanas emergentes se cierran con un clic en el fondo oscuro. Si se selecciona texto dentro de la
+// ventana y se suelta el mouse afuera, el navegador igual dispara un "clic" sobre el fondo y la ventana se
+// cerraba sola. Este control general (sirve para todas las ventanas) anota dónde empezó el clic y, si no
+// empezó en el fondo, ignora ese clic. Se guarda un dato (no el elemento) porque la pantalla se redibuja.
+let clicEmpezoEnFondo = true;
+function esFondoCierraAlTocar(el) { return !!(el && el.getAttribute && /event\.target\s*===\s*this/.test(el.getAttribute('onclick') || '')); }
+document.addEventListener('mousedown', e => { clicEmpezoEnFondo = esFondoCierraAlTocar(e.target); }, true);
+document.addEventListener('touchstart', e => { clicEmpezoEnFondo = esFondoCierraAlTocar(e.target); }, { capture: true, passive: true });
+document.addEventListener('click', e => {
+  if (esFondoCierraAlTocar(e.target) && !clicEmpezoEnFondo) { e.stopImmediatePropagation(); e.preventDefault(); }
+  clicEmpezoEnFondo = true;
+}, true);
 let cache = { tickets: [], usuarios: [], clientes: [], respuestas: [], automatizaciones: [], configuracion: {}, documentosEdificio: [], documentosCliente: [], perfilCliente: null, edificiosCliente: [], serviciosTecnicos: [], catalogoCostos: [], proveedores: [] };
 let CAT = { ESTADOS: [], CATEGORIAS: [], SUBCATEGORIAS_SOPORTE_TECNICO: [], PRIORIDADES: [], CARGOS: [], ROLES_CLIENTE: [], EDIFICIOS: [] };
 let state = {
@@ -1859,6 +1871,17 @@ function urlUbicacionCliente(clienteId) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(c.direccion.trim())}`;
 }
 function nombreUsuarioPorId(id) { const u = (cache.usuarios || []).find(x => x.id === id); return u ? `${u.nombre} ${u.apellido}` : '—'; }
+// Técnico de un turno para la agenda y el calendario de Servicios Técnicos: iniciales + nombre corto,
+// o "Sin asignar" si el turno no tiene a nadie (o si el usuario ya no existe).
+function tecnicoParaCalendario(id) {
+  const u = id ? (cache.usuarios || []).find(x => String(x.id) === String(id)) : null;
+  if (!u) return { none: true, ini: '?', nombre: 'Sin asignar', completo: 'Sin asignar' };
+  const ini = ((u.nombre || '').trim().charAt(0) + (u.apellido || '').trim().charAt(0)).toUpperCase() || '?';
+  return { none: false, ini, nombre: (u.nombre || '').trim().split(/\s+/)[0] || u.nombre, completo: `${u.nombre} ${u.apellido}`.trim() };
+}
+function avatarTecnicoHtml(tec) {
+  return `<span class="sv-tec" title="${escapeHtml(tec.completo)}"><span class="sv-av${tec.none ? ' sv-av-none' : ''}">${escapeHtml(tec.ini)}</span><small class="${tec.none ? 'sv-tec-none' : ''}">${escapeHtml(tec.nombre)}</small></span>`;
+}
 // Select de "Técnico asignado", reutilizado en Nuevo turno / Agendar / Editar servicio técnico —
 // para elegir quién va a ir a la visita, y poder cambiarlo después si ese técnico no puede ir.
 // Subcategoría: lista de valores válida solo cuando el ticket es de Categoría "Soporte Técnico".
@@ -1999,7 +2022,7 @@ function eventosServicioTecnicoPorFecha() {
     const cls = { 'servicio': 'b', 'servicio-atrasado': 'o', 'servicio-realizado': 'g', 'servicio-pago-pendiente': 'd', 'mant': 'g', 'mant-vencido': 'o' }[clase] || 'b';
     const esMant = !!s.contrato_mantenimiento_id;
     const chip = esMant ? (cls === 'o' ? 'Mantenimiento vencido' : 'Mantenimiento') : { b: 'Agendado', g: 'Realizado', d: 'Pendiente de pago', o: 'Atrasado' }[cls];
-    (mapa[key] = mapa[key] || []).push({ cls, nombre: nombreClientePorId(s.cliente_id), hora: horaCalendario(s.fecha_hora, s.todo_el_dia), sub: s.titulo || '', chip, ico: esMant ? 'wrench' : 'building-2', onclick: `abrirDetalleServicioTecnico('${s.id}')` });
+    (mapa[key] = mapa[key] || []).push({ cls, nombre: nombreClientePorId(s.cliente_id), hora: horaCalendario(s.fecha_hora, s.todo_el_dia), sub: s.titulo || '', chip, ico: esMant ? 'wrench' : 'building-2', tec: tecnicoParaCalendario(s.tecnico_asignado_id), onclick: `abrirDetalleServicioTecnico('${s.id}')` });
   }
   const tipoFiltro = state.stCalendarioFiltroTipo || 'todos';
   if (tipoFiltro !== 'servicio') {
@@ -2767,7 +2790,7 @@ function renderDetalleServicioTecnicoModal() {
               ${reprogramaciones.map(r => `<div style="margin-bottom:2px;">${fmtDateTime(r.fecha_hora_anterior)} → ${fmtDateTime(r.fecha_hora_nueva)}${r.motivo ? ' — ' + escapeHtml(r.motivo) : ''}${r.reprogramado_por ? ' (' + escapeHtml(r.reprogramado_por) + ')' : ''}</div>`).join('')}</div>`
           : `<div class="hint-text">Este turno nunca se reprogramó.</div>`}
     </div>
-    <div class="modal-actions" style="flex-wrap:wrap;">
+    <div class="modal-actions modal-actions-fija" style="flex-wrap:wrap;">
       <button type="button" class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
       ${s.ticket_id ? `<button type="button" class="btn btn-ghost" onclick="closeModal(); openTicket('${s.ticket_id}')">Ver ticket</button>` : ''}
       <button type="button" class="btn btn-ghost" onclick="state.editandoServicioTecnicoId='${s.id}'; render();">✏️ Editar</button>
@@ -3781,7 +3804,7 @@ function renderCalendarioMesConPanel(tipo, anio, mes, eventosPorFecha, onAddDia)
     const otroMes = diaNum < 1 || diaNum > diasEnMes;
     const eventos = eventosPorFecha[fechaStr] || [];
     const diaMostrar = Number(fechaStr.split('-')[2]);
-    const pastillas = eventos.slice(0, 3).map(e => `<div class="cd-pl cd-${e.cls}" title="${escapeHtml((e.hora ? e.hora + ' · ' : '') + e.nombre)}"><s>${escapeHtml(e.nombre)}</s></div>`).join('');
+    const pastillas = eventos.slice(0, 3).map(e => `<div class="cd-pl cd-${e.cls}" title="${escapeHtml((e.hora ? e.hora + ' · ' : '') + e.nombre + (e.tec ? ' · ' + e.tec.completo : ''))}">${e.tec ? `<i class="cd-tec${e.tec.none ? ' n' : ''}">${escapeHtml(e.tec.ini)}</i>` : ''}<s>${escapeHtml(e.nombre)}</s></div>`).join('');
     const mas = eventos.length > 3 ? `<div class="cd-mas">+${eventos.length - 3} más</div>` : '';
     const puntos = eventos.slice(0, 3).map(e => `<i style="background:${CAL_COLOR[e.cls]}"></i>`).join('') + (eventos.length > 3 ? '<small>+</small>' : '');
     celdas += `<div class="cd-day${otroMes ? ' otro' : ''}${fechaStr === hoyStr ? ' hoy' : ''}${fechaStr === sel ? ' sel' : ''}" onclick="calSeleccionarDia('${tipo}','${fechaStr}')"><span class="cd-num">${diaMostrar}</span><div class="cd-pls">${pastillas}${mas}</div><div class="cd-dots">${puntos}</div></div>`;
@@ -3795,6 +3818,7 @@ function renderCalendarioMesConPanel(tipo, anio, mes, eventosPorFecha, onAddDia)
       <span class="sv-body"><span class="sv-nm">${escapeHtml(e.nombre)}</span>
         ${e.sub ? `<span class="sv-ln"><span>${iconoLucide(e.ico || 'building-2')}${escapeHtml(e.sub)}</span>${e.sub2 ? `<span>${iconoLucide('phone')}${escapeHtml(e.sub2)}</span>` : ''}</span>` : ''}
         <span class="sv-chips"><span class="sv-chip cd-chip-${e.cls}">${escapeHtml(e.chip)}</span></span></span>
+      ${e.tec ? avatarTecnicoHtml(e.tec) : ''}
       <span class="sv-chev">${iconoLucide('chevron-right')}</span></button></div>`;
   const btnAgregar = onAddDia ? `<button type="button" class="btn btn-primary" onclick="${onAddDia(sel)}">${iconoLucide('plus')}Agendar este día</button>` : '';
   const panel = `<div class="cd-panel"><div class="cd-ph"><div><b>${fechaLegible.charAt(0).toUpperCase() + fechaLegible.slice(1)}${sel === hoyStr ? ' · hoy' : ''}</b><small>${evs.length ? `${evs.length} turno${evs.length === 1 ? '' : 's'} · tocá otro día para ver su agenda` : 'Sin turnos este día'}</small></div>${btnAgregar}</div>
